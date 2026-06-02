@@ -1,0 +1,75 @@
+{
+  "name": "vdw-vscode",
+  "displayName": "VDW - Virtual Dev Workspace",
+  "description": "VS Code integration for VDW cross-repo development middleware",
+  "version": "0.1.0",
+  "publisher": "vdw-team",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": ["Other"],
+  "activationEvents": [
+    "workspaceContains:.vdwrc"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      { "command": "vdw.init", "title": "VDW: Initialize Workspace" },
+      { "command": "vdw.link", "title": "VDW: Link Dependencies" },
+      { "command": "vdw.unlink", "title": "VDW: Unlink Dependencies" },
+      { "command": "vdw.validate", "title": "VDW: Validate Configuration" },
+      { "command": "vdw.addRepo", "title": "VDW: Add Repository" },
+      { "command": "vdw.refreshContext", "title": "VDW: Refresh Context" }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "vdw-explorer",
+          "title": "VDW Workspace",
+          "icon": "resources/icons/vdw.svg"
+        }
+      ]
+    },
+    "views": {
+      "vdw-explorer": [
+        {
+          "id": "vdwWorkspace",
+          "name": "Dependencies"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "VDW",
+      "properties": {
+        "vdw.cliPath": {
+          "type": "string",
+          "default": "vdw",
+          "description": "Path to the VDW CLI binary"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "lint": "tsc --noEmit",
+    "package": "vsce package --no-dependencies",
+    "test": "npm run compile && node ./out/test/runTests.js"
+  },
+  "dependencies": {
+    "js-yaml": "^4.1.0",
+    "minimatch": "^9.0.3"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.85.0",
+    "@types/js-yaml": "^4.0.9",
+    "@types/minimatch": "^5.1.2",
+    "@types/node": "^20.11.0",
+    "typescript": "^5.3.3",
+    "@vscode/vsce": "^2.22.0",
+    "mocha": "^10.2.0",
+    "@types/mocha": "^10.0.6",
+    "glob": "^10.3.10",
+    "@types/glob": "^8.1.0"
+  }
+}
