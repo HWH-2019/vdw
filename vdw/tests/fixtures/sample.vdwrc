@@ -1,0 +1,24 @@
+workspace:
+  name: fullstack-app
+  version: "1.0"
+dependencies:
+  - repo: https://github.com/example/frontend.git
+    path: ./apps/web
+    branch: main
+    scope:
+      include:
+        - "src/components/**"
+        - "src/hooks/**"
+      exclude:
+        - "**/*.test.ts"
+        - "**/*.spec.ts"
+    editable: true
+  - repo: https://github.com/example/shared-utils.git
+    path: ./packages/utils
+    tag: v2.1.0
+    scope:
+      include:
+        - "src/**"
+      exclude:
+        - "src/internal/**"
+    editable: false
