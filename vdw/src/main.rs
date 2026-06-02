@@ -90,6 +90,9 @@ enum WorktreeCommands {
         repo: String,
         /// Branch of the worktree to delete
         branch: String,
+        /// Force deletion even if worktree is locked
+        #[arg(short, long)]
+        force: bool,
     },
 }
 
@@ -121,8 +124,8 @@ fn run_command(cli: Cli) -> anyhow::Result<()> {
             WorktreeCommands::Create { repo, branch } => {
                 commands::worktree::create(repo, branch)
             }
-            WorktreeCommands::Delete { repo, branch } => {
-                commands::worktree::delete(repo, branch)
+            WorktreeCommands::Delete { repo, branch, force } => {
+                commands::worktree::delete(repo, branch, force)
             }
         },
         Commands::Context { command } => match command {
