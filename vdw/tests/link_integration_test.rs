@@ -210,23 +210,16 @@ fn test_idempotent_link() {
 
     assert!(!entries1.is_empty());
 
-    // Second link - should fail because target already exists
-    // But the function should handle it gracefully or the caller can handle it
-    let entries2_result = engine::create_dependency_links(
+    // Second link - should succeed because create_hardlink/create_symlink are now idempotent
+    let entries2 = engine::create_dependency_links(
         source_dir.path(),
         &target_dir,
         &scope,
         "https://github.com/example/local-repo.git",
-    );
+    )
+    .expect("Second link should succeed (idempotent)");
 
-    // The second link attempt should return an error because targets exist
-    // This is expected behavior - idempotent means "same result if you try again"
-    // not necessarily "silently succeeds". For a true idempotent workflow,
-    // the caller would unlink first then re-link.
-    assert!(
-        entries2_result.is_err(),
-        "Second link should fail because target files already exist"
-    );
+    assert_eq!(entries1.len(), entries2.len(), "Same number of entries on second link");
 
     // Original linked files should still be intact
     assert!(

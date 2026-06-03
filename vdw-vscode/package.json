@@ -28,7 +28,7 @@
           "dark": "resources/icons/unlink-dark.svg"
         }
       },
-      { "command": "vdw.relink", "title": "VDW: Relink Dependencies (Update Config)", "icon": "$(sync)" },
+      { "command": "vdw.relink", "title": "VDW: Relink allRepo", "icon": "$(sync)" },
       { "command": "vdw.validate", "title": "VDW: Validate Configuration" },
       { "command": "vdw.addRepo", "title": "VDW: Add Repository", "icon": "$(add)" },
      { "command": "vdw.refreshContext", "title": "VDW: Refresh Context", "icon": "$(refresh)" },

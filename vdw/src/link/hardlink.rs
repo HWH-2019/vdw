@@ -2,9 +2,10 @@ use std::path::Path;
 use anyhow::Result;
 
 /// Create a hard link from source to target
+/// If target already exists, it will be removed first (idempotent).
 pub fn create_hardlink(source: &Path, target: &Path) -> Result<()> {
     if target.exists() {
-        return Err(anyhow::anyhow!("Target already exists: {}", target.display()));
+        std::fs::remove_file(target)?;
     }
     if let Some(parent) = target.parent() {
         std::fs::create_dir_all(parent)?;
@@ -56,17 +57,25 @@ mod tests {
     }
 
     #[test]
-    fn test_create_hardlink_target_exists_fails() {
+    fn test_create_hardlink_idempotent() {
         let dir = tempfile::tempdir().expect("Failed to create temp dir");
         let source = dir.path().join("source.txt");
         let target = dir.path().join("target.txt");
 
         std::fs::write(&source, "source content").expect("Failed to write source");
-        std::fs::write(&target, "existing content").expect("Failed to write target");
 
+        // First link succeeds
+        create_hardlink(&source, &target).expect("First link should succeed");
+        assert!(target.exists());
+
+        // Second link on same target should succeed (idempotent)
         let result = create_hardlink(&source, &target);
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("already exists"));
+        assert!(result.is_ok(), "Second link should succeed (idempotent): {:?}", result.err());
+        assert!(target.exists());
+
+        // Verify it's still the same content
+        let content = std::fs::read_to_string(&target).expect("Failed to read target");
+        assert_eq!(content, "source content");
     }
 
     #[test]

@@ -2,9 +2,13 @@ use std::path::Path;
 use anyhow::Result;
 
 /// Create a symlink from source to target
+/// If target already exists (as symlink or regular file), it will be removed first (idempotent).
 pub fn create_symlink(source: &Path, target: &Path) -> Result<()> {
-    if target.exists() || target.symlink_metadata().is_ok() {
-        return Err(anyhow::anyhow!("Target already exists: {}", target.display()));
+    // Remove existing target first (idempotent: allows re-linking without errors)
+    if target.symlink_metadata().is_ok() {
+        std::fs::remove_file(target)?;
+    } else if target.exists() {
+        std::fs::remove_file(target)?;
     }
     if let Some(parent) = target.parent() {
         std::fs::create_dir_all(parent)?;
@@ -78,17 +82,24 @@ mod tests {
     }
 
     #[test]
-    fn test_create_symlink_target_exists_fails() {
+    fn test_create_symlink_idempotent() {
         let dir = tempfile::tempdir().expect("Failed to create temp dir");
         let source = dir.path().join("source.txt");
         let target = dir.path().join("link.txt");
 
-        std::fs::write(&source, "source").expect("Failed to write source");
-        std::fs::write(&target, "existing").expect("Failed to write target");
+        std::fs::write(&source, "source content").expect("Failed to write source");
 
+        // First link succeeds
+        create_symlink(&source, &target).expect("First link should succeed");
+        assert!(target.exists());
+
+        // Second link on same target should succeed (idempotent)
         let result = create_symlink(&source, &target);
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("already exists"));
+        assert!(result.is_ok(), "Second link should succeed (idempotent): {:?}", result.err());
+        assert!(target.exists());
+
+        let content = std::fs::read_to_string(&target).expect("Failed to read target");
+        assert_eq!(content, "source content");
     }
 
     #[test]

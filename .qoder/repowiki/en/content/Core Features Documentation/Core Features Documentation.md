@@ -19,15 +19,19 @@
 - [index.ts](file://vdw-vscode/src/commands/index.ts)
 - [addRepo.ts](file://vdw-vscode/src/commands/addRepo.ts)
 - [workspaceTreeView.ts](file://vdw-vscode/src/providers/workspaceTreeView.ts)
+- [vdwCliService.ts](file://vdw-vscode/src/services/vdwCliService.ts)
+- [logger.ts](file://vdw-vscode/src/utils/logger.ts)
+- [object_pool.rs](file://vdw/src/store/object_pool.rs)
+- [logging.rs](file://vdw/src/utils/logging.rs)
 </cite>
 
 ## Update Summary
 **Changes Made**
-- Enhanced CLI command structure with selective repository linking/unlinking capabilities
-- Improved repository management functionality with per-repo operations
-- Expanded workspace configuration options with interactive VS Code plugin support
-- Added per-repository filtering for link/unlink operations
-- Enhanced VS Code plugin with per-repo unlinking and improved UI
+- Enhanced repository management with new remove repository workflow and improved add repository wizard
+- Expanded VS Code plugin bridge with per-repository unlinking and enhanced UI controls
+- Backend improvements including timeout handling for network operations and enhanced error reporting
+- Added comprehensive scope configuration support in the interactive wizard
+- Implemented timeout protection for git operations to prevent hanging on network/SSH issues
 
 ## Table of Contents
 1. [Introduction](#introduction)
@@ -351,6 +355,27 @@ For existing repositories, the system configures `.git/objects/info/alternates` 
 **Lazy Fetching Strategy:**
 The system employs selective fetching, pulling only the specific branches or commits declared in the `.vdwrc` file rather than entire repository histories.
 
+**Enhanced Timeout Handling:**
+Backend improvements include timeout protection for network operations to prevent hanging on network/SSH issues:
+
+```mermaid
+sequenceDiagram
+participant Client as Client
+participant Thread as Fetch Thread
+participant Git as Git Server
+Client->>Thread : Start fetch_with_timeout()
+Note right of Thread : Spawn background thread
+Thread->>Git : git fetch origin
+Git-->>Thread : Response (success/failure)
+Thread-->>Client : Result within timeout
+alt Timeout exceeded
+Client->>Client : Return timeout error
+end
+```
+
+**Diagram sources**
+- [object_pool.rs:210-251](file://vdw/src/store/object_pool.rs#L210-L251)
+
 #### Technical Specifications
 
 | Metric | Specification | Performance Impact |
@@ -359,6 +384,7 @@ The system employs selective fetching, pulling only the specific branches or com
 | Concurrency Safety | Multi-process locking | Thread-safe operations |
 | Cleanup Operations | `vdw store clean` command | Automated maintenance |
 | Recovery Mechanism | Automatic rebuild from remote | Fault tolerance |
+| Network Timeout | 90-second timeout for fetch operations | Prevents hanging operations |
 
 #### Acceptance Criteria
 
@@ -366,10 +392,12 @@ The system employs selective fetching, pulling only the specific branches or com
 - **Concurrency Control**: Prevent race conditions during simultaneous operations
 - **Maintenance Commands**: Provide comprehensive store management utilities
 - **Fault Recovery**: Enable automatic reconstruction of corrupted stores
+- **Timeout Protection**: Prevent hanging operations with clear timeout errors
 
 **Section sources**
 - [manager.rs:8-24](file://vdw/src/store/manager.rs#L8-L24)
 - [manager.rs:44-61](file://vdw/src/store/manager.rs#L44-L61)
+- [object_pool.rs:210-251](file://vdw/src/store/object_pool.rs#L210-L251)
 
 ### F3: Link Engine & Logical Workspace Construction
 
@@ -665,22 +693,14 @@ The enhanced CLI now supports selective operations on specific repositories:
 - **Partial Cleanup**: Removes only specified repository's links and worktrees
 - **Granular Operations**: Supports both full workspace and individual repository operations
 
-#### Error Handling and User Guidance
+#### Enhanced Error Reporting
 
-The CLI provides comprehensive error handling with helpful suggestions for common issues:
+**Improved Error Handling:**
+Backend improvements include comprehensive error reporting with actionable suggestions:
 
-- **Initialization Errors**: Guidance for `.vdwrc` creation and validation
-- **Workspace State Issues**: Suggestions for `vdw doctor` usage
-- **Command Syntax**: Clear error messages for invalid subcommands
-- **Repository Filters**: Meaningful feedback when no matching repositories are found
-
-#### Acceptance Criteria
-
-- **Command Discovery**: All subcommands properly registered and discoverable
-- **Help System**: Comprehensive help text for all commands and flags
-- **Error Messages**: Meaningful error messages with actionable suggestions
-- **Exit Codes**: Proper exit codes for different error conditions
-- **Repository Filtering**: Accurate per-repository operation support
+- **Timeout Errors**: Clear timeout messages with network troubleshooting guidance
+- **Repository Removal**: Enhanced error messages for repository removal operations
+- **Configuration Validation**: Detailed validation errors with resolution steps
 
 **Section sources**
 - [main.rs:18-102](file://vdw/src/main.rs#L18-L102)
@@ -817,18 +837,60 @@ Services --> StatusBar
 - **Automated Path Generation**: Smart default paths based on repository names
 - **Editable Mode Selection**: Clear indication of worktree vs linked modes
 - **Scope Configuration**: Interactive scope pattern setup with validation
+- **Branch Selection**: Enhanced branch selection with intelligent defaults
 
 **Per-Repository Operations:**
 - **Selective Unlinking**: Repository-specific unlink operations with confirmation
 - **Repository Status Tracking**: Real-time status updates in workspace tree view
 - **Enhanced Tooltips**: Comprehensive repository information display
+- **Remove Repository Workflow**: Complete workflow for removing repositories with cleanup
 
 **Workspace Tree View Enhancements:**
 - **Visual Status Indicators**: Color-coded icons for linked/unlinked repositories
 - **Detailed Repository Information**: URL, branch, scope, and editability status
 - **Action Context Menu**: Repository-specific actions based on current state
+- **Enhanced Error Reporting**: Comprehensive error messages with user guidance
 
-#### Plugin Integration Features
+#### Enhanced Remove Repository Workflow
+
+**Complete Removal Process:**
+1. **Pre-removal Unlink**: Automatically unlink repository before removal
+2. **Configuration Update**: Remove dependency from `.vdwrc` file
+3. **State Cleanup**: Remove worktree and link records from workspace state
+4. **UI Refresh**: Update all workspace views and status indicators
+5. **Success Confirmation**: Inform user of successful removal
+
+**Implementation Details:**
+```mermaid
+sequenceDiagram
+participant User as User
+participant VSCode as VS Code UI
+participant CLI as VDW CLI
+participant Store as Content Store
+User->>VSCode : Right-click repository
+VSCode->>VSCode : Show remove menu
+User->>VSCode : Confirm removal
+VSCode->>CLI : vdw unlink --repo URL
+CLI-->>VSCode : Unlink result
+VSCode->>VSCode : Update .vdwrc
+VSCode->>VSCode : Clean workspace state
+VSCode->>VSCode : Refresh UI
+VSCode-->>User : Success notification
+```
+
+**Diagram sources**
+- [index.ts:323-381](file://vdw-vscode/src/commands/index.ts#L323-L381)
+
+#### Enhanced Add Repository Wizard
+
+**Improved Interactive Experience:**
+- **Branch Selection**: Intelligent default branch detection and selection
+- **Scope Configuration**: Interactive scope pattern setup with validation
+- **Local Repository Detection**: Automatic branch detection for local repositories
+- **Enhanced Validation**: Comprehensive input validation with user guidance
+- **Progress Indication**: Visual progress feedback during operations
+
+**Plugin Integration Features**
 
 **Command Integration:**
 - **Repository Management**: Direct CLI command execution from VS Code
@@ -840,17 +902,20 @@ Services --> StatusBar
 - **File Provider Integration**: Seamless file access through VDW links
 - **Status Bar Integration**: File count and workspace status display
 
-#### Acceptance Criteria
+#### Enhanced Error Handling
 
-- **UI Responsiveness**: All operations complete within reasonable time limits
-- **Error Handling**: Comprehensive error reporting with user-friendly messages
-- **State Synchronization**: VS Code UI accurately reflects workspace state
-- **Integration Quality**: Seamless IDE experience without disrupting normal workflows
+**Comprehensive Error Reporting:**
+- **Timeout Handling**: Network operation timeouts with clear error messages
+- **Repository Removal Errors**: Detailed error messages for removal failures
+- **Configuration Validation**: Clear validation errors with resolution steps
+- **Logging Integration**: Integrated logging system for debugging
 
 **Section sources**
 - [index.ts:219-263](file://vdw-vscode/src/commands/index.ts#L219-L263)
 - [addRepo.ts:13-257](file://vdw-vscode/src/commands/addRepo.ts#L13-L257)
 - [workspaceTreeView.ts:66-201](file://vdw-vscode/src/providers/workspaceTreeView.ts#L66-L201)
+- [vdwCliService.ts:54-91](file://vdw-vscode/src/services/vdwCliService.ts#L54-L91)
+- [logger.ts:12-28](file://vdw-vscode/src/utils/logger.ts#L12-L28)
 
 ## Dependency Analysis
 
@@ -939,6 +1004,7 @@ The VDW system is designed with aggressive performance targets to ensure smooth 
 | IDE Startup Impact | < 2 seconds | Compared to no VDW scenario |
 | Memory Usage | < 200MB | 10,000 files scale |
 | Selective Operations | < 5 seconds | Per-repository filtering |
+| Network Timeout | 90 seconds | Git fetch operations |
 
 ### Optimization Strategies
 
@@ -1016,6 +1082,24 @@ The VDW system is designed with aggressive performance targets to ensure smooth 
   - Use `vdw doctor` to check workspace state
   - Ensure proper file permissions for workspace directories
 
+**Issue: Network Operations Time Out**
+- **Symptoms**: Git fetch operations hang or fail with timeout errors
+- **Causes**: Network connectivity issues, SSH key problems, slow Git servers
+- **Solutions**:
+  - Check network connectivity and firewall settings
+  - Verify SSH key authentication with `ssh-add -l`
+  - Retry operation or adjust timeout settings
+  - Use system git with hardened SSH options
+
+**Issue: Repository Removal Fails**
+- **Symptoms**: `vdw repo remove` command fails or leaves partial state
+- **Causes**: Repository still linked, workspace state corruption, file permission issues
+- **Solutions**:
+  - Ensure repository is unlinked before removal (`vdw unlink --repo URL`)
+  - Use `vdw doctor` to check workspace state
+  - Manually verify `.vdwrc` and workspace state files
+  - Check file permissions for workspace directories
+
 ### Diagnostic Commands
 
 **System Health Checks:**
@@ -1038,10 +1122,16 @@ The VDW system is designed with aggressive performance targets to ensure smooth 
 - `vdw unlink --repo URL`: Test selective unlinking for specific repository
 - `vdw repo list`: Verify repository availability in content store
 
+**Enhanced Error Reporting:**
+- `vdw logs --level debug`: Enable detailed logging for debugging
+- `vdw repo remove --help`: Show detailed help for removal operations
+- `vdw validate --verbose`: Show detailed validation output
+
 **Section sources**
 - [main.rs:144-157](file://vdw/src/main.rs#L144-L157)
 - [init.rs:104-135](file://vdw/src/commands/init.rs#L104-L135)
 - [link.rs:218-269](file://vdw/src/commands/link.rs#L218-L269)
+- [object_pool.rs:210-251](file://vdw/src/store/object_pool.rs#L210-L251)
 
 ## Conclusion
 
@@ -1050,9 +1140,11 @@ VDW represents a paradigm shift in how development teams manage complex, multi-r
 The seven-core feature architecture provides a solid foundation for both immediate productivity gains and future extensibility. The cross-platform design ensures broad compatibility, while the plugin-based approach enables seamless integration with existing development workflows.
 
 **Key Enhancements:**
+- **Enhanced Repository Management**: Complete remove repository workflow with automatic cleanup
+- **Improved Add Repository Wizard**: Interactive wizard with branch selection and scope configuration
+- **Enhanced VS Code Integration**: Per-repository unlinking and comprehensive UI controls
+- **Backend Improvements**: Timeout handling for network operations and enhanced error reporting
 - **Selective Repository Operations**: Granular control over individual repository linking/unlinking
-- **Enhanced State Management**: Repository-aware workspace state tracking
-- **Improved VS Code Integration**: Interactive wizards and per-repository UI controls
 - **Expanded Configuration Options**: Comprehensive scope-based filtering and validation
 
 **Achievements Demonstrated:**
@@ -1061,6 +1153,7 @@ The seven-core feature architecture provides a solid foundation for both immedia
 - **Precise AI context control** preventing context overflow
 - **Seamless IDE integration** maintaining familiar development workflows
 - **Granular workspace management** enabling selective repository operations
+- **Robust error handling** with comprehensive troubleshooting guidance
 
 The implementation roadmap outlined in the requirements document provides clear progression paths from MVP to advanced features, ensuring steady delivery of value while maintaining architectural integrity. Future enhancements like AST-based context expansion, FUSE virtual file systems, and enterprise features will further strengthen VDW's position as a comprehensive development environment solution.
 

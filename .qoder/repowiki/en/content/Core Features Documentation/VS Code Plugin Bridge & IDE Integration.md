@@ -20,11 +20,11 @@
 
 ## Update Summary
 **Changes Made**
-- Enhanced interactive repository wizard with comprehensive repository type selection and validation
-- Added AutoOpenService for automatic Git repository opening in VS Code Source Control
-- Expanded command system with new repository management commands (linkRepo, unlinkRepo, removeRepo)
-- Enhanced workspace tree view with improved status indicators and repository state visualization
-- Added new configuration options for AutoOpenService behavior
+- Enhanced interactive repository wizard with comprehensive multi-step interface including branch selection, editable mode configuration, and scope pattern specification
+- Added new remove repository command (`vdw.removeRepo`) with two-step process: unlink then remove from .vdwrc
+- Improved context menu integration with repository management actions for both linked and unlinked repositories
+- Enhanced workspace tree view with improved status indicators, repository state visualization, and scope configuration display
+- Expanded command system with granular repository management capabilities including unlinkRepo, linkRepo, and removeRepo commands
 - Integrated AutoOpenService into command execution flows for seamless developer experience
 
 ## Table of Contents
@@ -46,7 +46,7 @@
 ## Introduction
 This document provides comprehensive technical documentation for the VS Code plugin bridge and IDE integration feature of the Virtual Dev Workspace (VDW) system. The plugin serves as the primary interface between VS Code and the VDW virtual workspace engine, enabling developers to manage cross-repository development through a unified logical workspace view while maintaining seamless integration with VS Code's native Git functionality.
 
-The plugin implements a modern TypeScript architecture featuring dedicated services, providers, and UI components that work together to provide intelligent file filtering for AI agents while preserving the familiar VS Code development experience. Recent enhancements include an interactive repository wizard, automatic Git repository opening, and expanded command system for comprehensive workspace management.
+The plugin implements a modern TypeScript architecture featuring dedicated services, providers, and UI components that work together to provide intelligent file filtering for AI agents while preserving the familiar VS Code development experience. Recent enhancements include an interactive multi-step repository wizard, automatic Git repository opening, and expanded command system for comprehensive workspace management with granular repository control.
 
 ## Project Structure
 The VDW VS Code extension follows a clean, modular architecture with clear separation of concerns across services, providers, and UI components.
@@ -380,7 +380,9 @@ The AI context filtering implementation ensures that AI agents only receive file
 
 The interactive repository wizard provides a comprehensive guided experience for adding repositories to the VDW workspace with enhanced validation and configuration options.
 
-### Repository Type Selection
+### Multi-Step Repository Addition Process
+
+**Step 1: Repository Type Selection**
 The wizard begins with a clear choice between remote and local repositories, each with distinct workflows and validation requirements.
 
 **Remote Repository Flow**
@@ -394,6 +396,24 @@ The wizard begins with a clear choice between remote and local repositories, eac
 - Automatic branch detection using Git commands
 - Workspace path configuration with validation
 - Editable mode selection for worktree vs linked approach
+
+**Step 2: Branch Selection**
+- Branch name input with validation
+- Default branch detection for local repositories
+- Support for custom branch specification
+- Validation of branch existence and accessibility
+
+**Step 3: Editable Mode Configuration**
+- Clear distinction between worktree (editable) and linked (read-only) modes
+- Visual indicators for repository status in the workspace tree
+- Automatic Git repository opening for editable dependencies
+- Context-sensitive help text for each mode
+
+**Step 4: Scope Pattern Specification**
+- Comma-separated glob patterns for file inclusion
+- Validation of include patterns with error reporting
+- Support for complex path matching patterns
+- Integration with minimatch library for pattern matching
 
 ### Advanced Configuration Options
 The wizard captures comprehensive repository configuration including scope patterns and editable preferences.
@@ -423,7 +443,7 @@ The wizard integrates seamlessly with the VDW CLI service and provides comprehen
 - Post-operation workspace state refresh
 
 **Section sources**
-- [addRepo.ts:13-257](file://vdw-vscode/src/commands/addRepo.ts#L13-L257)
+- [addRepo.ts:13-278](file://vdw-vscode/src/commands/addRepo.ts#L13-L278)
 
 ## AutoOpenService Integration
 
@@ -492,10 +512,11 @@ The fundamental workspace management commands remain unchanged but now integrate
 ### New Repository Management Commands
 The expanded command system introduces granular repository management capabilities.
 
-**vdw.addRepo**: Interactive repository addition wizard with validation
+**vdw.addRepo**: Interactive multi-step repository addition wizard with validation
 - Enhanced with automatic linking after successful addition
 - Integrates with AutoOpenService for immediate Git repository opening
 - Provides comprehensive user feedback and error reporting
+- Includes branch selection, editable mode configuration, and scope pattern specification
 
 **vdw.unlinkRepo**: Unlinks individual repositories
 - Context-sensitive command available from repository items
@@ -507,10 +528,11 @@ The expanded command system introduces granular repository management capabiliti
 - Immediate workspace state updates
 - Integration with AutoOpenService for Git repository opening
 
-**vdw.removeRepo**: Removes repositories from configuration
+**vdw.removeRepo**: Removes repositories from configuration with two-step process
 - Multi-step process: unlink then remove from .vdwrc
 - Confirmation dialog with repository details and warnings
 - Complete removal from workspace configuration
+- Direct .vdwrc modification without CLI store operation
 
 ### Command Implementation Patterns
 Each command follows consistent implementation patterns with comprehensive error handling and user feedback.
@@ -531,7 +553,7 @@ Each command follows consistent implementation patterns with comprehensive error
 - Consistent iconography and labeling
 
 **Section sources**
-- [index.ts:14-375](file://vdw-vscode/src/commands/index.ts#L14-L375)
+- [index.ts:14-401](file://vdw-vscode/src/commands/index.ts#L14-L401)
 
 ## Enhanced Workspace Tree View
 
@@ -719,6 +741,7 @@ The dependency analysis reveals the plugin's position as a central coordinator b
 - Check workspace path permissions and existence
 - Verify scope pattern syntax and glob matching
 - Review AutoOpenService settings for automatic Git opening
+- Ensure branch names are valid and accessible
 
 **AutoOpenService Problems**
 - Verify VS Code Git integration availability
@@ -744,7 +767,7 @@ The dependency analysis reveals the plugin's position as a central coordinator b
 - `VDW: Doctor` - Detailed system health report
 - `VDW: Refresh Context` - Preview current AI context
 - `VDW: Initialize Workspace` - Create new workspace template
-- `VDW: Add Repository` - Launch interactive repository wizard
+- `VDW: Add Repository` - Launch interactive multi-step repository wizard
 
 **Section sources**
 - [index.ts:164-183](file://vdw-vscode/src/commands/index.ts#L164-L183)
@@ -755,7 +778,7 @@ The dependency analysis reveals the plugin's position as a central coordinator b
 The VS Code plugin bridge and IDE integration feature represents a sophisticated solution for modern multi-repository development workflows. The recent enhancements demonstrate several key improvements:
 
 **Enhanced User Experience**
-- Interactive repository wizard with comprehensive validation and guidance
+- Interactive multi-step repository wizard with comprehensive validation and guidance
 - Automatic Git repository opening for seamless VS Code integration
 - Expanded command system with granular repository management capabilities
 - Enhanced workspace tree view with improved status visualization
@@ -769,7 +792,7 @@ The VS Code plugin bridge and IDE integration feature represents a sophisticated
 **Comprehensive Repository Management**
 - Granular control over individual repository states
 - Context-sensitive commands for repository-specific operations
-- Multi-step repository removal with proper cleanup
+- Two-step repository removal with proper cleanup and .vdwrc modification
 - Enhanced workspace state visualization and management
 
 **Modern Architecture Benefits**
