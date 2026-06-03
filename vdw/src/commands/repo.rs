@@ -1,12 +1,19 @@
 use anyhow::Result;
+use std::path::PathBuf;
 
+use crate::config::parser;
 use crate::store::{get_store_path, init_store, object_pool};
+use crate::types::config::{Dependency, Scope, VDWConfig};
 
-/// Add a repository to the Content Store
-pub fn add(url: String, _path: Option<String>, branch: Option<String>, _editable: bool) -> Result<()> {
+/// Add a repository to the workspace
+/// This will:
+/// 1. Clone the repository to the Content Store
+/// 2. Update the .vdwrc configuration file
+pub fn add(url: String, path: Option<String>, branch: Option<String>, editable: bool) -> Result<()> {
     // Ensure the store is initialized
     let store_path = ensure_store()?;
 
+    // Step 1: Clone repository to Content Store
     let repo_dir = object_pool::clone_to_store(&url, &store_path, branch.as_deref(), None)?;
 
     println!(
@@ -18,7 +25,100 @@ pub fn add(url: String, _path: Option<String>, branch: Option<String>, _editable
         println!("  Branch: {}", b);
     }
 
+    // Step 2: Update .vdwrc configuration
+    update_config(&url, path, branch, editable)?;
+
     Ok(())
+}
+
+/// Update the .vdwrc configuration file to add the new dependency
+fn update_config(
+    url: &str,
+    path: Option<String>,
+    branch: Option<String>,
+    editable: bool,
+) -> Result<()> {
+    // Find workspace root (directory containing .vdwrc)
+    let workspace_dir = find_workspace_root()?;
+    let config_path = workspace_dir.join(".vdwrc");
+
+    // Load existing config
+    let mut config = if config_path.exists() {
+        let content = std::fs::read_to_string(&config_path)?;
+        parser::parse_yaml(&content)?
+    } else {
+        // Create default config
+        VDWConfig {
+            workspace: crate::types::config::WorkspaceMeta {
+                name: "my-workspace".to_string(),
+                version: "1.0".to_string(),
+            },
+            dependencies: vec![],
+        }
+    };
+
+    // Check if dependency already exists
+    if config.dependencies.iter().any(|dep| dep.repo == url) {
+        println!("\x1b[33m\x1b[0m Repository already exists in configuration");
+        return Ok(());
+    }
+
+    // Create new dependency
+    let dependency = Dependency {
+        repo: url.to_string(),
+        path: path.unwrap_or_else(|| {
+            // Auto-generate path from repo name
+            let repo_name = url.split('/').last().unwrap_or("repo").replace(".git", "");
+            format!("./packages/{}", repo_name)
+        }),
+        branch,
+        tag: None,
+        commit: None,
+        scope: Scope {
+            include: vec!["**/*".to_string()],  // Default: all files
+            exclude: vec![],
+        },
+        editable,
+    };
+
+    // Validate dependency
+    if let Err(e) = dependency.validate() {
+        anyhow::bail!("Invalid dependency configuration: {}", e);
+    }
+
+    // Add to dependencies list
+    config.dependencies.push(dependency);
+
+    // Save updated config
+    let yaml_content = serde_yaml::to_string(&config)?;
+    std::fs::write(&config_path, &yaml_content)?;
+
+    println!("\x1b[32m✓\x1b[0m Configuration updated: {}", config_path.display());
+    println!("  Dependencies: {} total", config.dependencies.len());
+
+    Ok(())
+}
+
+/// Find the workspace root directory (containing .vdwrc)
+fn find_workspace_root() -> Result<PathBuf> {
+    let current_dir = std::env::current_dir()?;
+    let mut dir = current_dir.as_path();
+
+    loop {
+        if dir.join(".vdwrc").exists() || dir.join(".vdwrc.yml").exists() {
+            return Ok(dir.to_path_buf());
+        }
+
+        match dir.parent() {
+            Some(parent) => dir = parent,
+            None => {
+                anyhow::bail!(
+                    "No .vdwrc configuration file found in current directory or parents. \
+                     Run `vdw init` first."
+                )
+            }
+        }
+    }
 }
 
 /// Remove a repository from the Content Store

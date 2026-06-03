@@ -6,12 +6,14 @@ import { VDWFileProvider } from './providers/fileProvider';
 import { WorkspaceTreeProvider } from './providers/workspaceTreeView';
 import { StatusBarManager } from './providers/statusBar';
 import { registerCommands } from './commands/index';
+import { AutoOpenService } from './services/autoOpenService';
 import { log, dispose as disposeLogger } from './utils/logger';
 
 let fileProvider: VDWFileProvider | undefined;
 let treeProvider: WorkspaceTreeProvider | undefined;
 let statusBar: StatusBarManager | undefined;
 let contextService: ContextService | undefined;
+let autoOpenService: AutoOpenService | undefined;
 
 export function activate(context: vscode.ExtensionContext) {
     log('VDW extension activating...');
@@ -36,7 +38,7 @@ export function activate(context: vscode.ExtensionContext) {
     );
 
     // 3. Initialize TreeView
-    treeProvider = new WorkspaceTreeProvider(configService);
+    treeProvider = new WorkspaceTreeProvider(configService, cliService);
     const treeView = vscode.window.createTreeView('vdwWorkspace', {
         treeDataProvider: treeProvider,
         showCollapseAll: true,
@@ -47,10 +49,13 @@ export function activate(context: vscode.ExtensionContext) {
     statusBar = new StatusBarManager(configService);
     statusBar.update();
 
-    // 5. Initialize Context Service
+    // 5. Initialize AutoOpenService
+    autoOpenService = new AutoOpenService(configService);
+
+    // 6. Initialize Context Service
     contextService = new ContextService(configService, fileProvider, workspacePath);
 
-    // 6. Register commands
+    // 7. Register commands
     registerCommands(
         context,
         cliService,
@@ -59,9 +64,10 @@ export function activate(context: vscode.ExtensionContext) {
         fileProvider,
         treeProvider,
         statusBar,
+        autoOpenService,
     );
 
-    // 7. Watch .vdwrc for changes
+    // 8. Watch .vdwrc for changes
     const watcher = vscode.workspace.createFileSystemWatcher('**/.vdwrc');
     watcher.onDidChange(() => {
         log('.vdwrc changed, reloading...');
@@ -85,9 +91,14 @@ export function activate(context: vscode.ExtensionContext) {
     });
     context.subscriptions.push(watcher);
 
-    // 8. Initial context update
+    // 9. Initial context update
     contextService.getFileCount().then(count => {
         statusBar?.update(count);
+    });
+
+    // 10. Auto-open editable Git repositories on extension activation
+    autoOpenService.openAllEditableRepositories().then(() => {
+        log('Auto-open Git repositories completed');
     });
 
     log('VDW extension activated successfully');

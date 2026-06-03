@@ -1,6 +1,6 @@
 # VDW (Virtual Dev Workspace) - MVP 技术设计文档
 
-**文档版本**: v1.0  
+**文档版本**: v1.1  
 **创建日期**: 2026-06-02  
 **关联 PRD**: [VDW虚拟工作空间_需求文档_v1.0.md](./VDW虚拟工作空间_需求文档_v1.0.md)  
 **技术负责人**: TBD  
@@ -834,7 +834,8 @@ vdw-vscode/
 │   ├── services/                    # 业务逻辑
 │   │   ├── vdwCliService.ts         # CLI 调用封装
 │   │   ├── configService.ts         # .vdwrc 解析
-│   │   └── contextService.ts        # 上下文管理
+│   │   ├── contextService.ts        # 上下文管理
+│   │   └── autoOpenService.ts       # 自动打开 Git 仓库
 │   │
 │   ├── types/                       # TypeScript 类型定义
 │   │   └── vdwTypes.ts
@@ -1108,6 +1109,12 @@ import { VDWFileProvider } from './providers/fileProvider';
 import { WorkspaceTreeProvider } from './providers/workspaceTreeView';
 import { StatusBarManager } from './providers/statusBar';
 import { registerCommands } from './commands';
+import { AutoOpenService } from './services/autoOpenService';
+
+let fileProvider: VDWFileProvider;
+let treeProvider: WorkspaceTreeProvider;
+let statusBar: StatusBarManager;
+let autoOpenService: AutoOpenService;
 
 let fileProvider: VDWFileProvider;
 let treeProvider: WorkspaceTreeProvider;
@@ -1130,14 +1137,18 @@ export function activate(context: vscode.ExtensionContext) {
     });
     context.subscriptions.push(treeView);
     
-    // 3. 初始化状态栏
+    // 3. 初始化 AutoOpenService
+    autoOpenService = new AutoOpenService();
+    context.subscriptions.push(autoOpenService);
+    
+    // 4. 初始化状态栏
     statusBar = new StatusBarManager();
     statusBar.update(fileProvider);
     
-    // 4. 注册命令
-    registerCommands(context, fileProvider, treeProvider, statusBar);
+    // 5. 注册命令
+    registerCommands(context, fileProvider, treeProvider, statusBar, autoOpenService);
     
-    // 5. 监听 .vdwrc 文件变化
+    // 6. 监听 .vdwrc 文件变化
     const watcher = vscode.workspace.createFileSystemWatcher('**/.vdwrc');
     watcher.onDidChange(() => {
         fileProvider.reloadConfig();
@@ -1146,7 +1157,10 @@ export function activate(context: vscode.ExtensionContext) {
     });
     context.subscriptions.push(watcher);
     
-    // 6. 检测工作空间激活
+    // 7. 自动打开 Git 仓库（扩展激活时）
+    autoOpenService.openAllEditableRepositories();
+    
+    // 8. 检测工作空间激活
     detectAndActivateWorkspace();
 }
 
@@ -1171,6 +1185,199 @@ export function deactivate() {
     statusBar.dispose();
 }
 ```
+
+### 4.5 Auto-Open Git Repository 功能设计
+
+#### 4.5.1 功能概述
+
+在 add、link、relink 操作后以及扩展激活时，自动在 VS Code Source Control 面板中注册可编辑依赖的 Git 仓库，使开发者能立即看到各子仓库的变更状态，无需手动执行 `git.openRepository`。
+
+#### 4.5.2 触发时机
+
+| 触发时机 | 描述 | 实现方式 |
+|---------|------|---------|
+| 扩展激活时 | VS Code 打开工作区时 | `extension.ts` 中调用 `autoOpenService.openAllEditableRepositories()` |
+| `vdw.link` 成功后 | 链接操作完成后 | 命令回调中调用 `autoOpenService.openAllEditableRepositories()` |
+| `vdw.relink` 成功后 | 重新链接操作完成后 | 命令回调中调用 `autoOpenService.openAllEditableRepositories()` |
+| `vdw.addRepo` 成功后 | 添加新仓库后 | 命令回调中调用 `autoOpenService.openAllEditableRepositories()` |
+
+#### 4.5.3 Worktree 路径解析
+
+AutoOpenService 通过读取 `.vdw/state.json` 文件获取 worktree 路径，该文件由 Rust CLI 在 link 操作时生成：
+
+```typescript
+// 从 .vdw/state.json 读取 worktree 路径
+async function getWorktreePath(dep: Dependency): Promise<string | null> {
+    const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+    if (!workspaceFolder) return null;
+    
+    const statePath = path.join(workspaceFolder.uri.fsPath, '.vdw', 'state.json');
+    if (!fs.existsSync(statePath)) return null;
+    
+    try {
+        const state = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+        const worktree = state.worktrees?.find(
+            (wt: any) => wt.repo_url === dep.repo && wt.branch === dep.branch
+        );
+        return worktree?.path || null;
+    } catch {
+        return null;
+    }
+}
+```
+
+#### 4.5.4 核心实现 (autoOpenService.ts)
+
+```typescript
+// src/services/autoOpenService.ts
+
+import * as vscode from 'vscode';
+import * as fs from 'fs';
+import * as path from 'path';
+
+interface Dependency {
+    repo: string;
+    path: string;
+    branch?: string;
+    tag?: string;
+    commit?: string;
+    editable: boolean;
+}
+
+interface Config {
+    workspace: { name: string; version: string };
+    dependencies: Dependency[];
+}
+
+interface WorktreeInfo {
+    repo_url: string;
+    branch: string;
+    path: string;
+}
+
+interface WorkspaceState {
+    worktrees: WorktreeInfo[];
+}
+
+export class AutoOpenService implements vscode.Disposable {
+    private _disposables: vscode.Disposable[] = [];
+
+    /**
+     * 打开所有可编辑仓库的 Git 仓库注册
+     */
+    async openAllEditableRepositories(): Promise<void> {
+        const config = this.loadConfig();
+        if (!config) return;
+        
+        if (!this.isAutoOpenEnabled()) {
+            console.log('Auto-open Git repositories is disabled');
+            return;
+        }
+        
+        const editableDeps = config.dependencies.filter(d => d.editable);
+        if (editableDeps.length === 0) return;
+        
+        const delay = this.getOpenDelay();
+        
+        for (const dep of editableDeps) {
+            const worktreePath = await this.getWorktreePath(dep);
+            if (worktreePath && fs.existsSync(worktreePath)) {
+                try {
+                    await vscode.commands.executeCommand(
+                        'git.openRepository',
+                        vscode.Uri.file(worktreePath)
+                    );
+                    console.log(`Auto-opened Git repository: ${worktreePath}`);
+                } catch (err) {
+                    console.error(`Failed to auto-open Git repository: ${worktreePath}`, err);
+                }
+                await new Promise(resolve => setTimeout(resolve, delay));
+            }
+        }
+    }
+
+    private loadConfig(): Config | null {
+        const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+        if (!workspaceFolder) return null;
+        
+        const vdwrcPath = path.join(workspaceFolder.uri.fsPath, '.vdwrc');
+        if (!fs.existsSync(vdwrcPath)) return null;
+        
+        try {
+            const content = fs.readFileSync(vdwrcPath, 'utf-8');
+            return JSON.parse(content);
+        } catch {
+            return null;
+        }
+    }
+
+    private async getWorktreePath(dep: Dependency): Promise<string | null> {
+        const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+        if (!workspaceFolder) return null;
+        
+        const statePath = path.join(workspaceFolder.uri.fsPath, '.vdw', 'state.json');
+        if (!fs.existsSync(statePath)) return null;
+        
+        try {
+            const state: WorkspaceState = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+            const worktree = state.worktrees?.find(
+                wt => wt.repo_url === dep.repo && wt.branch === (dep.branch || 'main')
+            );
+            return worktree?.path || null;
+        } catch {
+            return null;
+        }
+    }
+
+    private isAutoOpenEnabled(): boolean {
+        return vscode.workspace.getConfiguration('vdw').get<boolean>('autoOpenGitRepositories', true);
+    }
+
+    private getOpenDelay(): number {
+        return vscode.workspace.getConfiguration('vdw').get<number>('autoOpenDelay', 500);
+    }
+
+    dispose(): void {
+        this._disposables.forEach(d => d.dispose());
+        this._disposables = [];
+    }
+}
+```
+
+#### 4.5.5 配置项
+
+```json
+// VS Code settings.json
+{
+  "vdw.autoOpenGitRepositories": true,   // 是否自动打开 Git 仓库（默认 true）
+  "vdw.autoOpenDelay": 500               // 仓库间打开延迟（毫秒，默认 500）
+}
+```
+
+#### 4.5.6 集成到命令中
+
+在命令回调中，link/relink/addRepo 操作成功完成后调用 AutoOpenService：
+
+```typescript
+// commands/link.ts
+async function handleLink() {
+    // ... existing link logic ...
+    if (result.exitCode === 0) {
+        // Refresh all UI components
+        await autoOpenService.openAllEditableRepositories();
+    }
+}
+```
+
+#### 4.5.7 错误处理策略
+
+| 场景 | 处理方式 |
+|------|---------|
+| Git 扩展未激活 | `git.openRepository` 命令自动触发 Git 扩展激活 |
+| worktree 路径不存在 | 跳过该仓库，记录日志，继续下一个 |
+| state.json 解析失败 | 跳过所有自动打开，记录日志 |
+| 用户禁用配置 | 检查 `vdw.autoOpenGitRepositories` 配置，为 false 时跳过 |
+| 命令调用异常 | try-catch 包裹，不阻断主流程 |
 
 ---
 
@@ -2130,6 +2337,15 @@ vsce publish
 - **FUSE 虚拟文件系统**：完全透明的 VFS
 - **LLM Gateway**：动态上下文注入
 - **JetBrains 插件**：IntelliJ/WebStorm 支持
+
+---
+
+### 变更记录
+
+| 版本 | 日期 | 变更内容 |
+|------|------|---------|
+| v1.0 | 2026-06-02 | 初始版本，MVP 技术设计 |
+| v1.1 | 2026-06-02 | 新增 Auto-Open Git Repository 功能设计（第 4.5 节），更新插件架构和配置项 |
 
 ---
 

@@ -1,0 +1,108 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "vdw-vscode: watch",
+      "type": "npm",
+      "script": "watch",
+      "path": "vdw-vscode",
+      "problemMatcher": "$tsc-watch",
+      "isBackground": true,
+      "presentation": {
+        "reveal": "never",
+        "panel": "shared"
+      },
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      }
+    },
+    {
+      "label": "vdw-vscode: compile",
+      "type": "npm",
+      "script": "compile",
+      "path": "vdw-vscode",
+      "problemMatcher": "$tsc",
+      "group": "build"
+    },
+    {
+      "label": "vdw-vscode: install",
+      "type": "npm",
+      "script": "install",
+      "path": "vdw-vscode",
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "new"
+      }
+    },
+    {
+      "label": "vdw-vscode: test",
+      "type": "npm",
+      "script": "test",
+      "path": "vdw-vscode",
+      "problemMatcher": "$tsc",
+      "group": "test"
+    },
+    {
+      "label": "vdw: build debug",
+      "type": "shell",
+      "command": "cargo",
+      "args": [
+        "build",
+        "--manifest-path",
+        "${workspaceFolder}/vdw/Cargo.toml"
+      ],
+      "problemMatcher": "$rustc",
+      "group": "build",
+      "presentation": {
+        "reveal": "silent",
+        "panel": "shared"
+      }
+    },
+    {
+      "label": "vdw: build release",
+      "type": "shell",
+      "command": "cargo",
+      "args": [
+        "build",
+        "--release",
+        "--manifest-path",
+        "${workspaceFolder}/vdw/Cargo.toml"
+      ],
+      "problemMatcher": "$rustc",
+      "group": {
+        "kind": "build",
+        "isDefault": false
+      }
+    },
+    {
+      "label": "vdw: copy binary",
+      "type": "shell",
+      "command": "cp",
+      "args": [
+        "${workspaceFolder}/vdw/target/release/vdw",
+        "${workspaceFolder}/vdw/vdw"
+      ],
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "silent",
+        "panel": "shared"
+      }
+    },
+    {
+      "label": "Build All (VDW + Extension)",
+      "dependsOn": [
+        "vdw: build release",
+        "vdw: copy binary",
+        "vdw-vscode: compile"
+      ],
+      "dependsOrder": "sequence",
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "problemMatcher": []
+    }
+  ]
+}

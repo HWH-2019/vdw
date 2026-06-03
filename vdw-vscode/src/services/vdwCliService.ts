@@ -20,7 +20,34 @@ export class VDWCliService {
     /** Get the configured CLI binary path */
     private getCliPath(): string {
         const config = vscode.workspace.getConfiguration('vdw');
-        return config.get<string>('cliPath', 'vdw');
+        const configuredPath = config.get<string>('cliPath', '');
+
+        log(`Using CLI path: ${configuredPath}`);
+        
+        // If configured path is set, use it
+        if (configuredPath) {
+            return configuredPath;
+        }
+        
+        // Auto-detect debug binary in development mode
+        if (process.env.VDW_DEBUG === 'true') {
+            const debugPath = path.join(__dirname, '..', '..', '..', 'vdw', 'target', 'debug', 'vdw');
+            log(`Development mode: using debug CLI at ${debugPath}`);
+            return debugPath;
+        }
+        
+        // Try to detect local vdw binary in workspace
+        const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+        if (workspaceFolder) {
+            const localVdw = path.join(workspaceFolder.uri.fsPath, 'vdw', 'vdw');
+            if (require('fs').existsSync(localVdw)) {
+                log(`Using local vdw binary: ${localVdw}`);
+                return localVdw;
+            }
+        }
+        
+        // Fallback to system PATH
+        return 'vdw';
     }
 
     /** Execute a VDW CLI command */
@@ -68,9 +95,19 @@ export class VDWCliService {
         return this.executeCommand('link');
     }
 
+    /** Run vdw link --repo for a specific repository */
+    async linkRepo(repoUrl: string): Promise<CommandResult> {
+        return this.executeCommand('link', ['--repo', repoUrl]);
+    }
+
     /** Run vdw unlink */
     async unlink(): Promise<CommandResult> {
         return this.executeCommand('unlink');
+    }
+
+    /** Run vdw unlink --repo for a specific repository */
+    async unlinkRepo(repoUrl: string): Promise<CommandResult> {
+        return this.executeCommand('unlink', ['--repo', repoUrl]);
     }
 
     /** Run vdw validate and parse result */

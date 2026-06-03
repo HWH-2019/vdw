@@ -49,9 +49,17 @@ impl Dependency {
     /// Validate dependency configuration
     pub fn validate(&self) -> Result<(), String> {
         // Check repo URL format
-        if !self.repo.starts_with("git@") && !self.repo.starts_with("https://") {
+        // Support: git@, https://, http://, or local file paths
+        let is_valid_url = self.repo.starts_with("git@") 
+            || self.repo.starts_with("https://") 
+            || self.repo.starts_with("http://")
+            || self.repo.starts_with("/")  // Absolute path
+            || self.repo.starts_with("./") // Relative path
+            || self.repo.starts_with("../"); // Parent path
+        
+        if !is_valid_url {
             return Err(format!(
-                "Invalid repo URL '{}': must start with 'git@' or 'https://'",
+                "Invalid repo URL '{}': must start with 'git@', 'https://', 'http://', or be a file path",
                 self.repo
             ));
         }

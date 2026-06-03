@@ -1,0 +1,68 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "1️⃣ VDW Plugin (Extension Host)",
+      "type": "extensionHost",
+      "request": "launch",
+      "args": [
+        "--extensionDevelopmentPath=${workspaceFolder}/vdw-vscode"
+      ],
+      "outFiles": [
+        "${workspaceFolder}/vdw-vscode/out/**/*.js"
+      ],
+      "preLaunchTask": "vdw-vscode: watch",
+      "env": {
+        "VDW_DEBUG": "true"
+      }
+    },
+    {
+      "name": "2️⃣ VDW CLI (Rust Debugger)",
+      "type": "lldb",
+      "request": "launch",
+      "program": "${workspaceFolder}/vdw/target/debug/vdw",
+      "args": ["--verbose", "init"],
+      "cwd": "${workspaceFolder}/vdw-test",
+      "preLaunchTask": "vdw: build debug",
+      "sourceLanguages": ["rust"],
+      "console": "integratedTerminal"
+    },
+    {
+      "name": "3️⃣ VDW CLI - Link Command",
+      "type": "lldb",
+      "request": "launch",
+      "program": "${workspaceFolder}/vdw/target/debug/vdw",
+      "args": ["--verbose", "link"],
+      "cwd": "${workspaceFolder}/vdw-test",
+      "preLaunchTask": "vdw: build debug",
+      "sourceLanguages": ["rust"],
+      "console": "integratedTerminal"
+    },
+    {
+      "name": "4️⃣ VDW CLI - Validate Command",
+      "type": "lldb",
+      "request": "launch",
+      "program": "${workspaceFolder}/vdw/target/debug/vdw",
+      "args": ["--verbose", "validate"],
+      "cwd": "${workspaceFolder}/vdw-test",
+      "preLaunchTask": "vdw: build debug",
+      "sourceLanguages": ["rust"],
+      "console": "integratedTerminal"
+    }
+  ],
+  "compounds": [
+    {
+      "name": "🔥 Joint Debug: Plugin + CLI",
+      "configurations": [
+        "1️⃣ VDW Plugin (Extension Host)",
+        "2️⃣ VDW CLI (Rust Debugger)"
+      ],
+      "presentation": {
+        "hidden": false,
+        "group": "vdw-debug",
+        "order": 1
+      },
+      "stopAll": true
+    }
+  ]
+}

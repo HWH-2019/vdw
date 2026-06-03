@@ -24,9 +24,17 @@ enum Commands {
         template: Option<String>,
     },
     /// Create links for the workspace
-    Link,
+    Link {
+        /// Only link the specified repository URL
+        #[arg(long)]
+        repo: Option<String>,
+    },
     /// Remove links from the workspace
-    Unlink,
+    Unlink {
+        /// Only unlink the specified repository URL
+        #[arg(long)]
+        repo: Option<String>,
+    },
     /// Manage repositories in the workspace
     Repo {
         #[command(subcommand)]
@@ -107,8 +115,8 @@ enum ContextCommands {
 fn run_command(cli: Cli) -> anyhow::Result<()> {
     match cli.command {
         Commands::Init { template } => commands::init::execute(template),
-        Commands::Link => commands::link::execute(),
-        Commands::Unlink => commands::link::unlink(),
+        Commands::Link { repo } => commands::link::execute(repo.as_deref()),
+        Commands::Unlink { repo } => commands::link::unlink(repo.as_deref()),
         Commands::Repo { command } => match command {
             RepoCommands::Add {
                 url,

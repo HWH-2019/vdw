@@ -288,6 +288,72 @@ VDW 返回的上下文文件:
 - 状态栏显示当前 AI 上下文包含的仓库列表和文件数量
 - 一键添加远程仓库到当前工作空间（自动更新 `.vdwrc`）
 - 提供命令面板操作：`VDW: Link`、`VDW: Unlink`、`VDW: Refresh Context`
+- **自动打开 Git 仓库**：在 add、link、relink 操作后自动在 VS Code Source Control 中注册可编辑依赖的 Git 仓库
+
+**自动打开 Git 仓库功能详解**：
+
+**触发时机**：
+1. **扩展激活时**：VS Code 打开工作区时，自动检测 `.vdwrc` 并打开所有 `editable: true` 的仓库
+2. **vdw.link 成功后**：链接操作完成后，自动打开新增的可编辑仓库
+3. **vdw.relink 成功后**：重新链接操作完成后，自动刷新 Git 仓库注册
+4. **vdw.addRepo 成功后**：添加新仓库后，如果标记为 `editable: true`，自动打开其 Git 仓库
+
+**实现机制**：
+```typescript
+// 从 .vdw/state.json 读取 worktree 路径
+async function getWorktreePath(dep: Dependency): Promise<string | null> {
+    const statePath = path.join(workspacePath, '.vdw', 'state.json');
+    const state = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+    const worktree = state.worktrees?.find(
+        (wt: any) => wt.repo_url === dep.repo && wt.branch === dep.branch
+    );
+    return worktree?.path || null;
+}
+
+// 自动打开 Git 仓库（触发 VS Code 原生 Source Control 面板显示）
+async function autoOpenGitRepositories(configService: ConfigService): Promise<void> {
+    const config = configService.getConfig();
+    
+    for (const dep of config.dependencies) {
+        if (dep.editable) {
+            const worktreePath = await getWorktreePath(dep);
+            if (worktreePath && fs.existsSync(worktreePath)) {
+                try {
+                    // 调用 Git 扩展的 API 触发原生 Source Control 面板显示该仓库
+                    await vscode.commands.executeCommand(
+                        'git.openRepository',
+                        vscode.Uri.file(worktreePath)
+                    );
+                    log(`Auto-opened Git repository: ${worktreePath}`);
+                } catch (err) {
+                    logError(`Failed to auto-open Git repository: ${worktreePath}`, err);
+                    // 不阻断流程
+                }
+                await new Promise(resolve => setTimeout(resolve, 500));
+            }
+        }
+    }
+}
+```
+
+**潜在问题与解决方案**：
+
+| 问题 | 原因 | 解决方案 |
+|------|------|---------||
+| **Git 扩展未激活** | VS Code 启动时 Git 扩展可能延迟加载 | `git.openRepository` 命令自动触发 Git 扩展激活 |
+| **多个仓库并发打开冲突** | 快速调用 `git.openRepository` 可能导致状态冲突 | 添加 500ms 延迟，串行打开仓库 |
+| **worktree 路径不存在** | link 操作失败或 state.json 未更新 | 添加路径存在性检查，失败时记录日志但不阻断流程 |
+| **用户不想自动打开** | 某些场景下用户希望手动控制 | 提供配置项 `vdw.autoOpenGitRepositories` (默认 true) |
+| **Git 扩展 API 变更** | VS Code 更新可能导致 API 不兼容 | 添加 try-catch 错误处理，降级为手动提示 |
+
+**用户配置**：
+```json
+// VS Code settings.json
+{
+  "vdw.autoOpenGitRepositories": true,  // 是否自动打开 Git 仓库（默认 true）
+  "vdw.autoOpenDelay": 500              // 仓库间打开延迟（毫秒，默认 500）
+}
+```
 
 **UI 设计**：
 ```
@@ -324,6 +390,17 @@ VDW 返回的上下文文件:
 │ [+ 添加仓库]  [🔄 刷新]                 │
 └─────────────────────────────────────────┘
 
+┌─ 源代码管理 ───────────────────────────┐
+│ 📦 vdw-test (main)                     │  ← 主仓库
+│                                         │
+│ 📦 frontend (feat/new-ui)              │  ← 自动打开的子仓库
+│    Changes: 3 files modified           │
+│    [✓ Commit] [↑ Push]                 │
+│                                         │
+│  shared-lib (main)                   │  ← 自动打开的子仓库
+│    No changes                          │
+└─────────────────────────────────────────┘
+
 状态栏: [🤖 AI 上下文: 2 个仓库 | 156 文件]
 ```
 
@@ -332,6 +409,16 @@ VDW 返回的上下文文件:
 - [ ] 侧边栏视图实时更新链接状态
 - [ ] 命令面板操作有明确的成功/失败反馈
 - [ ] 与 VS Code 原生 Git 集成兼容（不冲突）
+- [ ] **自动打开 Git 仓库功能**：
+  - [ ] 扩展激活时自动打开所有 `editable: true` 的仓库
+  - [ ] `vdw.link` 成功后自动打开新增的可编辑仓库
+  - [ ] `vdw.relink` 成功后自动刷新 Git 仓库注册
+  - [ ] `vdw.addRepo` 成功后自动打开新添加的可编辑仓库
+  - [ ] 提供配置项 `vdw.autoOpenGitRepositories` 控制开关
+  - [ ] VS Code Source Control 面板显示所有子仓库
+  - [ ] 子仓库支持正常的 Git 操作（commit、push、pull）
+  - [ ] 错误处理完善，失败时不阻断主流程
+  - [ ] 多个仓库打开时添加延迟避免冲突
 
 ---
 
@@ -530,12 +617,13 @@ vdw <command> --help
 ### 5.1 技术风险
 
 | 风险 | 影响 | 概率 | 应对策略 |
-|------|------|------|---------|
+|------|------|------|---------||
 | **Git 状态管理冲突** | 高 | 中 | 采用 Git Worktree 方案，每个逻辑目录保持独立的 `.git`，避免直接编辑 Store 中的文件 |
 | **跨平台兼容性** | 中 | 高 | 抽象文件系统接口，提供平台特定的链接策略（Hard Link / Junction / Symlink），并设置降级方案 |
 | **AI 上下文不一致** | 高 | 中 | 实现事件驱动索引，文件修改后 1 秒内更新索引；在 Prompt 中标注"脏文件" |
 | **循环依赖导致死锁** | 高 | 低 | `.vdwrc` 解析阶段进行 DAG 检测，拒绝循环依赖配置 |
 | **IDE 插件性能开销** | 中 | 中 | VDW 仅在初始化/切换分支时介入，日常编码时文件操作直接作用于 Overlay 层 |
+| **自动打开 Git 仓库失败** | 低 | 中 | Git 扩展未安装或 API 变更时降级为手动提示，添加错误日志和重试机制 |
 
 ### 5.2 业务风险
 
@@ -567,6 +655,7 @@ vdw <command> --help
 - [ ] Git Worktree 集成（editable 模式）
 - [ ] `.vdwrc` 解析与验证
 - [ ] VS Code 插件（侧边栏视图、FileProvider、状态栏）
+- [ ] **自动打开 Git 仓库功能**（扩展激活、link/relink/add 后自动注册）
 - [ ] 基础文档（README、快速开始指南）
 
 **技术指标**：
@@ -697,6 +786,7 @@ vdw <command> --help
 | 版本 | 日期 | 变更内容 | 作者 |
 |------|------|---------|------|
 | v1.0 | 2026-06-02 | 初始版本，MVP 需求定义 | AI Agent |
+| v1.1 | 2026-06-02 | 新增自动打开 Git 仓库功能需求（F6 增强） | AI Agent |
 
 ---
 

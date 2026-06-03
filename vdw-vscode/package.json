@@ -13,13 +13,25 @@
   ],
   "main": "./out/extension.js",
   "contributes": {
-    "commands": [
+   "commands": [
       { "command": "vdw.init", "title": "VDW: Initialize Workspace" },
-      { "command": "vdw.link", "title": "VDW: Link Dependencies" },
-      { "command": "vdw.unlink", "title": "VDW: Unlink Dependencies" },
+      { 
+        "command": "vdw.linkRepo", 
+        "title": "Link Repository", 
+        "icon": "$(link)"
+      },
+      { 
+        "command": "vdw.unlinkRepo", 
+        "title": "Unlink Repository", 
+        "icon": {
+          "light": "resources/icons/unlink-light.svg",
+          "dark": "resources/icons/unlink-dark.svg"
+        }
+      },
+      { "command": "vdw.relink", "title": "VDW: Relink Dependencies (Update Config)", "icon": "$(sync)" },
       { "command": "vdw.validate", "title": "VDW: Validate Configuration" },
-      { "command": "vdw.addRepo", "title": "VDW: Add Repository" },
-      { "command": "vdw.refreshContext", "title": "VDW: Refresh Context" }
+      { "command": "vdw.addRepo", "title": "VDW: Add Repository", "icon": "$(add)" },
+      { "command": "vdw.refreshContext", "title": "VDW: Refresh Context", "icon": "$(refresh)" }
     ],
     "viewsContainers": {
       "activitybar": [
@@ -34,7 +46,42 @@
       "vdw-explorer": [
         {
           "id": "vdwWorkspace",
-          "name": "Dependencies"
+          "name": "Dependencies",
+          "contextualTitle": "VDW Workspace"
+        }
+      ]
+    },
+    "menus": {
+      "view/title": [
+        {
+          "command": "vdw.addRepo",
+          "when": "view == vdwWorkspace",
+          "group": "navigation@1",
+          "icon": "$(add)"
+        },
+        {
+          "command": "vdw.refreshContext",
+          "when": "view == vdwWorkspace",
+          "group": "navigation@2",
+          "icon": "$(refresh)"
+        },
+        {
+          "command": "vdw.relink",
+          "when": "view == vdwWorkspace",
+          "group": "navigation@3",
+          "icon": "$(sync)"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "vdw.unlinkRepo",
+          "when": "view == vdwWorkspace && viewItem == linkedRepo",
+          "group": "inline@1"
+        },
+        {
+          "command": "vdw.linkRepo",
+          "when": "view == vdwWorkspace && viewItem == unlinkedRepo",
+          "group": "inline@1"
         }
       ]
     },
@@ -45,6 +92,16 @@
           "type": "string",
           "default": "vdw",
           "description": "Path to the VDW CLI binary"
+        },
+        "vdw.autoOpenGitRepositories": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically open editable Git repositories in VS Code Source Control after link/relink/add operations"
+        },
+        "vdw.autoOpenDelay": {
+          "type": "number",
+          "default": 500,
+          "description": "Delay in milliseconds between opening each Git repository to avoid concurrent conflicts"
         }
       }
     }

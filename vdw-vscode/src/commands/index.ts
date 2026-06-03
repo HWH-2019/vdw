@@ -4,10 +4,12 @@ import * as fs from 'fs';
 import { VDWCliService } from '../services/vdwCliService';
 import { ConfigService } from '../services/configService';
 import { ContextService } from '../services/contextService';
+import { AutoOpenService } from '../services/autoOpenService';
 import { VDWFileProvider } from '../providers/fileProvider';
 import { WorkspaceTreeProvider } from '../providers/workspaceTreeView';
 import { StatusBarManager } from '../providers/statusBar';
 import { log, logError, show as showLog } from '../utils/logger';
+import { handleAddRepo } from './addRepo';
 
 export function registerCommands(
     context: vscode.ExtensionContext,
@@ -17,6 +19,7 @@ export function registerCommands(
     fileProvider: VDWFileProvider,
     treeProvider: WorkspaceTreeProvider,
     statusBar: StatusBarManager,
+    autoOpenService?: AutoOpenService,
 ): void {
     // vdw.init
     context.subscriptions.push(
@@ -67,6 +70,9 @@ export function registerCommands(
                     treeProvider.refresh();
                     const fileCount = await contextService.getFileCount();
                     statusBar.update(fileCount);
+                    
+                    // Auto-open Git repositories for editable dependencies
+                    await autoOpenService?.openAllEditableRepositories();
                 } else {
                     vscode.window.showErrorMessage(`VDW link failed: ${result.stderr || result.stdout}`);
                     statusBar.showError('Link failed');
@@ -104,6 +110,57 @@ export function registerCommands(
         })
     );
 
+    // vdw.relink - Unlink then link with updated config
+    context.subscriptions.push(
+        vscode.commands.registerCommand('vdw.relink', async () => {
+            try {
+                const proceed = await vscode.window.showWarningMessage(
+                    'This will unlink all dependencies and re-link them based on the current configuration. Continue?',
+                    { modal: true },
+                    'Yes, Relink',
+                    'Cancel'
+                );
+                
+                if (proceed !== 'Yes, Relink') {
+                    return;
+                }
+                
+                statusBar.showBusy('Relinking...');
+                log('Running vdw relink (unlink + link)...');
+                
+                // Step 1: Unlink
+                const unlinkResult = await cliService.unlink();
+                if (unlinkResult.exitCode !== 0) {
+                    vscode.window.showErrorMessage(`Unlink failed: ${unlinkResult.stderr || unlinkResult.stdout}`);
+                    statusBar.showError('Relink failed');
+                    return;
+                }
+                
+                // Step 2: Link
+                const linkResult = await cliService.link();
+                if (linkResult.exitCode === 0) {
+                    vscode.window.showInformationMessage('Dependencies relinked successfully with updated config!');
+                    configService.reload();
+                    contextService.refresh();
+                    fileProvider.refresh();
+                    treeProvider.refresh();
+                    const fileCount = await contextService.getFileCount();
+                    statusBar.update(fileCount);
+                    
+                    // Auto-open Git repositories for editable dependencies
+                    await autoOpenService?.openAllEditableRepositories();
+                } else {
+                    vscode.window.showErrorMessage(`Link failed: ${linkResult.stderr || linkResult.stdout}`);
+                    statusBar.showError('Relink failed');
+                }
+            } catch (err) {
+                logError('Relink command failed', err);
+                vscode.window.showErrorMessage(`VDW relink error: ${err}`);
+                statusBar.showError('Error');
+            }
+        })
+    );
+
     // vdw.validate
     context.subscriptions.push(
         vscode.commands.registerCommand('vdw.validate', async () => {
@@ -125,56 +182,115 @@ export function registerCommands(
         })
     );
 
-    // vdw.addRepo
+    // vdw.addRepo - Interactive wizard, auto-link on success
     context.subscriptions.push(
         vscode.commands.registerCommand('vdw.addRepo', async () => {
+            const success = await handleAddRepo(cliService, configService);
+            if (success) {
+                log('Add repository succeeded, auto-linking...');
+                statusBar.showBusy('Linking...');
+                const result = await cliService.link();
+                if (result.exitCode === 0) {
+                    log('Auto-link after add succeeded');
+                } else {
+                    logError('Auto-link after add failed', result.stderr);
+                }
+            }
+            // Refresh UI after adding
+            treeProvider?.refresh();
+            statusBar?.update();
+            // Auto-open Git repositories if new dependency is editable
+            await autoOpenService?.openAllEditableRepositories();
+        }),
+    );
+
+    // vdw.unlinkRepo - Unlink a specific repository
+    context.subscriptions.push(
+        vscode.commands.registerCommand('vdw.unlinkRepo', async (treeItem?: any) => {
+            if (!treeItem || !treeItem.dependency) {
+                vscode.window.showErrorMessage('No repository selected');
+                return;
+            }
+
+            const dep = treeItem.dependency;
+            const repoUrl = dep.repo;
+            const repoName = repoUrl.split('/').pop()?.replace('.git', '') || repoUrl;
+
+            const proceed = await vscode.window.showWarningMessage(
+                `Unlink repository "${repoName}"?\n\nPath: ${dep.path}\n\nThis will remove the linked files from the workspace.`,
+                { modal: true },
+                'Yes, Unlink',
+                'Cancel'
+            );
+
+            if (proceed !== 'Yes, Unlink') {
+                return;
+            }
+
             try {
-                // Get repo URL
-                const url = await vscode.window.showInputBox({
-                    prompt: 'Repository URL',
-                    placeHolder: 'https://github.com/org/repo.git',
-                });
-                if (!url) { return; }
+                statusBar.showBusy(`Unlinking ${repoName}...`);
+                log(`Unlinking repository: ${repoName} (${repoUrl})`);
 
-                // Get local path
-                const localPath = await vscode.window.showInputBox({
-                    prompt: 'Local path (relative to workspace)',
-                    placeHolder: './libs/my-lib',
-                });
-                if (!localPath) { return; }
+                // Execute per-repo unlink
+                const result = await cliService.unlinkRepo(repoUrl);
 
-                // Get branch
-                const branch = await vscode.window.showInputBox({
-                    prompt: 'Branch name (leave empty for main)',
-                    placeHolder: 'main',
-                });
-
-                // Append to .vdwrc
-                const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
-                if (!workspaceFolder) {
-                    vscode.window.showErrorMessage('No workspace folder open');
-                    return;
+                if (result.exitCode === 0) {
+                    vscode.window.showInformationMessage(`Repository "${repoName}" unlinked successfully!`);
+                    configService.reload();
+                    contextService.refresh();
+                    fileProvider.refresh();
+                    treeProvider.refresh();
+                    const fileCount = await contextService.getFileCount();
+                    statusBar.update(fileCount);
+                } else {
+                    vscode.window.showErrorMessage(`Failed to unlink ${repoName}: ${result.stderr || result.stdout}`);
+                    statusBar.showError('Unlink failed');
                 }
-
-                const vdwrcPath = path.join(workspaceFolder.uri.fsPath, '.vdwrc');
-                if (!fs.existsSync(vdwrcPath)) {
-                    vscode.window.showErrorMessage('.vdwrc not found. Run "VDW: Initialize Workspace" first.');
-                    return;
-                }
-
-                // Read current config and append new dependency
-                let content = fs.readFileSync(vdwrcPath, 'utf-8');
-                const newDep = `\n  - repo: "${url}"\n    path: ${localPath}\n    branch: ${branch || 'main'}\n    scope:\n      include:\n        - "src/**"\n    editable: false\n`;
-                content += newDep;
-                fs.writeFileSync(vdwrcPath, content);
-
-                vscode.window.showInformationMessage(`Added dependency: ${url}`);
-                configService.reload();
-                treeProvider.refresh();
-                statusBar.update();
             } catch (err) {
-                logError('Add repo command failed', err);
-                vscode.window.showErrorMessage(`Failed to add repository: ${err}`);
+                logError(`Unlink repository ${repoName} failed`, err);
+                vscode.window.showErrorMessage(`Error unlinking ${repoName}: ${err}`);
+                statusBar.showError('Error');
+            }
+        })
+    );
+
+    // vdw.linkRepo - Link a specific repository
+    context.subscriptions.push(
+        vscode.commands.registerCommand('vdw.linkRepo', async (treeItem?: any) => {
+            if (!treeItem || !treeItem.dependency) {
+                vscode.window.showErrorMessage('No repository selected');
+                return;
+            }
+
+            const dep = treeItem.dependency;
+            const repoUrl = dep.repo;
+            const repoName = repoUrl.split('/').pop()?.replace('.git', '') || repoUrl;
+
+            try {
+                statusBar.showBusy(`Linking ${repoName}...`);
+                log(`Linking repository: ${repoName} (${repoUrl})`);
+
+                const result = await cliService.linkRepo(repoUrl);
+
+                if (result.exitCode === 0) {
+                    vscode.window.showInformationMessage(`Repository "${repoName}" linked successfully!`);
+                    configService.reload();
+                    contextService.refresh();
+                    fileProvider.refresh();
+                    treeProvider.refresh();
+                    const fileCount = await contextService.getFileCount();
+                    statusBar.update(fileCount);
+                    
+                    // Auto-open Git repository for this editable dependency
+                    await autoOpenService?.openAllEditableRepositories();
+                } else {
+                    vscode.window.showErrorMessage(`Failed to link ${repoName}: ${result.stderr || result.stdout}`);
+                    statusBar.showError('Link failed');
+                }
+            } catch (err) {
+                logError(`Link repository ${repoName} failed`, err);
+                vscode.window.showErrorMessage(`Error linking ${repoName}: ${err}`);
+                statusBar.showError('Error');
             }
         })
     );

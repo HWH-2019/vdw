@@ -8,7 +8,7 @@ use crate::store::{manager as store_manager, object_pool};
 use crate::types::workspace::{WorkspaceState, WorktreeInfo};
 use crate::worktree::manager as worktree_manager;
 
-pub fn execute() -> Result<()> {
+pub fn execute(repo_filter: Option<&str>) -> Result<()> {
     let cwd = std::env::current_dir()?;
 
     // 1. Load and validate config
@@ -30,13 +30,20 @@ pub fn execute() -> Result<()> {
         store_manager::init_store()?;
     }
 
-    // 3. Process each dependency
+    // 3. Process each dependency (optionally filtered by repo URL)
     let mut state = WorkspaceState::new(cwd.clone());
     let mut linked_count = 0;
     let mut editable_count = 0;
     let mut readonly_count = 0;
 
     for dep in &config.dependencies {
+        // Skip if repo_filter is specified and doesn't match
+        if let Some(filter) = repo_filter {
+            if dep.repo != filter {
+                continue;
+            }
+        }
+        
         println!("Processing: {} ...", dep.repo);
 
         // a. Ensure repo is in store
@@ -208,7 +215,7 @@ fn write_tree_to_dir(repo: &git2::Repository, tree: &git2::Tree, dir: &Path) -> 
     Ok(())
 }
 
-pub fn unlink() -> Result<()> {
+pub fn unlink(repo_filter: Option<&str>) -> Result<()> {
     let cwd = std::env::current_dir()?;
 
     // Load workspace state
@@ -219,22 +226,45 @@ pub fn unlink() -> Result<()> {
         return Ok(());
     }
 
-    // Remove all links
-    println!("Removing {} link(s)...", state.links.len());
-    engine::remove_links(&state.links)?;
+    // Filter links by repo if specified
+    let links_to_remove: Vec<_> = if let Some(repo) = repo_filter {
+        state.links.iter()
+            .filter(|l| l.dependency_repo == repo)
+            .cloned()
+            .collect()
+    } else {
+        state.links.clone()
+    };
+
+    if links_to_remove.is_empty() {
+        println!("No links found for the specified repository.");
+        return Ok(());
+    }
+
+    // Remove links
+    println!("Removing {} link(s)...", links_to_remove.len());
+    engine::remove_links(&links_to_remove)?;
 
     // Clean up empty directories
-    for dep_path in state.links.iter().map(|l| &l.target) {
-        if let Some(parent) = dep_path.parent() {
+    for link in &links_to_remove {
+        if let Some(parent) = link.target.parent() {
             let _ = engine::cleanup_empty_dirs(parent, &cwd);
         }
     }
 
-    // Clear state
-    let new_state = WorkspaceState::new(cwd);
+    // Update state: remove only the entries for the unlinked repo(s)
+    let mut new_state = state;
+    if let Some(repo) = repo_filter {
+        // Remove only the matching repo's links and worktrees
+        new_state.links.retain(|l| l.dependency_repo != repo);
+        new_state.worktrees.retain(|w| w.repo_url != repo);
+    } else {
+        // Full unlink: clear all state
+        new_state = WorkspaceState::new(cwd);
+    }
     new_state.save()?;
 
-    println!("✅ All links removed.");
+    println!("✅ {} link(s) removed.", links_to_remove.len());
     Ok(())
 }
 

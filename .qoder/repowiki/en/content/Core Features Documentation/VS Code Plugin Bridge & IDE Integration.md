@@ -2,8 +2,28 @@
 
 <cite>
 **Referenced Files in This Document**
-- [VDW虚拟工作空间_需求文档_v1.0.md](file://ai_workspace/VDW虚拟工作空间_需求文档_v1.0.md)
+- [extension.ts](file://vdw-vscode/src/extension.ts)
+- [package.json](file://vdw-vscode/package.json)
+- [configService.ts](file://vdw-vscode/src/services/configService.ts)
+- [fileProvider.ts](file://vdw-vscode/src/providers/fileProvider.ts)
+- [workspaceTreeView.ts](file://vdw-vscode/src/providers/workspaceTreeView.ts)
+- [statusBar.ts](file://vdw-vscode/src/providers/statusBar.ts)
+- [contextService.ts](file://vdw-vscode/src/services/contextService.ts)
+- [vdwCliService.ts](file://vdw-vscode/src/services/vdwCliService.ts)
+- [index.ts](file://vdw-vscode/src/commands/index.ts)
+- [vdwTypes.ts](file://vdw-vscode/src/types/vdwTypes.ts)
+- [logger.ts](file://vdw-vscode/src/utils/logger.ts)
+- [extension.test.ts](file://vdw-vscode/src/test/extension.test.ts)
 </cite>
+
+## Update Summary
+**Changes Made**
+- Updated architecture overview to reflect modern TypeScript implementation with dedicated services and providers
+- Added comprehensive documentation for ConfigService, VDWFileProvider, WorkspaceTreeProvider, and StatusBarManager
+- Documented the complete command system with six integrated commands
+- Updated service architecture with ContextService and VDWCliService
+- Enhanced UI component documentation with actual implementation details
+- Added TypeScript-specific implementation patterns and best practices
 
 ## Table of Contents
 1. [Introduction](#introduction)
@@ -20,135 +40,165 @@
 ## Introduction
 This document provides comprehensive technical documentation for the VS Code plugin bridge and IDE integration feature of the Virtual Dev Workspace (VDW) system. The plugin serves as the primary interface between VS Code and the VDW virtual workspace engine, enabling developers to manage cross-repository development through a unified logical workspace view while maintaining seamless integration with VS Code's native Git functionality.
 
-The plugin architecture implements a sophisticated bridge that combines VS Code's extension APIs with VDW's content-addressable storage system, providing intelligent file filtering for AI agents while preserving the familiar VS Code development experience.
+The plugin implements a modern TypeScript architecture featuring dedicated services, providers, and UI components that work together to provide intelligent file filtering for AI agents while preserving the familiar VS Code development experience.
 
 ## Project Structure
-The repository contains a single comprehensive product requirements document that defines the complete VDW system architecture and plugin specifications. The documentation encompasses all aspects of the VS Code plugin implementation, from basic structure to advanced integration patterns.
+The VDW VS Code extension follows a clean, modular architecture with clear separation of concerns across services, providers, and UI components.
 
 ```mermaid
 graph TB
-subgraph "VDW System Architecture"
-A[VS Code Plugin Bridge] --> B[Workspace Orchestrator]
-A --> C[AI Context Filter]
-A --> D[FileProvider Interface]
-B --> E[Content Store]
-B --> F[Link Engine]
-B --> G[Repo Registry]
-C --> H[LSP Proxy]
-C --> I[Virtual File List API]
-D --> J[TextDocumentContentProvider]
-D --> K[FileSystem Provider]
-E --> L[Git Object Sharing]
-E --> M[CAS Storage Pool]
-F --> N[Hard Link/Symlink/Junction]
-F --> O[Cross-Platform Compatibility]
-G --> P[Repository Metadata]
-G --> Q[Version Tracking]
+subgraph "VDW VS Code Extension Architecture"
+A[extension.ts] --> B[Services Layer]
+A --> C[Providers Layer]
+A --> D[Commands Layer]
+B --> E[ConfigService]
+B --> F[ContextService]
+B --> G[VDWCliService]
+C --> H[VDWFileProvider]
+C --> I[WorkspaceTreeProvider]
+C --> J[StatusBarManager]
+D --> K[Command Registry]
+E --> L[.vdwrc Parser]
+F --> M[Context Statistics]
+G --> N[Rust CLI Wrapper]
+H --> O[File Filtering Engine]
+I --> P[Repository Tree UI]
+J --> Q[Status Indicators]
+K --> R[Workspace Commands]
 end
 ```
 
 **Diagram sources**
-- [VDW虚拟工作空间_需求文档_v1.0.md: 39-71:39-71](file://ai_workspace/VDW虚拟工作空间_需求文档_v1.0.md#L39-L71)
+- [extension.ts:16-104](file://vdw-vscode/src/extension.ts#L16-L104)
+- [configService.ts:7-98](file://vdw-vscode/src/services/configService.ts#L7-L98)
+- [fileProvider.ts:9-148](file://vdw-vscode/src/providers/fileProvider.ts#L9-L148)
 
 **Section sources**
-- [VDW虚拟工作空间_需求文档_v1.0.md: 1-704:1-704](file://ai_workspace/VDW虚拟工作空间_需求文档_v1.0.md#L1-L704)
+- [extension.ts:16-104](file://vdw-vscode/src/extension.ts#L16-L104)
+- [package.json:1-76](file://vdw-vscode/package.json#L1-L76)
 
 ## Core Components
 
-### Plugin Architecture Overview
-The VS Code plugin implements a multi-layered architecture designed to seamlessly integrate with VS Code's extension ecosystem while providing advanced workspace management capabilities.
+### Modern TypeScript Architecture
+The plugin implements a sophisticated layered architecture with clear separation of concerns:
 
-**Plugin Lifecycle Management**
-- Automatic activation upon `.vdwrc` file detection
-- Graceful initialization of workspace state
-- Persistent state management across VS Code sessions
-- Dynamic reconfiguration support
+**Service Layer**
+- ConfigService: Manages .vdwrc configuration parsing and validation
+- ContextService: Handles workspace context statistics and file counting
+- VDWCliService: Wraps Rust CLI commands for workspace operations
 
-**Integration Points**
-- VS Code Extension Host API
-- TextDocumentContentProvider interface
-- FileSystemProvider for virtual file tree rendering
-- Command Palette integration
-- Status Bar contribution
-- Sidebar View Provider
+**Provider Layer**
+- VDWFileProvider: Implements VS Code's TextDocumentContentProvider interface
+- WorkspaceTreeProvider: Creates hierarchical repository tree view
+- StatusBarManager: Manages status bar integration and indicators
+
+**Command Layer**
+- Centralized command registration with comprehensive workspace operations
 
 **Section sources**
-- [VDW虚拟工作空间_需求文档_v1.0.md: 282-335:282-335](file://ai_workspace/VDW虚拟工作空间_需求文档_v1.0.md#L282-L335)
+- [extension.ts:27-62](file://vdw-vscode/src/extension.ts#L27-L62)
+- [configService.ts:7-98](file://vdw-vscode/src/services/configService.ts#L7-L98)
+- [fileProvider.ts:9-148](file://vdw-vscode/src/providers/fileProvider.ts#L9-L148)
+
+### Plugin Lifecycle Management
+The extension implements robust lifecycle management with automatic activation and graceful shutdown:
+
+**Activation Events**
+- Automatic activation on `.vdwrc` file detection
+- Workspace folder validation and initialization
+- Service instantiation and provider registration
+
+**Deactivation Handling**
+- Proper cleanup of subscriptions and resources
+- Logger disposal and output channel cleanup
+- Status bar and UI component disposal
+
+**Section sources**
+- [extension.ts:16-104](file://vdw-vscode/src/extension.ts#L16-L104)
+- [package.json:11-13](file://vdw-vscode/package.json#L11-L13)
 
 ### FileProvider Interface Implementation
-The plugin implements VS Code's TextDocumentContentProvider interface to provide filtered file access for AI agents while maintaining security boundaries defined by the `.vdwrc` scope configuration.
+The VDWFileProvider implements VS Code's TextDocumentContentProvider interface with sophisticated file filtering capabilities:
 
-**Interface Registration Process**
-1. Register TextDocumentContentProvider with scheme "vdw"
-2. Implement provideTextDocumentContent(uri) method
-3. Integrate with virtual file tree rendering system
-4. Support dynamic file filtering based on scope configuration
+**Interface Registration**
+- Registers with scheme "vdw" for virtual document access
+- Implements provideTextDocumentContent(uri) method
+- Supports dynamic file filtering based on scope configuration
 
 **Security Model**
-- Scope-based file exposure control
+- Scope-based file exposure control using minimatch patterns
 - Path validation and sanitization
 - Cross-repository boundary enforcement
 - Read-only mode support for non-editable repositories
 
+**File Listing and Filtering**
+- Recursive directory traversal with scope validation
+- Minimatch pattern matching for include/exclude rules
+- Performance-optimized file discovery across dependencies
+
 **Section sources**
-- [VDW虚拟工作空间_需求文档_v1.0.md: 236-257:236-257](file://ai_workspace/VDW虚拟工作空间_需求文档_v1.0.md#L236-L257)
+- [extension.ts:32-36](file://vdw-vscode/src/extension.ts#L32-L36)
+- [fileProvider.ts:21-101](file://vdw-vscode/src/providers/fileProvider.ts#L21-L101)
 
 ### Sidebar View Implementation
-The plugin provides a comprehensive sidebar view that displays the logical workspace composition, enabling users to manage their cross-repository development environment intuitively.
+The WorkspaceTreeProvider creates an intuitive hierarchical view of the logical workspace composition:
 
 **Repository List Features**
-- Editable vs read-only indicators
-- Branch/commit status display
-- Scope configuration visualization
-- Link status indicators
-- Repository metadata display
+- Editable vs read-only indicators with theme icons
+- Branch/commit status display with version information
+- Scope configuration visualization with include/exclude patterns
+- Link status indicators showing worktree vs linked status
+- Repository metadata display with tooltips
 
 **UI Component Design**
-- Hierarchical tree structure for logical workspace
-- Color-coded status indicators
+- Hierarchical tree structure with collapsible nodes
+- Color-coded status indicators using VS Code theme icons
 - Interactive repository management controls
 - Real-time synchronization with workspace state
 
 **Section sources**
-- [VDW虚拟工作空间_需求文档_v1.0.md: 292-328:292-328](file://ai_workspace/VDW虚拟工作空间_需求文档_v1.0.md#L292-L328)
+- [workspaceTreeView.ts:23-101](file://vdw-vscode/src/providers/workspaceTreeView.ts#L23-L101)
+- [workspaceTreeView.ts:108-129](file://vdw-vscode/src/providers/workspaceTreeView.ts#L108-L129)
 
 ### Status Bar Integration
-The plugin integrates with VS Code's status bar to provide real-time visibility into the AI context composition and workspace state.
+The StatusBarManager provides real-time visibility into workspace state and context composition:
 
 **Status Information Display**
 - Current AI context composition metrics
 - Active repository count and file counts
-- Link status indicators
-- Performance statistics
+- Link status indicators with color coding
+- Performance statistics and error states
 
 **Dynamic Updates**
-- Real-time context refresh
-- Workspace change notifications
-- Error state reporting
-- Performance monitoring
+- Real-time context refresh notifications
+- Workspace change event handling
+- Error state reporting with visual indicators
+- Performance monitoring and loading states
 
 **Section sources**
-- [VDW虚拟工作空间_需求文档_v1.0.md: 287-289:287-289](file://ai_workspace/VDW虚拟工作空间_需求文档_v1.0.md#L287-L289)
+- [statusBar.ts:18-47](file://vdw-vscode/src/providers/statusBar.ts#L18-L47)
+- [extension.ts:46-48](file://vdw-vscode/src/extension.ts#L46-L48)
 
-### Command Palette Operations
-The plugin exposes comprehensive command palette integration for workspace management operations.
+### Comprehensive Command System
+The plugin exposes six integrated commands for complete workspace management:
 
 **Available Commands**
-- `VDW: Link` - Initialize and activate workspace
-- `VDW: Unlink` - Deactivate and clean up workspace
-- `VDW: Refresh Context` - Recalculate AI context files
-- `VDW: Add Repository` - Interactive repository addition
-- `VDW: Remove Repository` - Remove repository from workspace
-- `VDW: Show Context Preview` - Preview current AI context
+- `vdw.init`: Initialize workspace with template selection
+- `vdw.link`: Link dependencies and activate workspace
+- `vdw.unlink`: Deactivate and clean up workspace
+- `vdw.validate`: Validate workspace configuration
+- `vdw.addRepo`: Interactive repository addition
+- `vdw.refreshContext`: Recalculate AI context files
 
 **Command Implementation**
-- Interactive configuration dialogs
-- Progress indication during long operations
+- Interactive configuration dialogs with input validation
+- Progress indication during long-running operations
 - Comprehensive error handling and user feedback
-- Integration with VS Code notification system
+- Integration with VS Code notification system and output channels
 
 **Section sources**
-- [VDW虚拟工作空间_需求文档_v1.0.md: 289-290:289-290](file://ai_workspace/VDW虚拟工作空间_需求文档_v1.0.md#L289-L290)
+- [index.ts:12-200](file://vdw-vscode/src/commands/index.ts#L12-L200)
+- [package.json:16-23](file://vdw-vscode/package.json#L16-L23)
 
 ## Architecture Overview
 
@@ -156,35 +206,37 @@ The plugin exposes comprehensive command palette integration for workspace manag
 sequenceDiagram
 participant User as "Developer"
 participant VSCode as "VS Code IDE"
-participant Plugin as "VDW Plugin"
-participant Orchestrator as "Workspace Orchestrator"
-participant Store as "Content Store"
-participant AI as "AI Agent"
+participant Extension as "VDW Extension"
+participant Services as "Service Layer"
+participant Providers as "Provider Layer"
+participant CLI as "Rust CLI"
 User->>VSCode : Open VDW Workspace
-VSCode->>Plugin : Activate Extension
-Plugin->>Plugin : Detect .vdwrc file
-Plugin->>Orchestrator : Initialize Workspace
-Orchestrator->>Store : Resolve Dependencies
-Store-->>Orchestrator : Return Linked Paths
-Orchestrator-->>Plugin : Workspace State
-Plugin->>VSCode : Render Sidebar View
-Plugin->>VSCode : Update Status Bar
-AI->>Plugin : Request Context Files
-Plugin->>Plugin : Filter by Scope Configuration
-Plugin-->>AI : Return Filtered File List
-User->>Plugin : Execute Command (e.g., Add Repository)
-Plugin->>Orchestrator : Apply Changes
-Orchestrator->>Store : Update Links
-Plugin->>VSCode : Refresh UI Components
+VSCode->>Extension : Activate Extension
+Extension->>Extension : Detect .vdwrc file
+Extension->>Services : Initialize ConfigService
+Services->>Services : Load and parse .vdwrc
+Extension->>Providers : Initialize FileProvider
+Extension->>Providers : Initialize TreeProvider
+Extension->>Providers : Initialize StatusBarManager
+Extension->>Services : Initialize ContextService
+Extension->>Providers : Register UI Components
+Extension->>CLI : Watch for .vdwrc changes
+User->>Extension : Execute Command (e.g., vdw.link)
+Extension->>CLI : Execute workspace operation
+CLI-->>Extension : Return operation result
+Extension->>Services : Update workspace state
+Extension->>Providers : Refresh UI components
+Providers-->>User : Updated workspace view
 ```
 
 **Diagram sources**
-- [VDW虚拟工作空间_需求文档_v1.0.md: 282-335:282-335](file://ai_workspace/VDW虚拟工作空间_需求文档_v1.0.md#L282-L335)
+- [extension.ts:16-94](file://vdw-vscode/src/extension.ts#L16-L94)
+- [index.ts:54-80](file://vdw-vscode/src/commands/index.ts#L54-L80)
 
-The architecture demonstrates the plugin's role as a bridge between VS Code's extension ecosystem and the underlying VDW workspace orchestration system. The plugin maintains state synchronization while providing filtered access to files for AI agents.
+The architecture demonstrates the plugin's role as a sophisticated bridge between VS Code's extension ecosystem and the underlying VDW workspace orchestration system. The modern TypeScript implementation ensures type safety, maintainability, and comprehensive error handling.
 
 **Section sources**
-- [VDW虚拟工作空间_需求文档_v1.0.md: 41-71:41-71](file://ai_workspace/VDW虚拟工作空间_需求文档_v1.0.md#L41-L71)
+- [extension.ts:16-104](file://vdw-vscode/src/extension.ts#L16-L104)
 
 ## Detailed Component Analysis
 
@@ -192,7 +244,7 @@ The architecture demonstrates the plugin's role as a bridge between VS Code's ex
 
 ```mermaid
 flowchart TD
-Start([Workspace Activation]) --> LoadConfig["Load .vdwrc Configuration"]
+Start([Workspace Activation]) --> LoadConfig["ConfigService.loadConfig()"]
 LoadConfig --> ParseDeps["Parse Dependencies"]
 ParseDeps --> CheckStore["Check Content Store"]
 CheckStore --> StoreExists{"Store Exists?"}
@@ -200,11 +252,11 @@ StoreExists --> |Yes| ResolveLinks["Resolve Existing Links"]
 StoreExists --> |No| CloneRepo["Clone Repository to Store"]
 CloneRepo --> CreateLinks["Create Logical Links"]
 ResolveLinks --> CreateLinks
-CreateLinks --> BuildTree["Build Virtual File Tree"]
+CreateLinks --> BuildTree["WorkspaceTreeProvider.buildTree()"]
 BuildTree --> RenderView["Render Sidebar View"]
 RenderView --> Ready([Workspace Ready])
 Ready --> AIRequest{"AI Agent Request?"}
-AIRequest --> |Yes| FilterScope["Filter by Scope Configuration"]
+AIRequest --> |Yes| FilterScope["VDWFileProvider.listFiles()"]
 AIRequest --> |No| WaitUser["Wait for User Action"]
 FilterScope --> ReturnFiles["Return Filtered Files"]
 ReturnFiles --> Ready
@@ -216,178 +268,171 @@ RebuildTree --> RenderView
 ```
 
 **Diagram sources**
-- [VDW虚拟工作空间_需求文档_v1.0.md: 174-184:174-184](file://ai_workspace/VDW虚拟工作空间_需求文档_v1.0.md#L174-L184)
+- [configService.ts:17-55](file://vdw-vscode/src/services/configService.ts#L17-L55)
+- [fileProvider.ts:47-66](file://vdw-vscode/src/providers/fileProvider.ts#L47-L66)
+- [workspaceTreeView.ts:23-49](file://vdw-vscode/src/providers/workspaceTreeView.ts#L23-L49)
 
 The virtual file tree rendering system creates a unified logical view of multiple physical repositories, presenting them as a single cohesive workspace to the developer while maintaining the underlying physical separation for storage efficiency.
 
 **Section sources**
-- [VDW虚拟工作空间_需求文档_v1.0.md: 157-191:157-191](file://ai_workspace/VDW虚拟工作空间_需求文档_v1.0.md#L157-L191)
+- [fileProvider.ts:47-132](file://vdw-vscode/src/providers/fileProvider.ts#L47-L132)
+- [workspaceTreeView.ts:23-101](file://vdw-vscode/src/providers/workspaceTreeView.ts#L23-L101)
 
 ### Workspace State Visualization
 
 ```mermaid
 classDiagram
-class WorkspaceState {
-+string workspaceName
-+string workspaceVersion
-+Dependency[] dependencies
-+Date lastUpdated
-+boolean isValid
-+getRepositoryCount() number
+class ConfigService {
++loadConfig() VDWConfig
++getConfig() VDWConfig
++reload() VDWConfig
++getDependencies() Dependency[]
++getDependencyCount() number
+}
+class ContextService {
++getStats() ContextStats
 +getFileCount() number
-+getActiveRepositories() Repository[]
-+validateConfiguration() ValidationResult
++refresh() void
 }
-class Dependency {
-+string repoUrl
-+string localPath
-+string branch
-+string commit
-+string tag
-+Scope scope
-+boolean editable
-+string status
-+Date lastSync
+class VDWFileProvider {
++provideTextDocumentContent(uri) string
++listFiles() string[]
++isInAnyScope(path, config) boolean
++matchesScope(file, scope) boolean
 }
-class Scope {
-+string[] includePatterns
-+string[] excludePatterns
-+boolean validatePattern(pattern) boolean
+class WorkspaceTreeProvider {
++getChildren(element) WorkspaceTreeItem[]
++refresh() void
 }
-class Repository {
-+string name
-+string url
-+string currentBranch
-+string currentCommit
-+boolean isEditable
-+string linkType
-+string statusIndicator
+class StatusBarManager {
++update(fileCount) void
++showError(message) void
++showBusy(message) void
 }
-class ContextManager {
-+generateContext() string[]
-+filterByScope(file) boolean
-+updateContextStats() void
-+getContextStats() ContextStats
-}
-WorkspaceState --> Dependency : contains
-Dependency --> Scope : uses
-WorkspaceState --> Repository : manages
-ContextManager --> WorkspaceState : monitors
-ContextManager --> Dependency : filters
+ConfigService --> VDWFileProvider : provides config
+ConfigService --> WorkspaceTreeProvider : provides data
+ContextService --> VDWFileProvider : uses for file listing
+VDWFileProvider --> ConfigService : reads scope config
+StatusBarManager --> ConfigService : reads workspace state
 ```
 
 **Diagram sources**
-- [VDW虚拟工作空间_需求文档_v1.0.md: 440-482:440-482](file://ai_workspace/VDW虚拟工作空间_需求文档_v1.0.md#L440-L482)
+- [configService.ts:7-98](file://vdw-vscode/src/services/configService.ts#L7-L98)
+- [contextService.ts:22-103](file://vdw-vscode/src/services/contextService.ts#L22-L103)
+- [fileProvider.ts:9-148](file://vdw-vscode/src/providers/fileProvider.ts#L9-L148)
+- [workspaceTreeView.ts:5-106](file://vdw-vscode/src/providers/workspaceTreeView.ts#L5-L106)
+- [statusBar.ts:4-58](file://vdw-vscode/src/providers/statusBar.ts#L4-L58)
 
-The workspace state visualization provides comprehensive monitoring of the logical workspace composition, enabling developers to understand the current state of their multi-repository development environment.
+The workspace state visualization provides comprehensive monitoring of the logical workspace composition, enabling developers to understand the current state of their multi-repository development environment through multiple integrated views.
 
 **Section sources**
-- [VDW虚拟工作空间_需求文档_v1.0.md: 440-482:440-482](file://ai_workspace/VDW虚拟工作空间_需求文档_v1.0.md#L440-L482)
+- [contextService.ts:22-103](file://vdw-vscode/src/services/contextService.ts#L22-L103)
+- [statusBar.ts:18-47](file://vdw-vscode/src/providers/statusBar.ts#L18-L47)
 
 ### AI Context Filtering Implementation
 
 ```mermaid
 sequenceDiagram
 participant AI as "AI Agent"
-participant Plugin as "VDW Plugin"
-participant Provider as "FileProvider"
-participant Store as "Content Store"
-participant FS as "Virtual File System"
-AI->>Plugin : Request Context Files
-Plugin->>Plugin : Parse .vdwrc scope configuration
-Plugin->>Provider : Filter files by scope
-Provider->>FS : Resolve virtual file paths
-FS->>Store : Access physical files
-Store-->>FS : Return file content
-FS-->>Provider : Return filtered file list
-Provider-->>Plugin : Return context files
-Plugin-->>AI : Return filtered context
-Note over Plugin,Provider : Security Boundary Enforced
-Note over Store,FS : Physical Storage Separation
+participant Extension as "VDW Extension"
+participant FileProvider as "VDWFileProvider"
+participant ConfigService as "ConfigService"
+participant FileSystem as "Virtual File System"
+AI->>Extension : Request Context Files
+Extension->>ConfigService : getConfig()
+ConfigService-->>Extension : Return VDWConfig
+Extension->>FileProvider : listFiles()
+FileProvider->>FileProvider : isInAnyScope(relativePath, config)
+FileProvider->>FileProvider : matchesScope(filePath, scope)
+FileProvider->>FileSystem : Read filtered files
+FileSystem-->>FileProvider : Return file content
+FileProvider-->>Extension : Return filtered file list
+Extension-->>AI : Return context files
+Note over FileProvider : Security Boundary Enforced
+Note over FileSystem : Physical Storage Separation
 ```
 
 **Diagram sources**
-- [VDW虚拟工作空间_需求文档_v1.0.md: 226-279:226-279](file://ai_workspace/VDW虚拟工作空间_需求文档_v1.0.md#L226-L279)
+- [fileProvider.ts:21-101](file://vdw-vscode/src/providers/fileProvider.ts#L21-L101)
+- [configService.ts:57-63](file://vdw-vscode/src/services/configService.ts#L57-L63)
 
 The AI context filtering implementation ensures that AI agents only receive files explicitly included in the workspace configuration, maintaining security boundaries while providing optimal context for code assistance.
 
 **Section sources**
-- [VDW虚拟工作空间_需求文档_v1.0.md: 226-279:226-279](file://ai_workspace/VDW虚拟工作空间_需求文档_v1.0.md#L226-L279)
+- [fileProvider.ts:21-101](file://vdw-vscode/src/providers/fileProvider.ts#L21-L101)
 
 ## Dependency Analysis
 
 ```mermaid
 graph LR
-subgraph "VS Code Plugin Dependencies"
-A[Extension Host API] --> B[TextDocumentContentProvider]
-A --> C[FileSystemProvider]
-A --> D[Command Palette]
-A --> E[Status Bar]
-A --> F[Sidebar View]
-B --> G[File Filtering Engine]
-C --> H[Virtual File System]
-D --> I[Workspace State]
-E --> J[Context Statistics]
-F --> K[Repository Tree]
-end
-subgraph "VDW Core Dependencies"
-L[Workspace Orchestrator] --> M[Content Store]
-L --> N[Link Engine]
-L --> O[Repo Registry]
-M --> P[Git Object Sharing]
-N --> Q[Cross-Platform Links]
-O --> R[Repository Metadata]
+subgraph "VS Code Extension Dependencies"
+A[VS Code Extension Host] --> B[TextDocumentContentProvider]
+A --> C[TreeDataProvider]
+A --> D[StatusBarItem]
+A --> E[Command Palette]
+B --> F[VDWFileProvider]
+C --> G[WorkspaceTreeProvider]
+D --> H[StatusBarManager]
+E --> I[Command Registry]
+F --> J[ConfigService]
+G --> J
+H --> J
+I --> K[VDWCliService]
+I --> L[ContextService]
+J --> M[js-yaml]
+K --> N[child_process]
+L --> O[minimatch]
 end
 subgraph "External Dependencies"
-S[VS Code API] --> T[Native Git Integration]
-U[Node.js Runtime] --> V[File System Operations]
-W[Rust CLI Tools] --> X[Core Processing]
+P[Rust CLI Tools] --> Q[VDW Core Engine]
+R[VS Code API] --> S[Native Git Integration]
+T[Node.js Runtime] --> U[File System Operations]
 end
-B --> L
-C --> L
-F --> L
-D --> I
-E --> J
+F --> P
+G --> P
+I --> P
 ```
 
 **Diagram sources**
-- [VDW虚拟工作空间_需求文档_v1.0.md: 427-439:427-439](file://ai_workspace/VDW虚拟工作空间_需求文档_v1.0.md#L427-L439)
+- [extension.ts:16-104](file://vdw-vscode/src/extension.ts#L16-L104)
+- [package.json:59-74](file://vdw-vscode/package.json#L59-L74)
 
-The dependency analysis reveals the plugin's position as a central coordinator between VS Code's extension ecosystem and the VDW core systems, with clear separation of concerns and well-defined integration points.
+The dependency analysis reveals the plugin's position as a central coordinator between VS Code's extension ecosystem and the VDW core systems, with clear separation of concerns and well-defined integration points using modern TypeScript patterns.
 
 **Section sources**
-- [VDW虚拟工作空间_需求文档_v1.0.md: 427-439:427-439](file://ai_workspace/VDW虚拟工作空间_需求文档_v1.0.md#L427-L439)
+- [package.json:59-74](file://vdw-vscode/package.json#L59-L74)
 
 ## Performance Considerations
 
 ### Large Workspace Optimization Strategies
 
 **Memory Management**
-- Lazy loading of repository metadata
-- Incremental file tree building
+- Lazy loading of repository metadata through ConfigService
+- Incremental file tree building with WorkspaceTreeProvider
 - Virtual scrolling for large directory structures
-- Memory-efficient file filtering algorithms
+- Memory-efficient file filtering algorithms using minimatch
 
 **Network Optimization**
-- Parallel repository resolution
+- Parallel repository resolution through VDWCliService
 - Intelligent caching of frequently accessed files
-- Background context generation
+- Background context generation through ContextService
 - Connection pooling for repository operations
 
 **UI Responsiveness**
 - Debounced workspace state updates
 - Asynchronous file system operations
 - Progressive rendering of large trees
-- Optimized status bar updates
+- Optimized status bar updates with StatusBarManager
 
-### Performance Benchmarks
+**Performance Benchmarks**
 - Virtual file tree generation: < 500ms for 1000+ files
 - Context filtering: < 100ms for 500+ files
 - Workspace activation: < 2 seconds for 5 repositories
 - Memory usage: < 200MB for 10,000+ files
 
 **Section sources**
-- [VDW虚拟工作空间_需求文档_v1.0.md: 390-400:390-400](file://ai_workspace/VDW虚拟工作空间_需求文档_v1.0.md#L390-L400)
+- [fileProvider.ts:104-132](file://vdw-vscode/src/providers/fileProvider.ts#L104-L132)
+- [contextService.ts:42-84](file://vdw-vscode/src/services/contextService.ts#L42-L84)
 
 ## Troubleshooting Guide
 
@@ -418,26 +463,38 @@ The dependency analysis reveals the plugin's position as a central coordinator b
 - Consider repository pruning strategies
 
 ### Diagnostic Commands
-- `VDW: Doctor` - Comprehensive system diagnosis
-- `VDW: Logs` - View detailed operation logs
-- `VDW: Validate` - Validate workspace configuration
-- `VDW: Context Preview` - Preview current AI context
+- `VDW: Validate Configuration` - Comprehensive system diagnosis
+- `VDW: Doctor` - Detailed system health report
+- `VDW: Refresh Context` - Preview current AI context
+- `VDW: Initialize Workspace` - Create new workspace template
 
 **Section sources**
-- [VDW虚拟工作空间_需求文档_v1.0.md: 418-424:418-424](file://ai_workspace/VDW虚拟工作空间_需求文档_v1.0.md#L418-L424)
+- [index.ts:107-126](file://vdw-vscode/src/commands/index.ts#L107-L126)
+- [vdwCliService.ts:123-127](file://vdw-vscode/src/services/vdwCliService.ts#L123-L127)
 
 ## Conclusion
 
-The VS Code plugin bridge and IDE integration feature represents a sophisticated solution for modern multi-repository development workflows. By combining VS Code's extension ecosystem with VDW's content-addressable storage and logical workspace concepts, the plugin enables developers to work seamlessly across multiple repositories while maintaining optimal performance and security.
+The VS Code plugin bridge and IDE integration feature represents a sophisticated solution for modern multi-repository development workflows. The complete TypeScript implementation demonstrates several key strengths:
 
-The implementation demonstrates several key strengths:
-- Seamless integration with VS Code's native Git functionality
+**Modern Architecture Benefits**
+- Clean separation of concerns with dedicated services and providers
+- Type-safe implementation with comprehensive TypeScript interfaces
+- Robust error handling and logging through centralized utilities
+- Modular design enabling easy maintenance and extension
+
+**Seamless VS Code Integration**
+- Native Git functionality preservation
 - Intelligent file filtering for AI agents while maintaining security boundaries
 - Cross-platform compatibility with platform-specific linking strategies
 - Comprehensive workspace state visualization and management
-- Performance optimization for large-scale development environments
 
-Future enhancements could include expanded IDE support, advanced AI context intelligence, and enterprise-grade collaboration features, building upon the solid foundation established in this comprehensive plugin architecture.
+**Developer Experience**
+- Six integrated commands covering complete workspace lifecycle
+- Real-time status bar integration with visual indicators
+- Hierarchical sidebar view with interactive repository management
+- Comprehensive logging and diagnostic capabilities
+
+Future enhancements could include expanded IDE support, advanced AI context intelligence, and enterprise-grade collaboration features, building upon the solid foundation established by this modern TypeScript architecture.
 
 ## Appendices
 
@@ -445,15 +502,19 @@ Future enhancements could include expanded IDE support, advanced AI context inte
 
 **Workspace Configuration Options**
 - Repository URL patterns and authentication
-- Scope definition syntax and glob patterns
+- Scope definition syntax and glob patterns using minimatch
 - Editable vs read-only repository modes
 - Version locking mechanisms (branch, tag, commit)
 
 **Plugin Settings**
-- Auto-activation behavior
+- Auto-activation behavior through workspaceContains trigger
+- CLI path configuration for VDW binary location
 - Context filtering preferences
 - Performance tuning parameters
-- Logging and diagnostic options
+
+**Section sources**
+- [vdwTypes.ts:1-51](file://vdw-vscode/src/types/vdwTypes.ts#L1-L51)
+- [package.json:41-50](file://vdw-vscode/package.json#L41-L50)
 
 ### Integration Guidelines
 
@@ -464,10 +525,11 @@ Future enhancements could include expanded IDE support, advanced AI context inte
 - File watcher extension cooperation
 
 **Development Best Practices**
-- Extension packaging and distribution
-- Security considerations for file access
-- Performance monitoring and optimization
-- User experience enhancement strategies
+- Extension packaging and distribution through VSCE
+- Security considerations for file access and filtering
+- Performance monitoring and optimization strategies
+- User experience enhancement through status indicators
 
 **Section sources**
-- [VDW虚拟工作空间_需求文档_v1.0.md: 75-120:75-120](file://ai_workspace/VDW虚拟工作空间_需求文档_v1.0.md#L75-L120)
+- [extension.ts:16-104](file://vdw-vscode/src/extension.ts#L16-L104)
+- [logger.ts:12-29](file://vdw-vscode/src/utils/logger.ts#L12-L29)
