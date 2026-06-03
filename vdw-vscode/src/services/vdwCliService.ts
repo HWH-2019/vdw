@@ -163,6 +163,11 @@ export class VDWCliService {
         return result.stdout + (result.stderr ? '\n' + result.stderr : '');
     }
 
+    /** Run vdw repo remove for a specific repository */
+    async removeRepo(repoUrl: string): Promise<CommandResult> {
+        return this.executeCommand('repo', ['remove', repoUrl]);
+    }
+
     /** Update workspace path */
     setWorkspacePath(newPath: string): void {
         this.workspacePath = newPath;

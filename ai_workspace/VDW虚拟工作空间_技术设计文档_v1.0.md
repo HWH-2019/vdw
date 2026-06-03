@@ -1,7 +1,8 @@
 # VDW (Virtual Dev Workspace) - MVP 技术设计文档
 
-**文档版本**: v1.1  
-**创建日期**: 2026-06-02  
+**文档版本**: v1.2  
+**创建日期**: 2026-06-03  
+**最近更新**: 2026-06-03  
 **关联 PRD**: [VDW虚拟工作空间_需求文档_v1.0.md](./VDW虚拟工作空间_需求文档_v1.0.md)  
 **技术负责人**: TBD  
 **开发周期**: Month 1-2 (MVP)
@@ -357,10 +358,18 @@ enum Commands {
     },
     
     /// Create links based on .vdwrc
-    Link,
+    Link {
+        /// Only link the specified repository URL
+        #[arg(long)]
+        repo: Option<String>,
+    },
     
-    /// Remove links
-    Unlink,
+    /// Remove links (all or by --repo)
+    Unlink {
+        /// Only unlink the specified repository URL
+        #[arg(long)]
+        repo: Option<String>,
+    },
     
     /// Manage dependencies
     #[command(subcommand)]
@@ -444,8 +453,8 @@ enum ContextCommands {
 fn run_command(cli: Cli) -> Result<()> {
     match cli.command {
         Commands::Init { template } => commands::init::execute(template)?,
-        Commands::Link => commands::link::execute()?,
-        Commands::Unlink => commands::link::unlink()?,
+        Commands::Link { repo } => commands::link::execute(repo.as_deref())?,
+        Commands::Unlink { repo } => commands::link::unlink(repo.as_deref())?,
         Commands::Repo(cmd) => commands::repo::execute(cmd)?,
         Commands::Worktree(cmd) => commands::worktree::execute(cmd)?,
         Commands::Context(cmd) => commands::context::execute(cmd)?,
@@ -829,10 +838,10 @@ vdw-vscode/
 │   │   ├── link.ts
 │   │   ├── unlink.ts
 │   │   ├── addRepo.ts
+│   │   ├── removeRepo.ts
 │   │   └── refreshContext.ts
-│   │
 │   ├── services/                    # 业务逻辑
-│   │   ├── vdwCliService.ts         # CLI 调用封装
+│   │   ├── vdwCliService.ts         # CLI 调用封装（含 linkRepo/unlinkRepo/removeRepo）
 │   │   ├── configService.ts         # .vdwrc 解析
 │   │   ├── contextService.ts        # 上下文管理
 │   │   └── autoOpenService.ts       # 自动打开 Git 仓库
@@ -1027,13 +1036,13 @@ export class WorkspaceTreeProvider implements vscode.TreeDataProvider<WorkspaceT
                 new WorkspaceTreeItem(
                     `${dep.repo.split('/').pop()}@${dep.branch || 'main'}`,
                     vscode.TreeItemCollapsibleState.Collapsed,
-                    'repo',
+                    'linkedRepo',  // or 'unlinkedRepo' based on link status
                     dep
                 )
             );
         }
         
-        if (element.contextType === 'repo') {
+        if (element.contextType === 'repo' || element.contextType === 'linkedRepo' || element.contextType === 'unlinkedRepo') {
             // 仓库节点：显示路径、scope、状态
             const dep = element.dependency!;
             return [
@@ -1078,6 +1087,8 @@ class WorkspaceTreeItem extends vscode.TreeItem {
     private getIcon(): vscode.ThemeIcon {
         switch (this.contextType) {
             case 'repo':
+            case 'linkedRepo':
+            case 'unlinkedRepo':
                 return new vscode.ThemeIcon('repo');
             case 'path':
                 return new vscode.ThemeIcon('folder');
@@ -1378,6 +1389,92 @@ async function handleLink() {
 | state.json 解析失败 | 跳过所有自动打开，记录日志 |
 | 用户禁用配置 | 检查 `vdw.autoOpenGitRepositories` 配置，为 false 时跳过 |
 | 命令调用异常 | try-catch 包裹，不阻断主流程 |
+
+### 4.6 右键移除仓库功能设计
+
+#### 4.6.1 功能概述
+
+在 VDW 工作空间视图的依赖项上右键点击，选择「移除仓库」后，执行以下操作：
+1. 弹出确认对话框（包含仓库名称、路径信息）
+2. 用户确认后：卸载链接 → 从 `.vdwrc` 中移除依赖项 → 刷新视图
+
+与「卸载链接」的核心区别：
+| 操作 | 效果 | 配置影响 | 可恢复性 |
+|------|------|---------|---------|
+| 卸载链接 | 仅移除硬链接文件，仓库仍保留在 `.vdwrc` 中 | 不变 | 可重新 Link |
+| 移除仓库 | 卸载链接 + 从 `.vdwrc` 删除配置项 | 移除依赖项 | 需重新 Add |
+
+#### 4.6.2 实现机制
+
+**CLI 命令依赖**：
+- `vdw unlink --repo <url>` — 卸载指定仓库的链接
+
+**实现思路**：不调用 `vdw repo remove`，直接编辑 `.vdwrc` YAML 删除对应依赖项（不移除 CLI Store 中的代码）
+
+**VS Code 命令注册 (commands/index.ts)**：
+```typescript
+vscode.commands.registerCommand('vdw.removeRepo', async (treeItem) => {
+    const dep = treeItem.dependency;
+    
+    // 1. 确认对话框
+    const confirm = await vscode.window.showWarningMessage(
+        `Remove repository "${dep.repo}"?`,
+        { modal: true },
+        'Yes, Remove'
+    );
+    if (!confirm) return;
+    
+    // 2. 先卸载链接（如果已链接）
+    await cliService.unlinkRepo(dep.repo);
+    
+    // 3. 直接从 .vdwrc 移除依赖项
+    const vdwrcPath = path.join(workspaceFolder, '.vdwrc');
+    const content = fs.readFileSync(vdwrcPath, 'utf-8');
+    const config = yaml.load(content);
+    config.dependencies = config.dependencies.filter(
+        d => d.repo !== dep.repo && d.path !== dep.path
+    );
+    const yamlStr = yaml.dump(config, { indent: 2, lineWidth: 120, noRefs: true });
+    fs.writeFileSync(vdwrcPath, yamlStr, 'utf-8');
+    
+    // 4. 刷新视图
+    configService.reload();
+    treeProvider.refresh();
+});
+```
+
+**VS Code 服务封装 (vdwCliService.ts)**：
+不涉及 CLI 封装，移除仓库操作直接操作 `.vdwrc` 文件。
+
+#### 4.6.3 Menu 配置 (package.json)
+
+```json
+"commands": [
+  { "command": "vdw.removeRepo", "title": "Remove Repository", "icon": "$(trash)" }
+],
+"menus": {
+  "view/item/context": [
+    { "command": "vdw.removeRepo", "when": "view == vdwWorkspace && viewItem == linkedRepo", "group": "2@remove" },
+    { "command": "vdw.removeRepo", "when": "view == vdwWorkspace && viewItem == unlinkedRepo", "group": "2@remove" }
+  ]
+}
+```
+
+#### 4.6.4 右键上下文菜单 UI
+
+```
+┌─ VDW 工作空间 ─────────────────────────┐
+│ 🔗 frontend.git@feat/new-ui  [可编辑]   │
+│ ┌──────────────────────────────────┐   │
+│ │ 🔗 链接仓库                       │   │  ← 未链接时显示
+│ │ 🔓 卸载链接                       │   │  ← 已链接时显示
+│ │ ⛔ 移除仓库                       │   │  ← 始终显示
+│ └──────────────────────────────────┘   │
+│ 🔗 backend.git@main          [只读]     │
+│                                         │
+│ [+ 添加仓库]  [🔄 刷新]                 │
+└─────────────────────────────────────────┘
+```
 
 ---
 
@@ -2346,6 +2443,7 @@ vsce publish
 |------|------|---------|
 | v1.0 | 2026-06-02 | 初始版本，MVP 技术设计 |
 | v1.1 | 2026-06-02 | 新增 Auto-Open Git Repository 功能设计（第 4.5 节），更新插件架构和配置项 |
+| v1.2 | 2026-06-03 | 新增右键移除仓库功能（第 4.6 节）；统一远程/本地添加仓库流程；更新 CLI 命令支持 `--repo` 参数；更新 WorkspaceTreeItem 上下文类型为 linkedRepo/unlinkedRepo
 
 ---
 

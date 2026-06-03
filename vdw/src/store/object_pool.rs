@@ -1,4 +1,6 @@
 use std::path::{Path, PathBuf};
+use std::sync::mpsc;
+use std::time::Duration;
 
 use anyhow::Result;
 use chrono::Utc;
@@ -48,24 +50,48 @@ pub fn clone_to_store(
         alternates::setup_alternates(&bare_git_path, ref_path)?;
     }
 
-    // Fetch from remote (this does the actual clone)
-    // Note: For MVP, we attempt to fetch. If network is unavailable, we still create the structure.
-    let fetch_result = fetch_remote(&repo, branch);
-    if let Err(e) = &fetch_result {
-        tracing::warn!("Failed to fetch remote (network may be unavailable): {}", e);
-        // Don't fail hard - the bare repo structure is still valid
+    // Fetch from remote with timeout (prevents hanging on network/SSH issues)
+    let fetch_result = fetch_with_timeout(&repo, branch, 90);
+
+    // Calculate size and determine commit hash after fetching
+    let size = calculate_dir_size(&bare_git_path);
+    let commit_hash = get_remote_head(&repo, branch).unwrap_or_default();
+
+    // After fetch: validate that the repo actually has content
+    match &fetch_result {
+        Ok(()) => {
+            tracing::info!("Successfully fetched repository: {}", repo_url);
+        }
+        Err(e) => {
+            // If fetch failed AND we got no remote tracking refs, return a clear error
+            if commit_hash.is_empty() {
+                anyhow::bail!(
+                    "Failed to clone repository '{}': {}\n\
+                     Please check:\n\
+                     - Network connectivity\n\
+                     - SSH key authentication (if using git@ URL)\n\
+                     - Repository URL is correct and accessible",
+                    repo_url, e
+                );
+            }
+            // If we have content despite fetch failure (e.g. from alternates), just warn
+            tracing::warn!(
+                "Fetch warning (repo has content from alternates): {}",
+                e
+            );
+        }
     }
 
-    // Save metadata
+    // Save metadata with actual values
     let metadata = StoreMetadata {
         repo_url: repo_url.to_string(),
-        commit_hash: String::new(), // Will be populated after successful fetch
+        commit_hash,
         branch: branch.map(String::from),
         tag: None,
         reference_count: 1,
         last_accessed: Utc::now(),
         created_at: Utc::now(),
-        size_bytes: 0,
+        size_bytes: size,
         alternates_configured: reference_path.is_some(),
     };
     metadata.save(&repo_dir)?;
@@ -74,17 +100,154 @@ pub fn clone_to_store(
     Ok(repo_dir)
 }
 
-/// Fetch from remote origin
+/// Get the remote tracking HEAD commit hash after fetching
+fn get_remote_head(repo: &git2::Repository, branch: Option<&str>) -> Option<String> {
+    // If a specific branch was requested, check its remote tracking branch
+    if let Some(b) = branch {
+        let ref_name = format!("refs/remotes/origin/{}", b);
+        if let Ok(reference) = repo.find_reference(&ref_name) {
+            if let Some(oid) = reference.target() {
+                return Some(oid.to_string());
+            }
+        }
+        return None;
+    }
+
+    // No specific branch: try common default branch names
+    for candidate in &[
+        "refs/remotes/origin/main",
+        "refs/remotes/origin/master",
+        "refs/remotes/origin/HEAD",
+    ] {
+        if let Ok(reference) = repo.find_reference(candidate) {
+            if let Some(oid) = reference.target() {
+                return Some(oid.to_string());
+            }
+        }
+    }
+    None
+}
+
+/// Calculate the total size of a directory recursively
+fn calculate_dir_size(path: &Path) -> u64 {
+    fn walk(dir: &Path, total: &mut u64) {
+        if let Ok(entries) = std::fs::read_dir(dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if let Ok(ft) = entry.file_type() {
+                    if ft.is_dir() {
+                        walk(&path, total);
+                    } else if ft.is_file() || ft.is_symlink() {
+                        if let Ok(meta) = std::fs::metadata(&path) {
+                            *total += meta.len();
+                        }
+                    }
+                }
+            }
+        }
+    }
+    let mut total = 0;
+    walk(path, &mut total);
+    total
+}
+
+/// Fetch from remote origin using system `git fetch` (delegates SSH auth to system OpenSSH).
+/// This avoids libgit2/libssh2 transport compatibility issues with certain Git servers.
 fn fetch_remote(repo: &git2::Repository, branch: Option<&str>) -> Result<()> {
-    let mut remote = repo.find_remote("origin")?;
-    let refspecs: Vec<String> = if let Some(b) = branch {
-        vec![format!("+refs/heads/{}:refs/remotes/origin/{}", b, b)]
+    let bare_git_path = repo.path().to_path_buf();
+
+    let mut cmd = std::process::Command::new("git");
+    cmd.args(["fetch", "origin"]);
+
+    if let Some(b) = branch {
+        cmd.arg(format!("+refs/heads/{}:refs/remotes/origin/{}", b, b));
     } else {
-        vec!["+refs/heads/*:refs/remotes/origin/*".to_string()]
-    };
-    let refspec_strs: Vec<&str> = refspecs.iter().map(|s| s.as_str()).collect();
-    remote.fetch(&refspec_strs, None, None)?;
-    Ok(())
+        cmd.arg("+refs/heads/*:refs/remotes/origin/*");
+    }
+
+    // Use hardened SSH options: BatchMode=yes (fail fast, no prompts), ConnectTimeout (network limit),
+    // StrictHostKeyChecking=accept-new (auto-accept new hosts, same as normal git)
+    cmd.env(
+        "GIT_SSH_COMMAND",
+        "ssh -o BatchMode=yes -o ConnectTimeout=15 -o StrictHostKeyChecking=accept-new",
+    );
+    cmd.current_dir(&bare_git_path);
+
+    tracing::info!(
+        "Fetching from remote using system git (branch: {:?}, cwd: {})",
+        branch,
+        bare_git_path.display()
+    );
+    eprintln!("[GIT FETCH] {} origin {}", if branch.is_some() { "+refs/heads/<branch>:refs/remotes/origin/<branch>" } else { "+refs/heads/*:refs/remotes/origin/*" }, bare_git_path.display());
+
+    let output = cmd
+        .output()
+        .map_err(|e| {
+            if e.kind() == std::io::ErrorKind::NotFound {
+                anyhow::anyhow!(
+                    "git command not found. Please install Git and ensure it's in your PATH."
+                )
+            } else {
+                anyhow::anyhow!("Failed to execute git fetch: {}", e)
+            }
+        })?;
+
+    if output.status.success() {
+        tracing::info!("git fetch completed successfully");
+        eprintln!("[GIT FETCH] SUCCESS");
+        Ok(())
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        tracing::error!("git fetch failed: {}", stderr.trim());
+        eprintln!("[GIT FETCH] FAILED: {}", stderr.trim());
+        Err(anyhow::anyhow!(
+            "git fetch failed: {}",
+            stderr.trim()
+        ))
+    }
+}
+
+/// Fetch from remote with a timeout to prevent hanging on network/SSH issues
+fn fetch_with_timeout(repo: &git2::Repository, branch: Option<&str>, timeout_secs: u64) -> Result<()> {
+    let bare_git_path = repo.path().to_path_buf();
+    let branch_owned = branch.map(|s| s.to_string());
+
+    let (tx, rx) = mpsc::channel();
+
+    std::thread::spawn(move || {
+        // Re-open the bare repo in the spawned thread
+        let repo = match git2::Repository::open_bare(&bare_git_path) {
+            Ok(r) => r,
+            Err(e) => {
+                let _ = tx.send(Err(anyhow::anyhow!("Failed to open bare repo: {}", e)));
+                return;
+            }
+        };
+
+        tracing::debug!("Fetch thread started (timeout: {}s)", timeout_secs);
+        let result = fetch_remote(&repo, branch_owned.as_deref());
+        let _ = tx.send(result);
+    });
+
+    match rx.recv_timeout(Duration::from_secs(timeout_secs)) {
+        Ok(result) => {
+            tracing::debug!("Fetch completed within timeout");
+            result
+        }
+        Err(mpsc::RecvTimeoutError::Timeout) => {
+            anyhow::bail!(
+                "Operation timed out after {} seconds.\n\
+                 Please check:\n\
+                 - Network connectivity (can you reach the Git server?)\n\
+                 - SSH key is loaded (ssh-add -l)\n\
+                 - Repository URL is correct",
+                timeout_secs
+            )
+        }
+        Err(mpsc::RecvTimeoutError::Disconnected) => {
+            anyhow::bail!("Fetch thread disconnected unexpectedly")
+        }
+    }
 }
 
 /// Extract repo name from URL (e.g., "frontend" from "git@github.com:org/frontend.git")
@@ -141,6 +304,30 @@ mod tests {
     use super::*;
     use std::fs;
 
+    /// Create a local source repo with an initial commit for testing
+    fn create_source_repo() -> (tempfile::TempDir, String) {
+        let dir = tempfile::tempdir().expect("Failed to create temp dir");
+        let repo = git2::Repository::init(dir.path()).expect("Failed to init repo");
+
+        let sig = git2::Signature::now("Test", "test@test.com").expect("Failed to create sig");
+
+        // Create a file and commit
+        fs::write(dir.path().join("README.md"), "# Test Repo").expect("Failed to write README");
+
+        let mut index = repo.index().expect("Failed to get index");
+        index.add_path(std::path::Path::new("README.md")).expect("Failed to add path");
+        index.write().expect("Failed to write index");
+
+        let tree_id = index.write_tree().expect("Failed to write tree");
+        let tree = repo.find_tree(tree_id).expect("Failed to find tree");
+
+        repo.commit(Some("HEAD"), &sig, &sig, "Initial commit", &tree, &[])
+            .expect("Failed to create commit");
+
+        let url = format!("file://{}", dir.path().display());
+        (dir, url)
+    }
+
     #[test]
     fn test_compute_repo_hash_deterministic() {
         let hash1 = compute_repo_hash("https://github.com/org/repo.git");
@@ -194,54 +381,57 @@ mod tests {
 
     #[test]
     fn test_clone_to_store_creates_structure() {
+        let (_source_dir, source_url) = create_source_repo();
+
         let dir = tempfile::tempdir().unwrap();
         let store_path = dir.path().join("store");
         fs::create_dir_all(store_path.join("objects")).unwrap();
 
-        let repo_url = "https://github.com/test/example.git";
-        let result = clone_to_store(repo_url, &store_path, None, None);
-
-        // This may fail due to network (fetch), but the structure should still be created
-        // because we don't fail hard on fetch errors
-        assert!(result.is_ok());
+        let result = clone_to_store(&source_url, &store_path, None, None);
+        assert!(result.is_ok(), "clone_to_store should succeed with local repo: {:?}", result.err());
 
         let repo_dir = result.unwrap();
         assert!(repo_dir.exists());
         assert!(repo_dir.join("bare.git").exists());
         assert!(repo_dir.join("metadata.json").exists());
 
-        // Verify metadata
+        // Verify metadata has actual values
         let metadata = StoreMetadata::load(&repo_dir).unwrap();
-        assert_eq!(metadata.repo_url, repo_url);
+        assert_eq!(metadata.repo_url, source_url);
+        assert!(!metadata.commit_hash.is_empty(), "commit_hash should be populated after fetch");
+        assert!(metadata.size_bytes > 0, "size_bytes should be > 0 after fetch");
         assert!(!metadata.alternates_configured);
     }
 
     #[test]
     fn test_clone_to_store_idempotent() {
+        let (_source_dir, source_url) = create_source_repo();
+
         let dir = tempfile::tempdir().unwrap();
         let store_path = dir.path().join("store");
         fs::create_dir_all(store_path.join("objects")).unwrap();
 
-        let repo_url = "https://github.com/test/example.git";
-        let result1 = clone_to_store(repo_url, &store_path, None, None).unwrap();
-        let result2 = clone_to_store(repo_url, &store_path, None, None).unwrap();
+        let result1 = clone_to_store(&source_url, &store_path, None, None).unwrap();
+        let result2 = clone_to_store(&source_url, &store_path, None, None).unwrap();
 
         assert_eq!(result1, result2);
     }
 
     #[test]
     fn test_clone_to_store_with_alternates() {
+        let (_source_dir, source_url) = create_source_repo();
+
         let dir = tempfile::tempdir().unwrap();
         let store_path = dir.path().join("store");
         fs::create_dir_all(store_path.join("objects")).unwrap();
 
         let reference_path = dir.path().join("reference.git");
-        fs::create_dir_all(reference_path.join("objects")).unwrap();
+        // Init reference as a bare repo with objects directory
+        let _ref_repo = git2::Repository::init_bare(&reference_path).unwrap();
 
-        let repo_url = "https://github.com/test/altrepo.git";
-        let result = clone_to_store(repo_url, &store_path, None, Some(&reference_path));
+        let result = clone_to_store(&source_url, &store_path, None, Some(&reference_path));
 
-        assert!(result.is_ok());
+        assert!(result.is_ok(), "clone_to_store with alternates should succeed: {:?}", result.err());
         let repo_dir = result.unwrap();
         let bare_git_path = repo_dir.join("bare.git");
         let alternates_file = bare_git_path.join("objects/info/alternates");
@@ -250,6 +440,20 @@ mod tests {
         // Verify metadata has alternates_configured
         let metadata = StoreMetadata::load(&repo_dir).unwrap();
         assert!(metadata.alternates_configured);
+    }
+
+    #[test]
+    fn test_clone_to_store_fails_on_unreachable() {
+        let dir = tempfile::tempdir().unwrap();
+        let store_path = dir.path().join("store");
+        fs::create_dir_all(store_path.join("objects")).unwrap();
+
+        let repo_url = "https://github.com/nonexistent-org-12345/repo.git";
+        let result = clone_to_store(repo_url, &store_path, None, None);
+
+        assert!(result.is_err(), "Should fail on unreachable repository");
+        let err = format!("{}", result.err().unwrap());
+        assert!(err.contains("Failed to clone repository"), "Error should mention cloning failure");
     }
 
     #[test]
@@ -292,15 +496,16 @@ mod tests {
 
     #[test]
     fn test_remove_from_store() {
+        let (_source_dir, source_url) = create_source_repo();
+
         let dir = tempfile::tempdir().unwrap();
         let store_path = dir.path().join("store");
         fs::create_dir_all(store_path.join("objects")).unwrap();
 
-        let repo_url = "https://github.com/test/removeme.git";
-        let repo_dir = clone_to_store(repo_url, &store_path, None, None).unwrap();
+        let repo_dir = clone_to_store(&source_url, &store_path, None, None).unwrap();
         assert!(repo_dir.exists());
 
-        remove_from_store(&store_path, repo_url).unwrap();
+        remove_from_store(&store_path, &source_url).unwrap();
         assert!(!repo_dir.exists());
     }
 
@@ -313,5 +518,89 @@ mod tests {
         // Should not fail on nonexistent repo
         let result = remove_from_store(&store_path, "https://github.com/test/nonexistent.git");
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_get_remote_head_with_branch() {
+        let (_source_dir, source_url) = create_source_repo();
+
+        let dir = tempfile::tempdir().unwrap();
+        let store_path = dir.path().join("store");
+        fs::create_dir_all(store_path.join("objects")).unwrap();
+
+        let repo_dir = clone_to_store(&source_url, &store_path, None, None).unwrap();
+        let bare_git_path = repo_dir.join("bare.git");
+        let repo = git2::Repository::open_bare(&bare_git_path).unwrap();
+
+        let hash = get_remote_head(&repo, None);
+        assert!(hash.is_some(), "Should find a remote head commit");
+        assert!(!hash.unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_calculate_dir_size_returns_zero_for_empty() {
+        let dir = tempfile::tempdir().unwrap();
+        let size = calculate_dir_size(dir.path());
+        assert_eq!(size, 0);
+    }
+
+    #[test]
+    fn test_calculate_dir_size_returns_positive() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join("file.txt"), "content").unwrap();
+        let size = calculate_dir_size(dir.path());
+        assert!(size > 0);
+    }
+
+    /// Integration test: clone a real GitLab repository using SSH.
+    /// Requires SSH access to gitlab.alibaba-inc.com with proper key loaded.
+    /// Run with: cargo test -- --ignored test_clone_gitlab_repo
+    #[test]
+    #[ignore]
+    fn test_clone_gitlab_repo() {
+        let repo_url = "git@gitlab.alibaba-inc.com:eleme-domPoi/alsc.sales_aoi_service.git";
+        let branch = Some("master");
+
+        let dir = tempfile::tempdir().expect("Failed to create temp dir");
+        let store_path = dir.path().join("store");
+        fs::create_dir_all(store_path.join("objects")).expect("Failed to create objects dir");
+
+        eprintln!("\n=== Integration test: cloning real GitLab repo ===");
+        eprintln!("URL:    {}", repo_url);
+        eprintln!("Branch: {:?}", branch);
+        eprintln!("Store:  {}", store_path.display());
+        eprintln!("SSH_AUTH_SOCK: {:?}", std::env::var("SSH_AUTH_SOCK").ok());
+        eprintln!("---");
+
+        let result = clone_to_store(repo_url, &store_path, branch, None);
+
+        assert!(result.is_ok(), "Failed to clone real GitLab repo: {:?}", result.err());
+
+        let repo_dir = result.unwrap();
+        let metadata = StoreMetadata::load(&repo_dir).expect("Failed to load metadata");
+
+        eprintln!("---");
+        eprintln!("Clone succeeded!");
+        eprintln!("  Commit hash: {}", metadata.commit_hash);
+        eprintln!("  Size:        {} bytes ({:.2} MB)", metadata.size_bytes, metadata.size_bytes as f64 / 1_048_576.0);
+        eprintln!("  Branch:      {:?}", metadata.branch);
+        eprintln!("  Repo URL:    {}", metadata.repo_url);
+
+        assert!(!metadata.commit_hash.is_empty(), "commit_hash should be populated after cloning");
+        assert!(metadata.size_bytes > 0, "size_bytes should be > 0 after cloning");
+        assert_eq!(metadata.repo_url, repo_url, "repo_url should match the original URL");
+
+        // Verify the bare repo has a local branch created (via fetch refspec)
+        let bare_git_path = repo_dir.join("bare.git");
+        let bare_repo = git2::Repository::open_bare(&bare_git_path)
+            .expect("Failed to open bare repo for verification");
+        let remote_ref = format!("refs/remotes/origin/{}", branch.unwrap());
+        assert!(
+            bare_repo.find_reference(&remote_ref).is_ok(),
+            "Remote tracking ref '{}' should exist after fetch",
+            remote_ref
+        );
+
+        eprintln!("=== Integration test passed ===\n");
     }
 }

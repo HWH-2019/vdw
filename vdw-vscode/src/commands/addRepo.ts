@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
+import * as yaml from 'js-yaml';
 import { VDWCliService } from '../services/vdwCliService';
 import { ConfigService } from '../services/configService';
 import { log, logError } from '../utils/logger';
@@ -131,21 +132,63 @@ export async function handleAddRepo(
                 return false;
             }
             localPath = pathInput;
-
-            // Ask if editable
-            const editableOptions = ['Yes - Editable (Git worktree)', 'No - Read-only (linked)'];
-            const editableChoice = await vscode.window.showQuickPick(editableOptions, {
-                placeHolder: 'Should this repository be editable?',
-            });
-
-            if (!editableChoice) {
-                log('User cancelled editable choice');
-                return false;
-            }
-            editable = editableChoice === editableOptions[0];
         }
 
-        // Step 3: Execute CLI command (for both remote and local)
+        // Step 3: Branch selection (shared, with different defaults)
+        const branchInput = await vscode.window.showInputBox({
+            prompt: 'Enter branch name for the repository' + (repoType === 'local' ? ' (leave empty to use detected branch)' : ''),
+            placeHolder: 'main, master, develop, etc.',
+            value: branch,
+            validateInput: (value) => {
+                if (!value || value.trim() === '') {
+                    return 'Branch name is required';
+                }
+                return null;
+            },
+        });
+
+        if (!branchInput) {
+            log('User cancelled branch input');
+            return false;
+        }
+        branch = branchInput.trim();
+
+        // Step 4: Editable mode selection (shared for both remote and local)
+        const editableChoice = await vscode.window.showQuickPick(
+            ['Yes - Editable (Git worktree)', 'No - Read-only (linked)'],
+            {
+                placeHolder: 'Should this repository be editable?',
+                title: 'Add Repository',
+            },
+        );
+
+        if (!editableChoice) {
+            log('User cancelled editable choice');
+            return false;
+        }
+        editable = editableChoice === 'Yes - Editable (Git worktree)';
+
+        // Step 5: Scope pattern selection (shared for both remote and local)
+        const includePattern = await vscode.window.showInputBox({
+            prompt: 'Enter scope include patterns (comma-separated globs)',
+            placeHolder: '**/*, src/**, package.json',
+            value: '**/*',
+            validateInput: (value) => {
+                if (!value || value.trim() === '') {
+                    return 'At least one include pattern is required';
+                }
+                return null;
+            },
+        });
+
+        if (!includePattern) {
+            log('User cancelled scope pattern input');
+            return false;
+        }
+
+        const scopeInclude = includePattern.split(',').map(p => p.trim()).filter(p => p.length > 0);
+
+        // Step 6: Execute CLI command (for both remote and local)
         return await vscode.window.withProgress(
             {
                 location: vscode.ProgressLocation.Notification,
@@ -171,6 +214,39 @@ export async function handleAddRepo(
                     if (result.exitCode === 0) {
                         const repoLabel = repoType === 'remote' ? repoUrl : path.basename(repoUrl);
                         log(`Successfully added repository: ${repoLabel}`);
+
+                        // Update .vdwrc with scope configuration (CLI doesn't support --scope yet)
+                        try {
+                            const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+                            if (workspaceFolder) {
+                                const vdwrcPath = path.join(workspaceFolder.uri.fsPath, '.vdwrc');
+                                if (fs.existsSync(vdwrcPath)) {
+                                    const content = fs.readFileSync(vdwrcPath, 'utf-8');
+                                    const config = yaml.load(content) as any;
+                                    if (config && config.dependencies) {
+                                        const dep = config.dependencies.find(
+                                            (d: any) => (d.repo === repoUrl || d.path === localPath)
+                                        );
+                                        if (dep) {
+                                            dep.scope = {
+                                                include: scopeInclude,
+                                            };
+                                            const yamlStr = yaml.dump(config, {
+                                                indent: 2,
+                                                lineWidth: 120,
+                                                noRefs: true,
+                                            });
+                                            fs.writeFileSync(vdwrcPath, yamlStr, 'utf-8');
+                                            log('Updated .vdwrc with scope configuration');
+                                        }
+                                    }
+                                }
+                            }
+                        } catch (scopeErr) {
+                            logError('Failed to update .vdwrc with scope', scopeErr);
+                            // Don't fail the operation, scope can be edited manually
+                        }
+
                         vscode.window.showInformationMessage(
                             `Repository added successfully: ${repoLabel}\nPath: ${localPath}`,
                         );

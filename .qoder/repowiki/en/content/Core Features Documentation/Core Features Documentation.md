@@ -7,6 +7,7 @@
 - [main.rs](file://vdw/src/main.rs)
 - [init.rs](file://vdw/src/commands/init.rs)
 - [link.rs](file://vdw/src/commands/link.rs)
+- [repo.rs](file://vdw/src/commands/repo.rs)
 - [manager.rs](file://vdw/src/store/manager.rs)
 - [engine.rs](file://vdw/src/link/engine.rs)
 - [filter.rs](file://vdw/src/context/filter.rs)
@@ -15,17 +16,18 @@
 - [config.rs](file://vdw/src/types/config.rs)
 - [workspace.rs](file://vdw/src/types/workspace.rs)
 - [sample.vdwrc](file://vdw/tests/fixtures/sample.vdwrc)
+- [index.ts](file://vdw-vscode/src/commands/index.ts)
+- [addRepo.ts](file://vdw-vscode/src/commands/addRepo.ts)
+- [workspaceTreeView.ts](file://vdw-vscode/src/providers/workspaceTreeView.ts)
 </cite>
 
 ## Update Summary
 **Changes Made**
-- Updated CLI command structure to reflect implemented subcommands
-- Added comprehensive documentation for new content store system
-- Documented link engine implementation with platform-specific strategies
-- Added AI context filtering with glob pattern matching
-- Documented Git worktree integration for editable mode
-- Updated architecture diagrams to reflect actual implementation
-- Enhanced troubleshooting guidance with specific error handling
+- Enhanced CLI command structure with selective repository linking/unlinking capabilities
+- Improved repository management functionality with per-repo operations
+- Expanded workspace configuration options with interactive VS Code plugin support
+- Added per-repository filtering for link/unlink operations
+- Enhanced VS Code plugin with per-repo unlinking and improved UI
 
 ## Table of Contents
 1. [Introduction](#introduction)
@@ -62,10 +64,12 @@ subgraph "CLI Layer"
 CLI[CLI Commands]
 Init[Init Command]
 Link[Link Command]
+Unlink[Unlink Command]
 Repo[Repo Management]
 Worktree[Worktree Management]
 Context[Context Management]
 Doctor[Diagnostic Command]
+Validate[Validation Command]
 end
 subgraph "Core Services"
 ConfigMgr[Configuration Manager]
@@ -73,6 +77,7 @@ StoreMgr[Store Manager]
 LinkEngine[Link Engine]
 WorktreeMgr[Worktree Manager]
 ContextFilter[Context Filter]
+StateMgr[State Manager]
 end
 subgraph "Storage Layer"
 ContentStore[Content Store]
@@ -87,6 +92,7 @@ end
 CLI --> ConfigMgr
 Init --> StoreMgr
 Link --> LinkEngine
+Unlink --> StateMgr
 Repo --> ConfigMgr
 Worktree --> WorktreeMgr
 Context --> ContextFilter
@@ -138,22 +144,26 @@ CLI[CLI Tools]
 Commands[Subcommand Interface]
 InitCmd[Init Command]
 LinkCmd[Link Command]
+UnlinkCmd[Unlink Command]
 RepoCmd[Repo Management]
 WorktreeCmd[Worktree Management]
 ContextCmd[Context Management]
 DoctorCmd[Diagnostic Command]
+ValidateCmd[Validation Command]
 end
 subgraph "Service Layer"
 ConfigParser[Configuration Parser]
 WorkspaceBuilder[Workspace Builder]
 DependencyResolver[Dependency Resolver]
 StateManager[State Manager]
+StateLoader[State Loader]
 end
 subgraph "Storage Layer"
 ContentStore[Content Store]
 GitPool[Git Objects Pool]
 DedupeEngine[De-duplication Engine]
 MetadataStore[Metadata Cache]
+StatePersistence[State Persistence]
 end
 subgraph "Platform Layer"
 FileSystem[File System APIs]
@@ -174,6 +184,8 @@ GitPool --> MetadataStore
 ContentStore --> FileSystem
 GitPool --> GitInterface
 MetadataStore --> NetworkLayer
+StateMgr --> StatePersistence
+StatePersistence --> StateLoader
 ```
 
 **Diagram sources**
@@ -573,7 +585,7 @@ The system maintains an event-driven index that tracks file system changes, enab
 
 The CLI command interface provides a comprehensive command-line interface for workspace management with subcommand architecture. The system uses clap for robust command parsing and error handling.
 
-**Command Architecture:**
+**Enhanced Command Architecture:**
 
 ```mermaid
 graph TB
@@ -601,26 +613,32 @@ subgraph "Context Subcommands"
 CtxPreview[Preview]
 CtxStats[Stats]
 end
+subgraph "Selective Operations"
+RepoFilter[Repository Filter]
+PerRepoOps[Per-Repository Ops]
+end
 Init --> RepoAdd
 Link --> WTCreate
+Unlink --> PerRepoOps
 Repo --> RepoAdd
 Worktree --> WTCreate
 Context --> CtxPreview
+PerRepoOps --> RepoFilter
 ```
 
 **Diagram sources**
 - [main.rs:18-102](file://vdw/src/main.rs#L18-L102)
 
-#### Command Categories
+#### Enhanced Command Categories
 
 **Workspace Management:**
 - `vdw init`: Initialize a new VDW workspace with template support
-- `vdw link`: Create logical workspace links from dependencies
-- `vdw unlink`: Remove all logical workspace links
+- `vdw link [--repo URL]`: Create logical workspace links from dependencies (with optional repository filter)
+- `vdw unlink [--repo URL]`: Remove logical workspace links for specific repository (with optional repository filter)
 - `vdw validate`: Validate workspace configuration
 
 **Repository Management:**
-- `vdw repo add`: Add a repository to the workspace
+- `vdw repo add`: Add a repository to the workspace with interactive wizard support
 - `vdw repo remove`: Remove a repository from the workspace
 - `vdw repo list`: List all repositories in the workspace
 
@@ -633,6 +651,20 @@ Context --> CtxPreview
 - `vdw context preview`: Preview the AI context for the workspace
 - `vdw context stats`: Show context statistics
 
+#### Selective Repository Operations
+
+**Per-Repository Filtering:**
+The enhanced CLI now supports selective operations on specific repositories:
+
+- **Selective Linking**: `vdw link --repo https://github.com/org/repo.git`
+- **Selective Unlinking**: `vdw unlink --repo https://github.com/org/repo.git`
+- **Repository-Specific State Management**: Maintains separate state for each repository
+
+**State Management Enhancements:**
+- **Repository-Aware State**: WorkspaceState tracks links and worktrees per repository
+- **Partial Cleanup**: Removes only specified repository's links and worktrees
+- **Granular Operations**: Supports both full workspace and individual repository operations
+
 #### Error Handling and User Guidance
 
 The CLI provides comprehensive error handling with helpful suggestions for common issues:
@@ -640,6 +672,7 @@ The CLI provides comprehensive error handling with helpful suggestions for commo
 - **Initialization Errors**: Guidance for `.vdwrc` creation and validation
 - **Workspace State Issues**: Suggestions for `vdw doctor` usage
 - **Command Syntax**: Clear error messages for invalid subcommands
+- **Repository Filters**: Meaningful feedback when no matching repositories are found
 
 #### Acceptance Criteria
 
@@ -647,10 +680,177 @@ The CLI provides comprehensive error handling with helpful suggestions for commo
 - **Help System**: Comprehensive help text for all commands and flags
 - **Error Messages**: Meaningful error messages with actionable suggestions
 - **Exit Codes**: Proper exit codes for different error conditions
+- **Repository Filtering**: Accurate per-repository operation support
 
 **Section sources**
 - [main.rs:18-102](file://vdw/src/main.rs#L18-L102)
 - [init.rs:5-29](file://vdw/src/commands/init.rs#L5-L29)
+- [link.rs:11-114](file://vdw/src/commands/link.rs#L11-L114)
+- [link.rs:218-269](file://vdw/src/commands/link.rs#L218-L269)
+- [repo.rs:8-32](file://vdw/src/commands/repo.rs#L8-L32)
+
+### F7: State Management
+
+#### Implementation Details
+
+The State Management system tracks the current state of linked repositories and worktrees within the workspace. This enables granular operations and proper cleanup when repositories are unlinked.
+
+**Workspace State Architecture:**
+
+```mermaid
+classDiagram
+class WorkspaceState {
++PathBuf workspace_root
++Vec~LinkEntry~ links
++Vec~WorktreeInfo~ worktrees
++new(workspace_root) WorkspaceState
++load(workspace_root) WorkspaceState
++save() Result
+}
+class LinkEntry {
++PathBuf source
++PathBuf target
++LinkType link_type
++String dependency_repo
+}
+class WorktreeInfo {
++String repo_url
++String branch
++PathBuf path
+}
+class LinkType {
+<<enumeration>>
+HardLink
+Symlink
+Junction
+}
+WorkspaceState --> LinkEntry
+WorkspaceState --> WorktreeInfo
+LinkEntry --> LinkType
+```
+
+**Diagram sources**
+- [workspace.rs:4-42](file://vdw/src/types/workspace.rs#L4-L42)
+
+#### State Persistence
+
+The system maintains state in `.vdw/state.json` within the workspace:
+
+**State Fields:**
+- **workspace_root**: Root directory of the workspace
+- **links**: Collection of all created link entries with repository association
+- **worktrees**: Information about created worktree instances
+
+**State Operations:**
+- **Automatic Loading**: State loaded on demand when workspace is accessed
+- **Persistent Storage**: JSON serialization for cross-session state preservation
+- **Selective Updates**: Repository-specific state updates for granular operations
+
+#### Enhanced State Management
+
+**Per-Repository State Tracking:**
+- **Repository Association**: Each link entry tracks which dependency it belongs to
+- **Selective Cleanup**: Worktrees and links can be removed per repository basis
+- **State Validation**: Ensures consistency between physical links and recorded state
+
+**State Persistence Benefits:**
+- **Operation Recovery**: Allows resuming interrupted operations
+- **Cleanup Verification**: Ensures complete removal of workspace modifications
+- **Audit Trail**: Maintains record of all workspace modifications
+
+#### Acceptance Criteria
+
+- **State Persistence**: Complete workspace state saved and restored
+- **Repository Isolation**: Separate state tracking for each repository
+- **Cleanup Accuracy**: All workspace modifications properly tracked and removable
+- **Error Recovery**: State corruption handled gracefully with recovery mechanisms
+
+**Section sources**
+- [workspace.rs:44-72](file://vdw/src/types/workspace.rs#L44-L72)
+- [link.rs:218-269](file://vdw/src/commands/link.rs#L218-L269)
+
+### F8: VS Code Plugin Bridge
+
+#### Implementation Details
+
+The VS Code plugin provides seamless IDE integration with VDW, offering enhanced UI for repository management and workspace operations.
+
+**Enhanced Plugin Architecture:**
+
+```mermaid
+graph TB
+subgraph "VS Code Extension"
+Extension[Extension Host]
+Commands[Command Handlers]
+Providers[UI Providers]
+Services[Service Layer]
+end
+subgraph "VDW CLI Bridge"
+CLIService[CLI Service]
+VDWCLI[VDW CLI]
+end
+subgraph "Workspace Integration"
+ConfigService[Config Service]
+TreeProvider[Tree Provider]
+FileProvider[File Provider]
+StatusBar[Status Bar]
+end
+Extension --> Commands
+Commands --> Services
+Services --> CLIService
+CLIService --> VDWCLI
+Services --> ConfigService
+Services --> TreeProvider
+Services --> FileProvider
+Services --> StatusBar
+```
+
+**Diagram sources**
+- [index.ts:1-257](file://vdw-vscode/src/commands/index.ts#L1-L257)
+- [addRepo.ts:1-257](file://vdw-vscode/src/commands/addRepo.ts#L1-L257)
+- [workspaceTreeView.ts:1-236](file://vdw-vscode/src/providers/workspaceTreeView.ts#L1-L236)
+
+#### Enhanced Repository Management UI
+
+**Interactive Repository Addition Wizard:**
+- **Repository Type Selection**: Remote vs Local repository support
+- **Automated Path Generation**: Smart default paths based on repository names
+- **Editable Mode Selection**: Clear indication of worktree vs linked modes
+- **Scope Configuration**: Interactive scope pattern setup with validation
+
+**Per-Repository Operations:**
+- **Selective Unlinking**: Repository-specific unlink operations with confirmation
+- **Repository Status Tracking**: Real-time status updates in workspace tree view
+- **Enhanced Tooltips**: Comprehensive repository information display
+
+**Workspace Tree View Enhancements:**
+- **Visual Status Indicators**: Color-coded icons for linked/unlinked repositories
+- **Detailed Repository Information**: URL, branch, scope, and editability status
+- **Action Context Menu**: Repository-specific actions based on current state
+
+#### Plugin Integration Features
+
+**Command Integration:**
+- **Repository Management**: Direct CLI command execution from VS Code
+- **Workspace Operations**: Link, unlink, and validation commands
+- **Context Management**: AI context preview and statistics
+
+**Real-time Updates:**
+- **State Synchronization**: Automatic workspace state refresh after operations
+- **File Provider Integration**: Seamless file access through VDW links
+- **Status Bar Integration**: File count and workspace status display
+
+#### Acceptance Criteria
+
+- **UI Responsiveness**: All operations complete within reasonable time limits
+- **Error Handling**: Comprehensive error reporting with user-friendly messages
+- **State Synchronization**: VS Code UI accurately reflects workspace state
+- **Integration Quality**: Seamless IDE experience without disrupting normal workflows
+
+**Section sources**
+- [index.ts:219-263](file://vdw-vscode/src/commands/index.ts#L219-L263)
+- [addRepo.ts:13-257](file://vdw-vscode/src/commands/addRepo.ts#L13-L257)
+- [workspaceTreeView.ts:66-201](file://vdw-vscode/src/providers/workspaceTreeView.ts#L66-L201)
 
 ## Dependency Analysis
 
@@ -673,6 +873,9 @@ end
 subgraph "Intelligence Layer"
 F5[AI Context Filtering]
 end
+subgraph "Integration Layer"
+F8[VS Code Plugin]
+end
 F1 --> F3
 F1 --> F5
 F1 --> F6
@@ -682,6 +885,9 @@ F3 --> F6
 F4 --> F6
 F5 --> F6
 F7 --> F6
+F6 --> F8
+F8 --> F3
+F8 --> F5
 ```
 
 **Diagram sources**
@@ -696,6 +902,8 @@ The system maintains clear data flow patterns between components:
 2. **Storage Flow**: Content Store → Link Engine → Logical Workspace
 3. **Context Flow**: AI Requests → Context Filter → File Provider → IDE
 4. **Management Flow**: CLI Commands → Core Services → Storage Layer
+5. **State Flow**: Workspace State → Link Engine → Physical Links
+6. **Plugin Flow**: VS Code UI → CLI Service → VDW Commands
 
 ### Coupling and Cohesion Analysis
 
@@ -710,6 +918,7 @@ The system maintains clear data flow patterns between components:
 - File system operations and platform abstractions
 - Git integration and repository management
 - AI context filtering and scope management
+- State management and persistence
 
 **Section sources**
 - [lib.rs:1-9](file://vdw/src/lib.rs#L1-L9)
@@ -729,6 +938,7 @@ The VDW system is designed with aggressive performance targets to ensure smooth 
 | Disk Space Savings | > 60% | Multiple branches of same repository |
 | IDE Startup Impact | < 2 seconds | Compared to no VDW scenario |
 | Memory Usage | < 200MB | 10,000 files scale |
+| Selective Operations | < 5 seconds | Per-repository filtering |
 
 ### Optimization Strategies
 
@@ -736,16 +946,19 @@ The VDW system is designed with aggressive performance targets to ensure smooth 
 - Concurrent repository fetching during initial setup
 - Parallel link creation for multiple repositories
 - Asynchronous context filtering for large file sets
+- Concurrent state updates for multiple repositories
 
 **Caching Mechanisms:**
 - Metadata caching for frequently accessed configurations
 - File content caching for repeated AI requests
 - Git object caching to minimize network operations
+- Workspace state caching for UI responsiveness
 
 **Lazy Loading:**
 - Deferred initialization of non-critical components
 - On-demand repository fetching based on scope requirements
 - Incremental context building as files are accessed
+- Lazy state loading for large workspaces
 
 ### Scalability Considerations
 
@@ -795,6 +1008,14 @@ The VDW system is designed with aggressive performance targets to ensure smooth 
   - Verify `.vdwrc` syntax validity
   - Restart VS Code extension host
 
+**Issue: Selective Repository Operations Fail**
+- **Symptoms**: `vdw link --repo` or `vdw unlink --repo` commands fail
+- **Causes**: Repository URL mismatch, workspace state corruption, permission issues
+- **Solutions**:
+  - Verify repository URL matches `.vdwrc` configuration
+  - Use `vdw doctor` to check workspace state
+  - Ensure proper file permissions for workspace directories
+
 ### Diagnostic Commands
 
 **System Health Checks:**
@@ -812,9 +1033,15 @@ The VDW system is designed with aggressive performance targets to ensure smooth 
 - `vdw store repair`: Attempt automatic store recovery
 - `vdw rollback`: Revert recent operations if needed
 
+**Repository-Specific Diagnostics:**
+- `vdw link --repo URL`: Test selective linking for specific repository
+- `vdw unlink --repo URL`: Test selective unlinking for specific repository
+- `vdw repo list`: Verify repository availability in content store
+
 **Section sources**
 - [main.rs:144-157](file://vdw/src/main.rs#L144-L157)
 - [init.rs:104-135](file://vdw/src/commands/init.rs#L104-L135)
+- [link.rs:218-269](file://vdw/src/commands/link.rs#L218-L269)
 
 ## Conclusion
 
@@ -822,11 +1049,18 @@ VDW represents a paradigm shift in how development teams manage complex, multi-r
 
 The seven-core feature architecture provides a solid foundation for both immediate productivity gains and future extensibility. The cross-platform design ensures broad compatibility, while the plugin-based approach enables seamless integration with existing development workflows.
 
-Key achievements demonstrated by this architecture include:
+**Key Enhancements:**
+- **Selective Repository Operations**: Granular control over individual repository linking/unlinking
+- **Enhanced State Management**: Repository-aware workspace state tracking
+- **Improved VS Code Integration**: Interactive wizards and per-repository UI controls
+- **Expanded Configuration Options**: Comprehensive scope-based filtering and validation
+
+**Achievements Demonstrated:**
 - **60%+ disk space reduction** through intelligent content deduplication
 - **Unified development experience** across multiple repositories
 - **Precise AI context control** preventing context overflow
 - **Seamless IDE integration** maintaining familiar development workflows
+- **Granular workspace management** enabling selective repository operations
 
 The implementation roadmap outlined in the requirements document provides clear progression paths from MVP to advanced features, ensuring steady delivery of value while maintaining architectural integrity. Future enhancements like AST-based context expansion, FUSE virtual file systems, and enterprise features will further strengthen VDW's position as a comprehensive development environment solution.
 

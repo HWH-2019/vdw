@@ -1,8 +1,8 @@
 # VDW (Virtual Dev Workspace) - 产品需求文档
 
-**文档版本**: v1.0  
-**创建日期**: 2026-06-02  
-**产品名称**: Virtual Dev Workspace (VDW)  
+**文档版本**: v1.2  
+**创建日期**: 2026-06-03  
+**最近更新**: 2026-06-03  
 **产品定位**: 跨仓库全栈开发中间层 - 物理去重存储 + 逻辑工作空间 + AI 上下文智能管理
 
 ---
@@ -286,9 +286,10 @@ VDW 返回的上下文文件:
 **功能描述**：
 - 在 VS Code 侧边栏显示"逻辑工作空间"视图
 - 状态栏显示当前 AI 上下文包含的仓库列表和文件数量
-- 一键添加远程仓库到当前工作空间（自动更新 `.vdwrc`）
+- **添加仓库功能**：一键添加远程或本地仓库到当前工作空间（自动更新 `.vdwrc`）。添加远程仓库时，后续步骤与本地仓库保持一致，包括选择 editable 模式、配置 scope 范围等完整流程
 - 提供命令面板操作：`VDW: Link`、`VDW: Unlink`、`VDW: Refresh Context`
-- **自动打开 Git 仓库**：在 add、link、relink 操作后自动在 VS Code Source Control 中注册可编辑依赖的 Git 仓库
+| **自动打开 Git 仓库功能**：在 add、link、relink 操作后自动在 VS Code Source Control 中注册可编辑依赖的 Git 仓库
+- **右键移除仓库**：在 VDW 工作空间视图中，右键点击依赖项可执行移除操作，将其从 `.vdwrc` 配置中删除并清理链接
 
 **自动打开 Git 仓库功能详解**：
 
@@ -355,6 +356,61 @@ async function autoOpenGitRepositories(configService: ConfigService): Promise<vo
 }
 ```
 
+**右键移除仓库功能详解**：
+
+**触发方式**：
+- 在 VDW 工作空间视图的依赖项上右键点击
+- 从上下文菜单中选择「移除仓库」
+- 确认弹窗后执行移除操作
+
+**移除操作流程**：
+1. 用户右键点击依赖项 → 选择「移除仓库」
+2. 弹出确认对话框（包含仓库名称、路径信息）
+3. 用户确认后执行：
+   a. **卸载链接**：调用 `vdw unlink --repo <url>` 移除该仓库的链接文件
+   b. **更新配置**：从 `.vdwrc` 中删除该依赖项
+   c. **清理状态**：从 `.vdw/state.json` 中移除相关 worktree 和 link 记录
+4. 刷新 VDW 工作空间视图
+
+**实现机制**：
+```typescript
+// VS Code 命令注册
+vscode.commands.registerCommand('vdw.removeRepo', async (treeItem) => {
+    const dep = treeItem.dependency;
+    
+    // 1. 确认对话框
+    const confirm = await vscode.window.showWarningMessage(
+        `Remove repository "${dep.repo}"?`,
+        { modal: true },
+        'Yes, Remove'
+    );
+    if (!confirm) return;
+    
+    // 2. 先卸载链接（如果已链接）
+    await cliService.unlinkRepo(dep.repo);
+    
+    // 3. 调用 CLI 从配置中移除
+    const result = await cliService.executeCommand('repo', ['remove', dep.repo]);
+    
+    // 4. 刷新视图
+    configService.reload();
+    treeProvider.refresh();
+});
+```
+
+**与「卸载链接」的区别**：
+| 操作 | 效果 | 配置影响 | 可恢复性 |
+|------|------|---------|---------|
+| 卸载链接 | 仅移除硬链接文件，仓库仍保留在 `.vdwrc` 中 | 不变 | 可重新 Link |
+| 移除仓库 | 卸载链接 + 从 `.vdwrc` 删除 + 清理 store | 移除依赖项 | 需重新 Add |
+
+**验收标准**：
+- [ ] 右键依赖项显示「移除仓库」菜单项
+- [ ] 移除前弹出确认对话框，包含仓库名称和路径
+- [ ] 确认后执行卸载链接 + 更新配置 + 清理状态
+- [ ] 操作完成后自动刷新视图
+- [ ] 移除失败时提供清晰的错误信息
+
 **UI 设计**：
 ```
 ┌─ 资源管理器 ────────────────────────────┐
@@ -390,6 +446,21 @@ async function autoOpenGitRepositories(configService: ConfigService): Promise<vo
 │ [+ 添加仓库]  [🔄 刷新]                 │
 └─────────────────────────────────────────┘
 
+**右键上下文菜单**（在依赖项上右键）：
+```
+┌─ VDW 工作空间 ─────────────────────────┐
+│ 🔗 frontend.git@feat/new-ui  [可编辑]   │
+│ ┌──────────────────────────────────┐   │
+│ │ 🔗 链接仓库                       │   │  ← 未链接时显示
+│ │ 🔓 卸载链接                       │   │  ← 已链接时显示
+│ │ ⛔ 移除仓库                       │   │  ← 始终显示
+│ └──────────────────────────────────┘   │
+│ 🔗 backend.git@main          [只读]     │
+│                                         │
+│ [+ 添加仓库]  [🔄 刷新]                 │
+└─────────────────────────────────────────┘
+```
+
 ┌─ 源代码管理 ───────────────────────────┐
 │ 📦 vdw-test (main)                     │  ← 主仓库
 │                                         │
@@ -419,6 +490,15 @@ async function autoOpenGitRepositories(configService: ConfigService): Promise<vo
   - [ ] 子仓库支持正常的 Git 操作（commit、push、pull）
   - [ ] 错误处理完善，失败时不阻断主流程
   - [ ] 多个仓库打开时添加延迟避免冲突
+  - [ ] **添加仓库功能**：
+    - [ ] 添加远程仓库时，后续步骤与本地仓库一致，需选择 editable 模式和配置 scope 范围
+    - [ ] 支持选择可编辑（worktree）或只读（链接）模式
+    - [ ] 支持配置 scope 包含/排除模式
+  - [ ] **右键移除仓库功能**：
+    - [ ] 右键依赖项显示「移除仓库」菜单项
+    - [ ] 移除前弹出确认对话框，包含仓库名称和路径
+    - [ ] 确认后执行卸载链接 + 更新配置 + 清理状态
+    - [ ] 操作完成后自动刷新视图
 
 ---
 
@@ -787,6 +867,7 @@ vdw <command> --help
 |------|------|---------|------|
 | v1.0 | 2026-06-02 | 初始版本，MVP 需求定义 | AI Agent |
 | v1.1 | 2026-06-02 | 新增自动打开 Git 仓库功能需求（F6 增强） | AI Agent |
+| v1.2 | 2026-06-03 | 新增右键移除仓库功能；统一远程/本地添加仓库流程（F6 增强） | AI Agent |
 
 ---
 

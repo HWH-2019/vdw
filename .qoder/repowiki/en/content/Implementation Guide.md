@@ -9,6 +9,8 @@
 - [commands/link.rs](file://vdw/src/commands/link.rs)
 - [commands/repo.rs](file://vdw/src/commands/repo.rs)
 - [commands/worktree.rs](file://vdw/src/commands/worktree.rs)
+- [commands/context.rs](file://vdw/src/commands/context.rs)
+- [commands/doctor.rs](file://vdw/src/commands/doctor.rs)
 - [store/mod.rs](file://vdw/src/store/mod.rs)
 - [store/manager.rs](file://vdw/src/store/manager.rs)
 - [context/mod.rs](file://vdw/src/context/mod.rs)
@@ -16,18 +18,17 @@
 - [types/config.rs](file://vdw/src/types/config.rs)
 - [Cargo.toml](file://vdw/Cargo.toml)
 - [Cargo.lock](file://vdw/Cargo.lock)
+- [DEBUGGING_GUIDE.md](file://DEBUGGING_GUIDE.md)
 - [vdwrc fixture](file://vdw/tests/fixtures/sample.vdwrc)
 </cite>
 
 ## Update Summary
 **Changes Made**
-- Complete rewrite of CLI command reference with accurate command specifications
-- Added comprehensive CLI command documentation with examples and options
-- Enhanced component analysis with current implementation details
-- Updated configuration system documentation with validated schemas
-- Added benchmarking information and testing infrastructure details
-- Revised architecture diagrams to reflect actual codebase structure
-- Updated performance considerations with concrete metrics and optimizations
+- Added comprehensive debugging guide with joint debugging configuration for VS Code plugin and Rust CLI
+- Enhanced CLI command reference with new repository management commands and improved documentation
+- Expanded development workflow documentation with debugging best practices
+- Updated troubleshooting guide with comprehensive debugging procedures
+- Added joint debugging configuration for simultaneous VS Code plugin and Rust CLI debugging
 
 ## Table of Contents
 1. [Introduction](#introduction)
@@ -104,7 +105,7 @@ GitStore --> FileSystem
 - [lib.rs:1-9](file://vdw/src/lib.rs#L1-L9)
 
 **Section sources**
-- [main.rs:1-158](file://vdw/src/main.rs#L1-L158)
+- [main.rs:1-169](file://vdw/src/main.rs#L1-L169)
 - [lib.rs:1-9](file://vdw/src/lib.rs#L1-L9)
 
 ## Core Components
@@ -415,21 +416,17 @@ Logging --> FileSystem
 
 VDW provides a comprehensive command-line interface with specialized commands for each functional area.
 
-#### Initialization Commands
+#### Core Commands
 
 ```bash
 # Interactive workspace initialization
 vdw init
 
-# Template-based initialization
+# Initialize with template
 vdw init --template fullstack
 vdw init --template monorepo
 vdw init --template microservices
-```
 
-#### Link Management Commands
-
-```bash
 # Create logical workspace links
 vdw link
 
@@ -444,7 +441,7 @@ vdw link status
 
 ```bash
 # Add new dependency repository
-vdw repo add <url> [--branch <branch>] [--path <path>] [--editable]
+vdw repo add <url> [--path <path>] [--branch <branch>] [--editable]
 vdw repo add git@github.com:org/frontend.git --branch feat/new-ui
 vdw repo add git@github.com:org/backend.git --tag v2.1.0 --editable
 
@@ -466,8 +463,8 @@ vdw worktree create <repo> <branch>
 vdw worktree create frontend feat/new-feature
 
 # Delete worktree
-vdw worktree delete <repo> <branch>
-vdw worktree delete backend feat/old-feature
+vdw worktree delete <repo> <branch> [--force]
+vdw worktree delete backend feat/old-feature --force
 ```
 
 #### Context Management Commands
@@ -736,12 +733,16 @@ vdw init --template monorepo
 #### vdw link
 Create logical workspace links from configuration.
 
-**Current Status:** Not yet implemented
+**Options:**
+- `--repo` (short: `-r`): Only link the specified repository URL
 
-**Usage:**
+**Usage Examples:**
 ```bash
 # Create workspace links
 vdw link
+
+# Link only a specific repository
+vdw link --repo git@github.com:org/frontend.git
 ```
 
 **Section sources**
@@ -751,12 +752,16 @@ vdw link
 #### vdw unlink
 Remove all workspace links.
 
-**Current Status:** Not yet implemented
+**Options:**
+- `--repo` (short: `-r`): Only unlink the specified repository URL
 
-**Usage:**
+**Usage Examples:**
 ```bash
 # Remove workspace links
 vdw unlink
+
+# Unlink only a specific repository
+vdw unlink --repo git@github.com:org/frontend.git
 ```
 
 **Section sources**
@@ -813,7 +818,7 @@ List all repositories in the Content Store.
 
 **Output Format:**
 ```
-NAME                           BRANCH       REFS       ALT      URL
+NAME                           BRANCH       REF COUNT  ALT      URL
 --------------------------------------------------------------------------------
 frontend-abc123def             main         5          yes      git@github.com:org/frontend.git
 backend-45678901               v2.1.0       3          no       git@github.com:org/backend.git
@@ -850,6 +855,10 @@ vdw worktree list
 #### vdw worktree create
 Create a new worktree for a specific repository and branch.
 
+**Options:**
+- `--repo` (required): Repository name
+- `--branch` (required): Branch for the worktree
+
 **Usage Examples:**
 ```bash
 # Create worktree for frontend on feature branch
@@ -866,13 +875,18 @@ vdw worktree create backend develop
 #### vdw worktree delete
 Delete a worktree for a specific repository and branch.
 
+**Options:**
+- `--repo` (required): Repository name
+- `--branch` (required): Branch of the worktree to delete
+- `--force` (short: `-f`): Force deletion even if worktree is locked
+
 **Usage Examples:**
 ```bash
 # Delete worktree for frontend on feature branch
 vdw worktree delete frontend feat/old-feature
 
-# Delete worktree for backend on develop branch
-vdw worktree delete backend old-branch
+# Delete worktree for backend on develop branch with force
+vdw worktree delete backend old-branch --force
 ```
 
 **Section sources**
@@ -1288,8 +1302,53 @@ vdw logs --level debug
 vdw logs --tail 1000
 ```
 
+### Joint Debugging Configuration
+
+**New** The system now supports comprehensive joint debugging between VS Code plugin and Rust CLI.
+
+#### Debugging Modes
+
+| Configuration | Type | Purpose |
+|--------------|------|---------|
+| **1️⃣ VDW Plugin (Extension Host)** | VS Code Extension | Debug plugin code only |
+| **2️⃣ VDW CLI (Rust Debugger)** | LLDB (Rust) | Debug CLI `init` command |
+| **3️⃣ VDW CLI - Link Command** | LLDB (Rust) | Debug CLI `link` command |
+| **4️⃣ VDW CLI - Validate Command** | LLDB (Rust) | Debug CLI `validate` command |
+| **🔥 Joint Debug: Plugin + CLI** | Dual Debugger | Debug both components simultaneously |
+
+#### Joint Debugging Workflow
+
+```mermaid
+sequenceDiagram
+participant TS as TypeScript Code
+participant VSCode as VS Code Extension Host
+participant CLI as Rust CLI
+participant LLDB as LLDB Debugger
+participant Rust as Rust Code
+TS->>VSCode : Call vdwCliService.link()
+VSCode->>CLI : Execute vdw link command
+CLI->>LLDB : Start LLDB debugger
+LLDB->>Rust : Hit breakpoint in link.rs
+Rust-->>LLDB : Debug session paused
+LLDB-->>VSCode : Continue execution
+VSCode-->>TS : Return to TypeScript
+TS-->>VSCode : Continue debugging
+```
+
+**Diagram sources**
+- [DEBUGGING_GUIDE.md:113-139](file://DEBUGGING_GUIDE.md#L113-L139)
+
+#### Debug Configuration Features
+
+- **Smart CLI Path Detection**: Automatically detects debug vs release builds
+- **Environment Variable Support**: `VDW_DEBUG=true` enables debug mode
+- **Dual Debugger Sessions**: Simultaneous TypeScript and Rust debugging
+- **Breakpoint Synchronization**: TypeScript breakpoints trigger Rust debugging
+- **Auto-rebuild Integration**: Automatic recompilation of Rust code
+
 **Section sources**
 - [main.rs:45-48](file://vdw/src/main.rs#L45-L48)
+- [DEBUGGING_GUIDE.md:1-379](file://DEBUGGING_GUIDE.md#L1-L379)
 
 ## Development Workflow
 
@@ -1344,6 +1403,44 @@ cargo clippy
 
 # Generate documentation
 cargo doc --open
+```
+
+### Joint Debugging Workflow
+
+**New** Enhanced development workflow with comprehensive debugging support.
+
+#### Typical Development Cycle
+
+```mermaid
+graph LR
+A[Modify Rust Code] --> B[cargo build]
+B --> C[Modify TypeScript Code]
+C --> D[npm run watch auto-compile]
+D --> E[Start Joint Debug F5]
+E --> F[Test in Extension Host]
+G{Issues Found?}
+F --> G
+G --> |Yes| A
+G --> |No| H[Complete]
+```
+
+#### Quick Commands
+
+```bash
+# Compile Rust CLI (Debug mode)
+cd vdw && cargo build
+
+# Compile Rust CLI (Release mode)
+cd vdw && cargo build --release
+
+# Compile TypeScript (auto-watch)
+cd vdw-vscode && npm run watch
+
+# Run plugin tests
+cd vdw-vscode && npm test
+
+# Package plugin
+cd vdw-vscode && npm run package
 ```
 
 ### Release Process
@@ -1520,3 +1617,5 @@ Key success factors for VDW implementation include:
 - **Developer Experience**: Prioritize ease of use and clear feedback mechanisms
 
 The VDW system has the potential to transform how developers work with multiple repositories, providing a unified, efficient, and secure development environment that scales from individual projects to enterprise development teams.
+
+**Enhanced** The addition of comprehensive joint debugging capabilities significantly improves the development experience, allowing simultaneous debugging of both the VS Code plugin and Rust CLI components with intelligent path detection and automatic recompilation support.

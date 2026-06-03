@@ -8,6 +8,7 @@ import { AutoOpenService } from '../services/autoOpenService';
 import { VDWFileProvider } from '../providers/fileProvider';
 import { WorkspaceTreeProvider } from '../providers/workspaceTreeView';
 import { StatusBarManager } from '../providers/statusBar';
+import * as yaml from 'js-yaml';
 import { log, logError, show as showLog } from '../utils/logger';
 import { handleAddRepo } from './addRepo';
 
@@ -290,6 +291,90 @@ export function registerCommands(
             } catch (err) {
                 logError(`Link repository ${repoName} failed`, err);
                 vscode.window.showErrorMessage(`Error linking ${repoName}: ${err}`);
+                statusBar.showError('Error');
+            }
+        })
+    );
+
+    // vdw.removeRepo - Remove a repository (from context menu)
+    // Flow: unlink → remove from .vdwrc (no CLI store operation)
+    context.subscriptions.push(
+        vscode.commands.registerCommand('vdw.removeRepo', async (treeItem?: any) => {
+            if (!treeItem || !treeItem.dependency) {
+                vscode.window.showErrorMessage('No repository selected');
+                return;
+            }
+
+            const dep = treeItem.dependency;
+            const repoUrl = dep.repo;
+            const repoName = repoUrl.split('/').pop()?.replace('.git', '') || repoUrl;
+
+            const confirm = await vscode.window.showWarningMessage(
+                `Remove repository "${repoName}"?\n\nPath: ${dep.path}\n\nThis will unlink the repository and remove it from .vdwrc configuration.`,
+                { modal: true },
+                'Yes, Remove',
+                'Cancel'
+            );
+
+            if (confirm !== 'Yes, Remove') {
+                return;
+            }
+
+            try {
+                statusBar.showBusy(`Removing ${repoName}...`);
+                log(`Removing repository: ${repoName} (${repoUrl})`);
+
+                // Step 1: Unlink the repository first
+                log('Step 1: Unlinking repository...');
+                const unlinkResult = await cliService.unlinkRepo(repoUrl);
+                if (unlinkResult.exitCode !== 0) {
+                    logError('Unlink before remove failed', unlinkResult.stderr);
+                    // Continue anyway — the dependency might already be unlinked
+                }
+
+                // Step 2: Remove dependency from .vdwrc directly
+                log('Step 2: Removing dependency from .vdwrc...');
+                const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+                if (!workspaceFolder) {
+                    throw new Error('No workspace folder found');
+                }
+
+                const vdwrcPath = path.join(workspaceFolder.uri.fsPath, '.vdwrc');
+                if (!fs.existsSync(vdwrcPath)) {
+                    throw new Error('.vdwrc file not found');
+                }
+
+                const content = fs.readFileSync(vdwrcPath, 'utf-8');
+                const config = yaml.load(content) as any;
+                if (!config || !config.dependencies) {
+                    throw new Error('Invalid .vdwrc format');
+                }
+
+                const beforeCount = config.dependencies.length;
+                config.dependencies = config.dependencies.filter(
+                    (d: any) => d.repo !== repoUrl && d.path !== dep.path
+                );
+
+                if (config.dependencies.length === beforeCount) {
+                    logError('Dependency not found in .vdwrc, nothing to remove', { repoUrl, path: dep.path });
+                    // Still refresh UI
+                } else {
+                    const yamlStr = yaml.dump(config, { indent: 2, lineWidth: 120, noRefs: true });
+                    fs.writeFileSync(vdwrcPath, yamlStr, 'utf-8');
+                    log(`Removed dependency from .vdwrc: ${repoName}`);
+                }
+
+                // Refresh UI
+                vscode.window.showInformationMessage(`Repository "${repoName}" removed successfully!`);
+                configService.reload();
+                contextService.refresh();
+                fileProvider.refresh();
+                treeProvider.refresh();
+                const fileCount = await contextService.getFileCount();
+                statusBar.update(fileCount);
+            } catch (err) {
+                logError(`Remove repository ${repoName} failed`, err);
+                vscode.window.showErrorMessage(`Error removing ${repoName}: ${err}`);
                 statusBar.showError('Error');
             }
         })
