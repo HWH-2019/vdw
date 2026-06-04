@@ -27,15 +27,16 @@ pub fn list() -> Result<()> {
     let mut total_count = 0;
 
     for dep in &config.dependencies {
-        let repo_hash = object_pool::compute_repo_hash(&dep.repo);
-        let repo_name = extract_repo_name(&dep.repo);
+        let repo_url = dep.dep_id();
+        let repo_hash = object_pool::compute_repo_hash(repo_url);
+        let repo_name = extract_repo_name(repo_url);
         let repo_dir = store_path.join(format!("objects/{}-{}", repo_name, repo_hash));
         let bare_git_path = repo_dir.join("bare.git");
 
         if !bare_git_path.exists() {
             println!(
                 "{:<25} {:<20} {:<10} (not in store)",
-                dep.repo,
+                truncate(repo_url, 24),
                 "(n/a)",
                 if dep.editable { "yes" } else { "no" }
             );
@@ -48,7 +49,7 @@ pub fn list() -> Result<()> {
         if worktrees.is_empty() {
             println!(
                 "{:<25} {:<20} {:<10} (no worktrees)",
-                truncate(&dep.repo, 24),
+                truncate(repo_url, 24),
                 "(n/a)",
                 if dep.editable { "yes" } else { "no" }
             );
@@ -56,7 +57,7 @@ pub fn list() -> Result<()> {
             for wt in &worktrees {
                 println!(
                     "{:<25} {:<20} {:<10} {}",
-                    truncate(&dep.repo, 24),
+                    truncate(repo_url, 24),
                     truncate(&wt.branch, 19),
                     if dep.editable { "yes" } else { "no" },
                     wt.path.display()

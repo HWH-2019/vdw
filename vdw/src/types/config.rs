@@ -19,7 +19,26 @@ pub struct WorkspaceMeta {
 /// Dependency repository config
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Dependency {
+    /// Remote Git repository URL (e.g., git@github.com:org/repo.git)
+    /// Empty string for local-only repos
+    #[serde(default)]
+    pub remote: String,
+
+    /// Original source path for local-only repos.
+    /// Preserved when `local` is overwritten with a VDW-managed worktree path.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub origin: String,
+
+    /// Local repository path on disk (worktree or local git repo)
+    /// This replaces the need for state.json worktree lookup
+    #[serde(default)]
+    pub local: String,
+
+    /// Legacy field for backward compatibility - mapped to remote/local during parsing
+    #[serde(default, skip_serializing)]
     pub repo: String,
+
+    /// Workspace link path (relative to workspace root)
     pub path: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub branch: Option<String>,
@@ -46,22 +65,40 @@ pub struct Scope {
 }
 
 impl Dependency {
+    /// Get the canonical identifier for this dependency.
+    /// Priority: remote > origin > local
+    pub fn dep_id(&self) -> &str {
+        if !self.remote.is_empty() {
+            &self.remote
+        } else if !self.origin.is_empty() {
+            &self.origin
+        } else {
+            &self.local
+        }
+    }
+
     /// Validate dependency configuration
     pub fn validate(&self) -> Result<(), String> {
-        // Check repo URL format
-        // Support: git@, https://, http://, or local file paths
-        let is_valid_url = self.repo.starts_with("git@") 
-            || self.repo.starts_with("https://") 
-            || self.repo.starts_with("http://")
-            || self.repo.starts_with("/")  // Absolute path
-            || self.repo.starts_with("./") // Relative path
-            || self.repo.starts_with("../"); // Parent path
-        
-        if !is_valid_url {
-            return Err(format!(
-                "Invalid repo URL '{}': must start with 'git@', 'https://', 'http://', or be a file path",
-                self.repo
-            ));
+        // Check that remote, origin, and local are not ALL empty
+        if self.remote.is_empty() && self.origin.is_empty() && self.local.is_empty() {
+            return Err(
+                "Dependency must have at least one of 'remote', 'origin', or 'local' set"
+                    .to_string(),
+            );
+        }
+
+        // Validate remote format: must be git@, https://, http:// prefix, OR empty string
+        if !self.remote.is_empty() {
+            let is_valid_url = self.remote.starts_with("git@")
+                || self.remote.starts_with("https://")
+                || self.remote.starts_with("http://");
+
+            if !is_valid_url {
+                return Err(format!(
+                    "Invalid remote URL '{}': must start with 'git@', 'https://', or 'http://'",
+                    self.remote
+                ));
+            }
         }
 
         // Check branch/tag/commit mutual exclusion - exactly one must be set
@@ -70,16 +107,18 @@ impl Dependency {
             .filter(|opt| opt.is_some())
             .count();
 
+        let dep_id = self.dep_id();
+
         if version_specifiers == 0 {
             return Err(format!(
                 "Dependency '{}' must specify exactly one of: branch, tag, or commit",
-                self.repo
+                dep_id
             ));
         }
         if version_specifiers > 1 {
             return Err(format!(
                 "Dependency '{}' must specify only one of: branch, tag, or commit (found {})",
-                self.repo, version_specifiers
+                dep_id, version_specifiers
             ));
         }
 
@@ -87,17 +126,18 @@ impl Dependency {
         if self.scope.include.is_empty() {
             return Err(format!(
                 "Dependency '{}' must have at least one scope.include pattern",
-                self.repo
+                dep_id
             ));
         }
 
         Ok(())
     }
 
-    /// Generate a short identifier from the repo URL
+    /// Generate a short identifier from the repo URL or local path
     pub fn repo_id(&self) -> String {
+        let source = self.dep_id();
         let mut hasher = Sha256::new();
-        hasher.update(self.repo.as_bytes());
+        hasher.update(source.as_bytes());
         let result = hasher.finalize();
         format!("{:x}", result)
             .chars()
@@ -133,7 +173,7 @@ impl Scope {
 
 impl fmt::Display for Dependency {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{} -> {}", self.repo, self.path)
+        write!(f, "{} -> {}", self.dep_id(), self.path)
     }
 }
 
@@ -143,7 +183,10 @@ mod tests {
 
     fn sample_dependency() -> Dependency {
         Dependency {
-            repo: "https://github.com/example/repo.git".to_string(),
+            remote: "https://github.com/example/repo.git".to_string(),
+            origin: String::new(),
+            local: String::new(),
+            repo: String::new(),
             path: "libs/repo".to_string(),
             branch: Some("main".to_string()),
             tag: None,
@@ -163,7 +206,7 @@ workspace:
   name: test-workspace
   version: "1.0"
 dependencies:
-  - repo: "https://github.com/example/repo.git"
+  - remote: "https://github.com/example/repo.git"
     path: libs/repo
     branch: main
     scope:
@@ -174,15 +217,26 @@ dependencies:
         assert_eq!(config.workspace.name, "test-workspace");
         assert_eq!(config.workspace.version, "1.0");
         assert_eq!(config.dependencies.len(), 1);
-        assert_eq!(config.dependencies[0].repo, "https://github.com/example/repo.git");
+        assert_eq!(config.dependencies[0].remote, "https://github.com/example/repo.git");
+        assert_eq!(config.dependencies[0].local, "");
         assert_eq!(config.dependencies[0].branch, Some("main".to_string()));
         assert!(!config.dependencies[0].editable);
     }
 
     #[test]
-    fn test_dependency_validate_invalid_url() {
+    fn test_dependency_validate_both_empty() {
         let mut dep = sample_dependency();
-        dep.repo = "invalid-url".to_string();
+        dep.remote = String::new();
+        dep.local = String::new();
+        let result = dep.validate();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("at least one of 'remote', 'origin', or 'local'"));
+    }
+
+    #[test]
+    fn test_dependency_validate_invalid_remote_url() {
+        let mut dep = sample_dependency();
+        dep.remote = "invalid-url".to_string();
         let result = dep.validate();
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("must start with"));
@@ -215,7 +269,15 @@ dependencies:
     #[test]
     fn test_dependency_validate_git_at_url() {
         let mut dep = sample_dependency();
-        dep.repo = "git@github.com:example/repo.git".to_string();
+        dep.remote = "git@github.com:example/repo.git".to_string();
+        assert!(dep.validate().is_ok());
+    }
+
+    #[test]
+    fn test_dependency_validate_local_only() {
+        let mut dep = sample_dependency();
+        dep.remote = String::new();
+        dep.local = "/path/to/local/repo".to_string();
         assert!(dep.validate().is_ok());
     }
 
@@ -229,18 +291,30 @@ dependencies:
     }
 
     #[test]
-    fn test_repo_id() {
+    fn test_repo_id_from_remote() {
         let dep = sample_dependency();
         let id = dep.repo_id();
         assert_eq!(id.len(), 8);
-        // Same repo should produce same id
+        // Same remote should produce same id
         let id2 = dep.repo_id();
         assert_eq!(id, id2);
-        // Different repo should produce different id
+        // Different remote should produce different id
         let mut dep2 = sample_dependency();
-        dep2.repo = "https://github.com/other/repo.git".to_string();
+        dep2.remote = "https://github.com/other/repo.git".to_string();
         let id3 = dep2.repo_id();
         assert_ne!(id, id3);
+    }
+
+    #[test]
+    fn test_repo_id_from_local_when_no_remote() {
+        let mut dep = sample_dependency();
+        dep.remote = String::new();
+        dep.local = "/path/to/local/repo".to_string();
+        let id = dep.repo_id();
+        assert_eq!(id.len(), 8);
+        // Same local path should produce same id
+        let id2 = dep.repo_id();
+        assert_eq!(id, id2);
     }
 
     #[test]

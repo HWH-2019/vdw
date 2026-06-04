@@ -36,6 +36,8 @@ export async function handleAddRepo(
         const repoType = repoTypeChoice.value;
 
         let repoUrl: string = '';
+        let remoteValue: string = '';
+        let localValue: string = '';
         let localPath: string = '';
         let branch: string = 'main';
         let editable: boolean = false;
@@ -61,6 +63,8 @@ export async function handleAddRepo(
                 return false;
             }
             repoUrl = urlInput;
+            remoteValue = urlInput;
+            localValue = '';
 
             // Auto-suggest workspace link path from repo name
             const repoName = repoUrl.split('/').pop()?.replace('.git', '') || 'repo';
@@ -101,6 +105,8 @@ export async function handleAddRepo(
 
             const selectedPath = localRepoPath[0].fsPath;
             repoUrl = selectedPath;
+            remoteValue = '';
+            localValue = selectedPath;
 
             // Get current branch
             try {
@@ -212,7 +218,7 @@ export async function handleAddRepo(
                     const result = await cliService.executeCommand('repo', ['add', ...args]);
 
                     if (result.exitCode === 0) {
-                        const repoLabel = repoType === 'remote' ? repoUrl : path.basename(repoUrl);
+                        const repoLabel = repoType === 'remote' ? repoUrl : path.basename(localValue);
                         log(`Successfully added repository: ${repoLabel}`);
 
                         // Update .vdwrc with scope configuration (CLI doesn't support --scope yet)
@@ -225,7 +231,7 @@ export async function handleAddRepo(
                                     const config = yaml.load(content) as any;
                                     if (config && config.dependencies) {
                                         const dep = config.dependencies.find(
-                                            (d: any) => (d.repo === repoUrl || d.path === localPath)
+                                            (d: any) => (d.remote === remoteValue || d.local === localValue || d.repo === repoUrl)
                                         );
                                         if (dep) {
                                             dep.scope = {

@@ -29,23 +29,6 @@ cfg_if! {
     }
 }
 
-/// Check if hardlinks are supported at a path (tries creating a test link)
-pub fn supports_hardlinks(path: &Path) -> bool {
-    let test_file = path.join(".vdw_hl_test");
-    let test_link = path.join(".vdw_hl_test_link");
-
-    if std::fs::write(&test_file, "test").is_err() {
-        return false;
-    }
-
-    let supported = std::fs::hard_link(&test_file, &test_link).is_ok();
-
-    let _ = std::fs::remove_file(&test_file);
-    let _ = std::fs::remove_file(&test_link);
-
-    supported
-}
-
 /// Check if two paths are on the same filesystem partition
 pub fn is_same_partition(path1: &Path, path2: &Path) -> bool {
     #[cfg(unix)]
@@ -62,16 +45,14 @@ pub fn is_same_partition(path1: &Path, path2: &Path) -> bool {
     true // assume same partition on non-unix
 }
 
-/// Select the best link strategy given source and target paths
-pub fn select_strategy(source: &Path, target_dir: &Path) -> LinkStrategy {
-    // For directories, always use symlinks (hardlinks don't work on dirs)
-    if source.is_dir() {
-        return LinkStrategy::Symlink;
-    }
-
+/// Determine the link strategy ONCE for an entire dependency (source_dir → target_dir).
+/// Cross-partition is the only case that ALWAYS fails for hardlinks, so we check it here.
+/// All other hardlink failures (EDR, exotic FS, permissions) are handled by the per-file
+/// fallback in create_single_link, which logs the actual error and falls back to symlink.
+pub fn determine_strategy(source_dir: &Path, target_dir: &Path) -> LinkStrategy {
     match DEFAULT_STRATEGY {
         LinkStrategy::HardLink => {
-            if is_same_partition(source, target_dir) && supports_hardlinks(target_dir) {
+            if is_same_partition(source_dir, target_dir) {
                 LinkStrategy::HardLink
             } else {
                 FALLBACK_STRATEGY
@@ -79,6 +60,16 @@ pub fn select_strategy(source: &Path, target_dir: &Path) -> LinkStrategy {
         }
         other => other,
     }
+}
+
+/// Select the best link strategy for a specific file.
+/// Uses the pre-determined base strategy; only overrides for directories.
+pub fn select_strategy_for_file(source: &Path, base_strategy: LinkStrategy) -> LinkStrategy {
+    // Directories always use symlinks (hardlinks don't work on dirs)
+    if source.is_dir() {
+        return LinkStrategy::Symlink;
+    }
+    base_strategy
 }
 
 #[cfg(test)]
@@ -114,17 +105,20 @@ mod tests {
         let sub_dir = dir.path().join("subdir");
         std::fs::create_dir_all(&sub_dir).expect("Failed to create subdir");
 
-        let strategy = select_strategy(&sub_dir, dir.path());
+        // Directory sources always get Symlink regardless of base strategy
+        let strategy = select_strategy_for_file(&sub_dir, LinkStrategy::HardLink);
         assert_eq!(strategy, LinkStrategy::Symlink);
     }
 
     #[test]
-    fn test_select_strategy_file_prefers_hardlink() {
+    fn test_determine_strategy_same_partition_prefers_hardlink() {
         let dir = tempfile::tempdir().expect("Failed to create temp dir");
-        let file_path = dir.path().join("test.txt");
-        std::fs::write(&file_path, "hello").expect("Failed to write test file");
+        let source_dir = dir.path().join("source");
+        let target_dir = dir.path().join("target");
+        std::fs::create_dir_all(&source_dir).expect("Failed to create source dir");
+        std::fs::create_dir_all(&target_dir).expect("Failed to create target dir");
 
-        let strategy = select_strategy(&file_path, dir.path());
+        let strategy = determine_strategy(&source_dir, &target_dir);
         // On same partition with hardlink support, should be HardLink
         #[cfg(any(target_os = "macos", target_os = "linux"))]
         assert_eq!(strategy, LinkStrategy::HardLink);
@@ -133,11 +127,14 @@ mod tests {
     }
 
     #[test]
-    fn test_supports_hardlinks_on_tempdir() {
+    fn test_select_strategy_for_file_passes_through_base() {
         let dir = tempfile::tempdir().expect("Failed to create temp dir");
-        // On a normal filesystem, hardlinks should be supported
-        #[cfg(unix)]
-        assert!(supports_hardlinks(dir.path()));
+        let file_path = dir.path().join("test.txt");
+        std::fs::write(&file_path, "hello").expect("Failed to write test file");
+
+        // For files, select_strategy_for_file returns the base strategy as-is
+        assert_eq!(select_strategy_for_file(&file_path, LinkStrategy::HardLink), LinkStrategy::HardLink);
+        assert_eq!(select_strategy_for_file(&file_path, LinkStrategy::Symlink), LinkStrategy::Symlink);
     }
 
     #[test]

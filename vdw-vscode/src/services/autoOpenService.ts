@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
-import { Dependency, WorkspaceState } from '../types/vdwTypes';
+import { Dependency } from '../types/vdwTypes';
 import { ConfigService } from './configService';
 import { log, logError } from '../utils/logger';
 
@@ -9,7 +9,7 @@ import { log, logError } from '../utils/logger';
  * AutoOpenService - 在 add、link、relink 操作后以及扩展激活时，
  * 自动在 VS Code Source Control 面板中注册可编辑依赖的 Git 仓库。
  * 
- * 通过读取 .vdw/state.json 获取 worktree 路径，然后调用
+ * 直接从 .vdwrc 配置中读取 dep.local 获取 worktree 路径，然后调用
  * git.openRepository 命令触发原生 Source Control 面板显示该仓库。
  */
 export class AutoOpenService implements vscode.Disposable {
@@ -21,80 +21,67 @@ export class AutoOpenService implements vscode.Disposable {
     }
 
     /**
-     * 打开所有可编辑仓库的 Git 仓库注册
-     * 遍历依赖列表，对每个 editable 的依赖查找 worktree 路径并调用 git.openRepository
+     * Refresh specific Git repositories by path, so VS Code detects stale repos and drops them.
+     * Uses the Git extension API to find and refresh the repo, avoiding path-matching issues.
      */
-    async openAllEditableRepositories(): Promise<void> {
-        const config = this.configService.getConfig();
-        if (!config) {
-            log('AutoOpen: No config loaded, skipping');
-            return;
-        }
-
-        if (!this.isAutoOpenEnabled()) {
-            log('AutoOpen: Feature is disabled via settings');
-            return;
-        }
-
-        const editableDeps = config.dependencies.filter(d => d.editable);
-        if (editableDeps.length === 0) {
-            log('AutoOpen: No editable dependencies found');
-            return;
-        }
-
-        const delay = this.getOpenDelay();
-        log(`AutoOpen: Opening ${editableDeps.length} editable Git repositories (delay: ${delay}ms)`);
-
-        for (const dep of editableDeps) {
-            const worktreePath = await this.getWorktreePath(dep);
-            if (worktreePath && this.isValidGitRepository(worktreePath)) {
-                try {
-                    log(`AutoOpen: Opening Git repository at ${worktreePath}`);
-                    await vscode.commands.executeCommand(
-                        'git.openRepository',
-                        vscode.Uri.file(worktreePath)
-                    );
-                } catch (err) {
-                    logError(`AutoOpen: Failed to open Git repository: ${worktreePath}`, err);
-                    // 不阻断流程，继续打开下一个仓库
-                }
-                // 在两个仓库打开之间添加延迟，避免并发冲突
-                await new Promise(resolve => setTimeout(resolve, delay));
-            } else {
-                log(`AutoOpen: Skipping ${dep.repo} (${dep.branch || 'main'}) - worktree path invalid or not a Git repository: ${worktreePath}`);
+    async refreshGitRepositories(...candidatePaths: string[]): Promise<void> {
+        try {
+            const gitExtension = vscode.extensions.getExtension('vscode.git')?.exports;
+            const gitAPI = gitExtension?.getAPI(1);
+            if (!gitAPI) {
+                log('AutoOpen: Git extension not available');
+                return;
             }
-        }
 
-        log('AutoOpen: Completed opening Git repositories');
+            let refreshed = false;
+            for (const p of candidatePaths) {
+                if (!p) continue;
+                const repo = gitAPI.getRepository(vscode.Uri.file(p));
+                if (repo) {
+                    log(`AutoOpen: Refreshing Git repository: ${p}`);
+                    await repo.status();
+                    log(`AutoOpen: Repository refreshed: ${p}`);
+                    refreshed = true;
+                    // Don't return — other candidate paths may match other repos
+                }
+            }
+            if (!refreshed) {
+                log(`AutoOpen: No matching repository found for: ${JSON.stringify(candidatePaths)}`);
+            }
+        } catch (err) {
+            logError('AutoOpen: Failed to refresh Git repositories', err);
+        }
     }
 
     /**
-     * 从 .vdw/state.json 中查找依赖仓库对应的 worktree 路径
+     * 打开所有可编辑仓库的 Git 仓库注册
+     * 遍历依赖列表，对每个 editable 的依赖直接从 dep.local 读取路径并调用 git.openRepository
      */
-    private async getWorktreePath(dep: Dependency): Promise<string | null> {
-        const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
-        if (!workspaceFolder) return null;
+    async openAllEditableRepositories(): Promise<void> {
+        const config = this.configService.getConfig();
+        if (!config) return;
+        if (!this.isAutoOpenEnabled()) return;
 
-        const statePath = path.join(workspaceFolder.uri.fsPath, '.vdw', 'state.json');
-        if (!fs.existsSync(statePath)) {
-            log(`AutoOpen: state.json not found at ${statePath}`);
-            return null;
-        }
+        const editableDeps = config.dependencies.filter(d => d.editable);
+        const delay = this.getOpenDelay();
 
-        try {
-            const content = fs.readFileSync(statePath, 'utf-8');
-            const state: WorkspaceState = JSON.parse(content);
-            const worktree = state.worktrees?.find(
-                wt => wt.repo_url === dep.repo && wt.branch === (dep.branch || 'main')
-            );
-            if (worktree?.path) {
-                log(`AutoOpen: Found worktree path for ${dep.repo}: ${worktree.path}`);
-                return worktree.path;
+        for (const dep of editableDeps) {
+            const repoPath = dep.local;
+            if (!repoPath) {
+                log(`AutoOpen: ${dep.remote || dep.path} has no local path set`);
+                continue;
             }
-            return null;
-        } catch (err) {
-            logError('AutoOpen: Failed to parse state.json', err);
-            return null;
+            if (this.isValidGitRepository(repoPath)) {
+                try {
+                    await vscode.commands.executeCommand(
+                        'git.openRepository',
+                        repoPath
+                    );
+                } catch (err) {
+                    logError(`AutoOpen: Failed to open Git repository: ${repoPath}`, err);
+                }
+                await new Promise(resolve => setTimeout(resolve, delay));
+            }
         }
     }
 

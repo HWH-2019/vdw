@@ -94,6 +94,21 @@ export function registerCommands(
                 const result = await cliService.unlink();
 
                 if (result.exitCode === 0) {
+                    // Refresh all editable Git repos so stale ones are dropped from Source Control
+                    const config = configService.getConfig();
+                    if (config) {
+                        const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+                        const candidates: string[] = [];
+                        for (const dep of config.dependencies.filter(d => d.editable)) {
+                            if (dep.local) candidates.push(dep.local);
+                            if (dep.origin) candidates.push(dep.origin);
+                            if (workspaceRoot) candidates.push(path.join(workspaceRoot, dep.path));
+                        }
+                        if (candidates.length > 0) {
+                            await autoOpenService?.refreshGitRepositories(...candidates);
+                        }
+                    }
+
                     vscode.window.showInformationMessage('Dependencies unlinked successfully!');
                     contextService.refresh();
                     fileProvider.refresh();
@@ -214,8 +229,10 @@ export function registerCommands(
             }
 
             const dep = treeItem.dependency;
-            const repoUrl = dep.repo;
-            const repoName = repoUrl.split('/').pop()?.replace('.git', '') || repoUrl;
+            const repoIdentifier = dep.remote || dep.origin || dep.local;
+            const repoName = dep.remote
+                ? dep.remote.split('/').pop()?.replace('.git', '') || dep.remote
+                : path.basename(dep.origin || dep.local);
 
             const proceed = await vscode.window.showWarningMessage(
                 `Unlink repository "${repoName}"?\n\nPath: ${dep.path}\n\nThis will remove the linked files from the workspace.`,
@@ -230,12 +247,20 @@ export function registerCommands(
 
             try {
                 statusBar.showBusy(`Unlinking ${repoName}...`);
-                log(`Unlinking repository: ${repoName} (${repoUrl})`);
+                log(`Unlinking repository: ${repoName} (${repoIdentifier})`);
 
                 // Execute per-repo unlink
-                const result = await cliService.unlinkRepo(repoUrl);
+                const result = await cliService.unlinkRepo(repoIdentifier);
 
                 if (result.exitCode === 0) {
+                    // Refresh Git extension AFTER unlink so stale repos are dropped from Source Control
+                    if (dep.editable) {
+                        const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+                        const targetPath = workspaceRoot ? path.join(workspaceRoot, dep.path) : '';
+                        log(`Refreshing Git repositories after unlink: ${dep.local}`);
+                        await autoOpenService?.refreshGitRepositories(dep.local, targetPath, dep.origin);
+                    }
+
                     vscode.window.showInformationMessage(`Repository "${repoName}" unlinked successfully!`);
                     configService.reload();
                     contextService.refresh();
@@ -264,14 +289,16 @@ export function registerCommands(
             }
 
             const dep = treeItem.dependency;
-            const repoUrl = dep.repo;
-            const repoName = repoUrl.split('/').pop()?.replace('.git', '') || repoUrl;
+            const repoIdentifier = dep.remote || dep.origin || dep.local;
+            const repoName = dep.remote
+                ? dep.remote.split('/').pop()?.replace('.git', '') || dep.remote
+                : path.basename(dep.origin || dep.local);
 
             try {
                 statusBar.showBusy(`Linking ${repoName}...`);
-                log(`Linking repository: ${repoName} (${repoUrl})`);
+                log(`Linking repository: ${repoName} (${repoIdentifier})`);
 
-                const result = await cliService.linkRepo(repoUrl);
+                const result = await cliService.linkRepo(repoIdentifier);
 
                 if (result.exitCode === 0) {
                     vscode.window.showInformationMessage(`Repository "${repoName}" linked successfully!`);
@@ -306,8 +333,10 @@ export function registerCommands(
             }
 
             const dep = treeItem.dependency;
-            const repoUrl = dep.repo;
-            const repoName = repoUrl.split('/').pop()?.replace('.git', '') || repoUrl;
+            const repoIdentifier = dep.remote || dep.origin || dep.local;
+            const repoName = dep.remote
+                ? dep.remote.split('/').pop()?.replace('.git', '') || dep.remote
+                : path.basename(dep.origin || dep.local);
 
             const confirm = await vscode.window.showWarningMessage(
                 `Remove repository "${repoName}"?\n\nPath: ${dep.path}\n\nThis will unlink the repository and remove it from .vdwrc configuration.`,
@@ -322,14 +351,22 @@ export function registerCommands(
 
             try {
                 statusBar.showBusy(`Removing ${repoName}...`);
-                log(`Removing repository: ${repoName} (${repoUrl})`);
+                log(`Removing repository: ${repoName} (${repoIdentifier})`);
 
                 // Step 1: Unlink the repository first
                 log('Step 1: Unlinking repository...');
-                const unlinkResult = await cliService.unlinkRepo(repoUrl);
+                const unlinkResult = await cliService.unlinkRepo(repoIdentifier);
                 if (unlinkResult.exitCode !== 0) {
                     logError('Unlink before remove failed', unlinkResult.stderr);
                     // Continue anyway — the dependency might already be unlinked
+                }
+
+                // Refresh Git extension AFTER unlink so stale repos are dropped from Source Control
+                if (dep.editable) {
+                    const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+                    const targetPath = workspaceRoot ? path.join(workspaceRoot, dep.path) : '';
+                    log(`Refreshing Git repositories after unlink: ${repoName}`);
+                    await autoOpenService?.refreshGitRepositories(dep.local, targetPath, dep.origin);
                 }
 
                 // Step 2: Remove dependency from .vdwrc directly
@@ -352,11 +389,11 @@ export function registerCommands(
 
                 const beforeCount = config.dependencies.length;
                 config.dependencies = config.dependencies.filter(
-                    (d: any) => d.repo !== repoUrl && d.path !== dep.path
+                    (d: any) => !(dep.remote && d.remote === dep.remote) && !(dep.local && d.local === dep.local) && d.repo !== repoIdentifier && d.path !== dep.path
                 );
 
                 if (config.dependencies.length === beforeCount) {
-                    logError('Dependency not found in .vdwrc, nothing to remove', { repoUrl, path: dep.path });
+                    logError('Dependency not found in .vdwrc, nothing to remove', { remote: dep.remote, local: dep.local, path: dep.path });
                     // Still refresh UI
                 } else {
                     const yamlStr = yaml.dump(config, { indent: 2, lineWidth: 120, noRefs: true });

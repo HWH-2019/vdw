@@ -91,7 +91,9 @@ export class WorkspaceTreeProvider implements vscode.TreeDataProvider<WorkspaceT
         if (!element) {
             // Root level: show each dependency
             return config.dependencies.map(dep => {
-                const repoName = dep.repo.split('/').pop()?.replace('.git', '') || dep.repo;
+                const repoName = dep.remote
+                    ? dep.remote.split('/').pop()?.replace('.git', '') || dep.remote
+                    : path.basename(dep.origin || dep.local);
                 const version = dep.branch || dep.tag || dep.commit?.substring(0, 7) || 'main';
                 const label = `${repoName}@${version}`;
                 
@@ -118,7 +120,7 @@ export class WorkspaceTreeProvider implements vscode.TreeDataProvider<WorkspaceT
                 // Enhanced tooltip
                 item.tooltip = new vscode.MarkdownString()
                     .appendMarkdown(`**${repoName}**\n\n`)
-                    .appendMarkdown(`🔗 **URL**: ${dep.repo}\n\n`)
+                    .appendMarkdown(`🔗 **URL**: ${dep.remote || dep.origin || dep.local}\n\n`)
                     .appendMarkdown(` **Path**: ${dep.path}\n\n`)
                     .appendMarkdown(`🌿 **Branch**: ${version}\n\n`)
                     .appendMarkdown(`📝 **Scope**: ${dep.scope.include.join(', ')}\n\n`)
@@ -229,7 +231,7 @@ export class WorkspaceTreeItem extends vscode.TreeItem {
 
         // Set tooltip
         if (dependency) {
-            this.tooltip = `${dependency.repo}\nBranch: ${dependency.branch || dependency.tag || dependency.commit || 'main'}\nEditable: ${dependency.editable}`;
+            this.tooltip = `${dependency.remote || dependency.origin || dependency.local}\nBranch: ${dependency.branch || dependency.tag || dependency.commit || 'main'}\nEditable: ${dependency.editable}`;
         }
     }
 }

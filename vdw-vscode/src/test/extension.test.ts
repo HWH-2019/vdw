@@ -18,13 +18,15 @@ describe('VDW Extension Tests', () => {
 
         it('should define Dependency with all fields', () => {
             const dep: Dependency = {
-                repo: 'https://github.com/org/repo.git',
+                remote: 'https://github.com/org/repo.git',
+                origin: '',
+                local: '',
                 path: './libs/repo',
                 branch: 'main',
                 scope: { include: ['src/**'], exclude: ['**/*.test.ts'] },
                 editable: true,
             };
-            assert.strictEqual(dep.repo, 'https://github.com/org/repo.git');
+            assert.strictEqual(dep.remote, 'https://github.com/org/repo.git');
             assert.strictEqual(dep.editable, true);
             assert.strictEqual(dep.scope.include[0], 'src/**');
         });
@@ -37,7 +39,8 @@ workspace:
   name: test-workspace
   version: "1.0"
 dependencies:
-  - repo: https://github.com/example/frontend.git
+  - remote: https://github.com/example/frontend.git
+    local: ''
     path: ./apps/web
     branch: main
     scope:
@@ -47,7 +50,8 @@ dependencies:
       exclude:
         - "**/*.test.ts"
     editable: true
-  - repo: https://github.com/example/shared.git
+  - remote: https://github.com/example/shared.git
+    local: ''
     path: ./packages/shared
     tag: v1.0.0
     scope:

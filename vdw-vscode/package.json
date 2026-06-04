@@ -2,7 +2,7 @@
   "name": "vdw-vscode",
   "displayName": "VDW - Virtual Dev Workspace",
   "description": "Cross-repo dependency management and AI context filtering for multi-repository development",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "publisher": "vdw-team",
   "license": "MIT",
   "repository": {

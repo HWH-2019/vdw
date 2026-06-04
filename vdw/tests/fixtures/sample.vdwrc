@@ -2,7 +2,7 @@ workspace:
   name: fullstack-app
   version: "1.0"
 dependencies:
-  - repo: https://github.com/example/frontend.git
+  - remote: https://github.com/example/frontend.git
     path: ./apps/web
     branch: main
     scope:
@@ -13,7 +13,7 @@ dependencies:
         - "**/*.test.ts"
         - "**/*.spec.ts"
     editable: true
-  - repo: https://github.com/example/shared-utils.git
+  - remote: https://github.com/example/shared-utils.git
     path: ./packages/utils
     tag: v2.1.0
     scope:

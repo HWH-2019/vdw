@@ -11,7 +11,9 @@ pub fn load_config(workspace_dir: &Path) -> Result<VDWConfig> {
     if yaml_path.exists() {
         let content =
             std::fs::read_to_string(&yaml_path).context("Failed to read .vdwrc file")?;
-        return parse_yaml(&content).context("Failed to parse .vdwrc");
+        let mut config = parse_yaml(&content).context("Failed to parse .vdwrc")?;
+        migrate_legacy_repo_field(&mut config);
+        return Ok(config);
     }
 
     // Also try .vdwrc.yml extension
@@ -19,7 +21,9 @@ pub fn load_config(workspace_dir: &Path) -> Result<VDWConfig> {
     if yml_path.exists() {
         let content =
             std::fs::read_to_string(&yml_path).context("Failed to read .vdwrc.yml file")?;
-        return parse_yaml(&content).context("Failed to parse .vdwrc.yml");
+        let mut config = parse_yaml(&content).context("Failed to parse .vdwrc.yml")?;
+        migrate_legacy_repo_field(&mut config);
+        return Ok(config);
     }
 
     anyhow::bail!(
@@ -34,6 +38,40 @@ pub fn parse_yaml(content: &str) -> Result<VDWConfig> {
     Ok(config)
 }
 
+/// Save config back to .vdwrc in the given directory
+pub fn save_config(workspace_dir: &Path, config: &VDWConfig) -> Result<()> {
+    let yaml_path = workspace_dir.join(".vdwrc");
+    let target_path = if yaml_path.exists() {
+        yaml_path
+    } else {
+        workspace_dir.join(".vdwrc.yml")
+    };
+
+    let yaml_content = serde_yaml::to_string(config).context("Failed to serialize config to YAML")?;
+    std::fs::write(&target_path, yaml_content)
+        .context(format!("Failed to write config to {}", target_path.display()))?;
+    Ok(())
+}
+
+/// Migrate legacy 'repo' field to 'remote'/'local' for backward compatibility
+fn migrate_legacy_repo_field(config: &mut VDWConfig) {
+    for dep in &mut config.dependencies {
+        if dep.remote.is_empty() && dep.local.is_empty() && !dep.repo.is_empty() {
+            if dep.repo.starts_with("git@")
+                || dep.repo.starts_with("https://")
+                || dep.repo.starts_with("http://")
+            {
+                dep.remote = dep.repo.clone();
+            } else {
+                dep.local = dep.repo.clone();
+            }
+            eprintln!(
+                "[warn] Dependency uses deprecated 'repo' field. Please migrate to 'remote'/'local'. Run `vdw migrate-config`."
+            );
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -46,7 +84,7 @@ workspace:
   name: my-project
   version: "1.0"
 dependencies:
-  - repo: "https://github.com/example/repo.git"
+  - remote: "https://github.com/example/repo.git"
     path: libs/repo
     branch: main
     scope:
@@ -97,5 +135,67 @@ dependencies: []
         fs::write(dir.path().join(".vdwrc.yml"), yaml).unwrap();
         let config = load_config(dir.path()).expect("Failed to load config");
         assert_eq!(config.workspace.name, "test-yml");
+    }
+
+    #[test]
+    fn test_migrate_legacy_repo_remote_url() {
+        let yaml = r#"
+workspace:
+  name: migrate-test
+  version: "1.0"
+dependencies:
+  - repo: "git@github.com:example/repo.git"
+    path: libs/repo
+    branch: main
+    scope:
+      include:
+        - "src/**"
+"#;
+        let mut config = parse_yaml(yaml).expect("Failed to parse YAML");
+        migrate_legacy_repo_field(&mut config);
+        assert_eq!(config.dependencies[0].remote, "git@github.com:example/repo.git");
+        assert_eq!(config.dependencies[0].local, "");
+    }
+
+    #[test]
+    fn test_migrate_legacy_repo_local_path() {
+        let yaml = r#"
+workspace:
+  name: migrate-test
+  version: "1.0"
+dependencies:
+  - repo: "/path/to/local/repo"
+    path: libs/repo
+    branch: main
+    scope:
+      include:
+        - "src/**"
+"#;
+        let mut config = parse_yaml(yaml).expect("Failed to parse YAML");
+        migrate_legacy_repo_field(&mut config);
+        assert_eq!(config.dependencies[0].remote, "");
+        assert_eq!(config.dependencies[0].local, "/path/to/local/repo");
+    }
+
+    #[test]
+    fn test_migrate_legacy_repo_no_migration_when_new_fields_set() {
+        let yaml = r#"
+workspace:
+  name: migrate-test
+  version: "1.0"
+dependencies:
+  - remote: "git@github.com:example/repo.git"
+    local: "/path/to/worktree"
+    path: libs/repo
+    branch: main
+    scope:
+      include:
+        - "src/**"
+"#;
+        let mut config = parse_yaml(yaml).expect("Failed to parse YAML");
+        migrate_legacy_repo_field(&mut config);
+        // Should not change - remote/local already set
+        assert_eq!(config.dependencies[0].remote, "git@github.com:example/repo.git");
+        assert_eq!(config.dependencies[0].local, "/path/to/worktree");
     }
 }

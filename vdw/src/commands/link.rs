@@ -5,7 +5,7 @@ use anyhow::Result;
 use crate::config::{env_resolver, parser, validator};
 use crate::link::engine;
 use crate::store::{manager as store_manager, object_pool};
-use crate::types::workspace::{WorkspaceState, WorktreeInfo};
+use crate::types::workspace::WorkspaceState;
 use crate::worktree::manager as worktree_manager;
 
 pub fn execute(repo_filter: Option<&str>) -> Result<()> {
@@ -31,24 +31,35 @@ pub fn execute(repo_filter: Option<&str>) -> Result<()> {
     }
 
     // 3. Process each dependency (optionally filtered by repo URL)
-    let mut state = WorkspaceState::new(cwd.clone());
+    // Load existing state to preserve other repos' link entries
+    let mut state = WorkspaceState::load(&cwd).unwrap_or_else(|_| WorkspaceState::new(cwd.clone()));
+
+    // If re-linking specific repo(s), remove their old entries first
+    // (the files were already removed by unlink, but stale entries may linger)
+    if let Some(filter) = repo_filter {
+        state.links.retain(|l| l.dependency_repo != filter);
+    } else {
+        // Full link: replace all entries (re-linking everything from scratch)
+        state.links.clear();
+    }
     let mut linked_count = 0;
     let mut editable_count = 0;
     let mut readonly_count = 0;
 
-    for dep in &config.dependencies {
+    for dep in &mut config.dependencies {
         // Skip if repo_filter is specified and doesn't match
         if let Some(filter) = repo_filter {
-            if dep.repo != filter {
+            if dep.dep_id() != filter {
                 continue;
             }
         }
         
-        println!("Processing: {} ...", dep.repo);
+        let dep_id = dep.dep_id().to_string();
+        println!("Processing: {} ...", dep_id);
 
         // a. Ensure repo is in store
         let repo_dir = object_pool::clone_to_store(
-            &dep.repo,
+            &dep_id,
             &store_path,
             dep.branch.as_deref(),
             None, // no reference for MVP
@@ -59,26 +70,48 @@ pub fn execute(repo_filter: Option<&str>) -> Result<()> {
 
         // b. Determine source directory
         let source_dir = if dep.editable {
-            // Create worktree for editable deps
-            let branch = dep
-                .branch
-                .as_deref()
-                .or(dep.tag.as_deref())
-                .or(dep.commit.as_deref())
-                .unwrap_or("main");
+            // Check if dep.local is already a VDW-managed worktree path (inside the store).
+            // Only reuse it if it's managed — original source paths must be replaced
+            // with worktrees so dep.local consistently points to a managed location.
+            let existing_worktree = if !dep.local.is_empty() {
+                let local_path = Path::new(&dep.local);
+                let is_managed = local_path.starts_with(&store_path);
+                if is_managed && local_path.exists() && local_path.join(".git").exists() {
+                    Some(local_path.to_path_buf())
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
 
-            let worktree_base = repo_dir.join("worktrees");
-            let wt_path =
-                worktree_manager::create_worktree(&bare_git_path, branch, &worktree_base)?;
+            if let Some(wt_path) = existing_worktree {
+                println!("  Using existing worktree: {}", wt_path.display());
+                editable_count += 1;
+                wt_path
+            } else {
+                // Create worktree for editable deps
+                let branch = dep
+                    .branch
+                    .as_deref()
+                    .or(dep.tag.as_deref())
+                    .or(dep.commit.as_deref())
+                    .unwrap_or("main");
 
-            state.worktrees.push(WorktreeInfo {
-                repo_url: dep.repo.clone(),
-                branch: branch.to_string(),
-                path: wt_path.clone(),
-            });
+                let worktree_base = repo_dir.join("worktrees");
+                let wt_path =
+                    worktree_manager::create_worktree(&bare_git_path, branch, &worktree_base)?;
 
-            editable_count += 1;
-            wt_path
+                // Write back worktree path to dep.local
+                // For local-only deps, preserve the original source path in dep.origin
+                if dep.remote.is_empty() && dep.origin.is_empty() {
+                    dep.origin = dep.local.clone();
+                }
+                dep.local = wt_path.to_string_lossy().to_string();
+
+                editable_count += 1;
+                wt_path
+            }
         } else {
             // For read-only deps, checkout from bare repo to a checkout dir inside the store
             let checkout_dir = repo_dir.join("checkout");
@@ -90,7 +123,7 @@ pub fn execute(repo_filter: Option<&str>) -> Result<()> {
         // c. Create links from source to workspace
         if source_dir.exists() {
             let entries =
-                engine::create_dependency_links(&source_dir, &target_dir, &dep.scope, &dep.repo)?;
+                engine::create_dependency_links(&source_dir, &target_dir, &dep.scope, &dep_id)?;
 
             linked_count += entries.len();
             state.links.extend(entries);
@@ -99,10 +132,13 @@ pub fn execute(repo_filter: Option<&str>) -> Result<()> {
         }
     }
 
-    // 4. Save workspace state
+    // 4. Save updated config with local paths filled in
+    parser::save_config(&cwd, &config)?;
+
+    // 5. Save workspace state
     state.save()?;
 
-    // 5. Print summary
+    // 6. Print summary
     println!("\n✅ Workspace linked successfully!");
     println!("   {} file(s) linked", linked_count);
     println!(
@@ -255,14 +291,39 @@ pub fn unlink(repo_filter: Option<&str>) -> Result<()> {
     // Update state: remove only the entries for the unlinked repo(s)
     let mut new_state = state;
     if let Some(repo) = repo_filter {
-        // Remove only the matching repo's links and worktrees
+        // Remove only the matching repo's links
         new_state.links.retain(|l| l.dependency_repo != repo);
-        new_state.worktrees.retain(|w| w.repo_url != repo);
     } else {
         // Full unlink: clear all state
-        new_state = WorkspaceState::new(cwd);
+        new_state = WorkspaceState::new(cwd.clone());
     }
     new_state.save()?;
+
+    // Clear dep.local in .vdwrc for unlinked dependencies.
+    // dep.local holds the VDW-managed worktree path (set by `link`), so it must be cleared.
+    // But for OLD-format local-only deps (no origin, no remote), dep.local is the original
+    // source path and serves as identity — must NOT be cleared.
+    let mut config = parser::load_config(&cwd)?;
+    let dep_ids_to_clear: Vec<String> = if let Some(repo) = repo_filter {
+        vec![repo.to_string()]
+    } else {
+        // Full unlink: clear local for all editable deps that have a managed worktree
+        config.dependencies.iter()
+            .filter(|d| d.editable && (!d.remote.is_empty() || !d.origin.is_empty()))
+            .map(|d| d.dep_id().to_string())
+            .collect()
+    };
+    for dep in &mut config.dependencies {
+        // Old-format local-only deps: dep.local IS the identity, don't clear
+        if dep.remote.is_empty() && dep.origin.is_empty() {
+            continue;
+        }
+        let dep_id = dep.dep_id().to_string();
+        if dep_ids_to_clear.contains(&dep_id) && dep.editable {
+            dep.local = String::new();
+        }
+    }
+    parser::save_config(&cwd, &config)?;
 
     println!("✅ {} link(s) removed.", links_to_remove.len());
     Ok(())
@@ -438,7 +499,10 @@ mod tests {
 
         // Create a minimal dep config
         let dep = crate::types::config::Dependency {
-            repo: "https://github.com/test/repo.git".to_string(),
+            remote: "https://github.com/test/repo.git".to_string(),
+            origin: String::new(),
+            local: String::new(),
+            repo: String::new(),
             path: "libs/repo".to_string(),
             branch: Some("main".to_string()),
             tag: None,

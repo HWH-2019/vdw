@@ -49,7 +49,10 @@ mod tests {
                 version: "1.0".to_string(),
             },
             dependencies: vec![Dependency {
-                repo: "https://github.com/example/repo.git".to_string(),
+                remote: "https://github.com/example/repo.git".to_string(),
+                origin: String::new(),
+                local: String::new(),
+                repo: String::new(),
                 path: "libs/repo".to_string(),
                 branch: Some("main".to_string()),
                 tag: None,
@@ -73,17 +76,20 @@ mod tests {
     fn test_validate_config_catches_duplicate_paths() {
         let mut config = valid_config();
         config.dependencies.push(Dependency {
-            repo: "https://github.com/example/repo2.git".to_string(),
-            path: "libs/repo".to_string(), // duplicate path
-            branch: Some("dev".to_string()),
-            tag: None,
-            commit: None,
-            scope: Scope {
-                include: vec!["src/**/*.rs".to_string()],
-                exclude: vec![],
-            },
-            editable: false,
-        });
+                remote: "https://github.com/example/repo2.git".to_string(),
+                origin: String::new(),
+                local: String::new(),
+                repo: String::new(),
+                path: "libs/repo".to_string(), // duplicate path
+                branch: Some("dev".to_string()),
+                tag: None,
+                commit: None,
+                scope: Scope {
+                    include: vec!["src/**/*.rs".to_string()],
+                    exclude: vec![],
+                },
+                editable: false,
+            });
         let result = validate_config(&config);
         assert!(result.is_err());
         let errors = result.unwrap_err();
@@ -107,7 +113,7 @@ mod tests {
     #[test]
     fn test_validate_config_catches_invalid_url() {
         let mut config = valid_config();
-        config.dependencies[0].repo = "not-a-url".to_string();
+        config.dependencies[0].remote = "not-a-url".to_string();
         let result = validate_config(&config);
         assert!(result.is_err());
         let errors = result.unwrap_err();
@@ -132,19 +138,22 @@ mod tests {
     fn test_validate_config_multiple_errors() {
         let mut config = valid_config();
         // Two deps with same path, one with invalid URL
-        config.dependencies[0].repo = "bad-url".to_string();
+        config.dependencies[0].remote = "bad-url".to_string();
         config.dependencies.push(Dependency {
-            repo: "https://github.com/example/repo2.git".to_string(),
-            path: "libs/repo".to_string(), // duplicate
-            branch: Some("dev".to_string()),
-            tag: None,
-            commit: None,
-            scope: Scope {
-                include: vec!["src/**/*.rs".to_string()],
-                exclude: vec![],
-            },
-            editable: false,
-        });
+                remote: "https://github.com/example/repo2.git".to_string(),
+                origin: String::new(),
+                local: String::new(),
+                repo: String::new(),
+                path: "libs/repo".to_string(), // duplicate
+                branch: Some("dev".to_string()),
+                tag: None,
+                commit: None,
+                scope: Scope {
+                    include: vec!["src/**/*.rs".to_string()],
+                    exclude: vec![],
+                },
+                editable: false,
+            });
         let result = validate_config(&config);
         assert!(result.is_err());
         let errors = result.unwrap_err();

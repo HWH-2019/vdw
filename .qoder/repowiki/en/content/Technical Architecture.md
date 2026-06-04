@@ -2,11 +2,16 @@
 
 <cite>
 **Referenced Files in This Document**
-- [VDW虚拟工作空间_技术设计文档_v1.0.md](file://ai_workspace/VDW虚拟工作空间_技术设计文档_v1.0.md)
-- [VDW虚拟工作空间_需求文档_v1.0.md](file://ai_workspace/VDW虚拟工作空间_需求文档_v1.0.md)
-- [lib.rs](file://vdw/src/lib.rs)
-- [main.rs](file://vdw/src/main.rs)
 - [Cargo.toml](file://vdw/Cargo.toml)
+- [Makefile](file://vdw/Makefile)
+- [install.sh](file://vdw/install.sh)
+- [release.yml](file://.github/workflows/release.yml)
+- [platform.rs](file://vdw/src/link/platform.rs)
+- [main.rs](file://vdw/src/main.rs)
+- [lib.rs](file://vdw/src/lib.rs)
+- [package.json](file://vdw-vscode/package.json)
+- [tsconfig.json](file://vdw-vscode/tsconfig.json)
+- [link_benchmark.rs](file://vdw/benches/link_benchmark.rs)
 - [commands/mod.rs](file://vdw/src/commands/mod.rs)
 - [store/mod.rs](file://vdw/src/store/mod.rs)
 - [link/mod.rs](file://vdw/src/link/mod.rs)
@@ -20,11 +25,12 @@
 
 ## Update Summary
 **Changes Made**
-- Updated module hierarchy to reflect new organizational structure
-- Enhanced component interaction patterns with improved factory and observer implementations
-- Updated system integration patterns with refined architectural components
-- Revised diagrams to match actual code structure and implementation details
-- Added comprehensive coverage of new module organization and enhanced functionality
+- Enhanced cross-platform implementation documentation with detailed platform detection and strategy selection
+- Added comprehensive build system documentation covering Cargo, Makefile, and cross-compilation
+- Documented deployment infrastructure including GitHub Actions CI/CD pipeline
+- Updated installation process with platform-specific considerations
+- Added VS Code plugin build system and packaging configuration
+- Expanded infrastructure requirements with cross-platform deployment topology
 
 ## Table of Contents
 1. [Introduction](#introduction)
@@ -34,15 +40,17 @@
 5. [Data Flow Architecture](#data-flow-architecture)
 6. [Integration Patterns](#integration-patterns)
 7. [Technology Stack](#technology-stack)
-8. [Infrastructure Requirements](#infrastructure-requirements)
-9. [Scalability Considerations](#scalability-considerations)
-10. [Deployment Topology](#deployment-topology)
-11. [Cross-Cutting Concerns](#cross-cutting-concerns)
-12. [Security Architecture](#security-architecture)
-13. [Monitoring and Observability](#monitoring-and-observability)
-14. [Disaster Recovery](#disaster-recovery)
-15. [Performance Characteristics](#performance-characteristics)
-16. [Conclusion](#conclusion)
+8. [Cross-Platform Implementation](#cross-platform-implementation)
+9. [Build System and Deployment](#build-system-and-deployment)
+10. [Infrastructure Requirements](#infrastructure-requirements)
+11. [Scalability Considerations](#scalability-considerations)
+12. [Deployment Topology](#deployment-topology)
+13. [Cross-Cutting Concerns](#cross-cutting-concerns)
+14. [Security Architecture](#security-architecture)
+15. [Monitoring and Observability](#monitoring-and-observability)
+16. [Disaster Recovery](#disaster-recovery)
+17. [Performance Characteristics](#performance-characteristics)
+18. [Conclusion](#conclusion)
 
 ## Introduction
 
@@ -86,7 +94,7 @@ Store --> Remote
 ```
 
 **Diagram sources**
-- [VDW虚拟工作空间_需求文档_v1.0.md:41-71](file://ai_workspace/VDW虚拟工作空间_需求文档_v1.0.md#L41-L71)
+- [main.rs:6-16](file://vdw/src/main.rs#L6-L16)
 
 ## Three-Tier Architecture
 
@@ -135,8 +143,8 @@ The AI Layer focuses exclusively on intelligent context management for AI agents
 - **Virtual File Provider**: Integrates with AI agent file systems
 
 **Section sources**
-- [VDW虚拟工作空间_需求文档_v1.0.md:123-154](file://ai_workspace/VDW虚拟工作空间_需求文档_v1.0.md#L123-L154)
-- [VDW虚拟工作空间_需求文档_v1.0.md:428-482](file://ai_workspace/VDW虚拟工作空间_需求文档_v1.0.md#L428-L482)
+- [store/mod.rs](file://vdw/src/store/mod.rs)
+- [context/mod.rs](file://vdw/src/context/mod.rs)
 
 ## Component Interactions
 
@@ -179,7 +187,7 @@ LinkStrategy <|.. JunctionStrategy
 ```
 
 **Diagram sources**
-- [VDW虚拟工作空间_需求文档_v1.0.md:166-173](file://ai_workspace/VDW虚拟工作空间_需求文档_v1.0.md#L166-L173)
+- [platform.rs:4-30](file://vdw/src/link/platform.rs#L4-L30)
 
 ### Observer Pattern for File System Events
 
@@ -201,11 +209,10 @@ Note over FS,Index : Event-driven incremental updates
 ```
 
 **Diagram sources**
-- [VDW虚拟工作空间_需求文档_v1.0.md:354-367](file://ai_workspace/VDW虚拟工作空间_需求文档_v1.0.md#L354-L367)
+- [context/filter.rs](file://vdw/src/context/filter.rs)
 
 **Section sources**
-- [VDW虚拟工作空间_需求文档_v1.0.md:157-191](file://ai_workspace/VDW虚拟工作空间_需求文档_v1.0.md#L157-L191)
-- [VDW虚拟工作空间_需求文档_v1.0.md:354-367](file://ai_workspace/VDW虚拟工作空间_需求文档_v1.0.md#L354-L367)
+- [platform.rs:65-82](file://vdw/src/link/platform.rs#L65-L82)
 
 ## Data Flow Architecture
 
@@ -236,10 +243,10 @@ UpdateContext --> End
 ```
 
 **Diagram sources**
-- [VDW虚拟工作空间_需求文档_v1.0.md:174-184](file://ai_workspace/VDW虚拟工作空间_需求文档_v1.0.md#L174-L184)
+- [main.rs:115-146](file://vdw/src/main.rs#L115-L146)
 
 **Section sources**
-- [VDW虚拟工作空间_需求文档_v1.0.md:174-184](file://ai_workspace/VDW虚拟工作空间_需求文档_v1.0.md#L174-L184)
+- [main.rs:115-146](file://vdw/src/main.rs#L115-L146)
 
 ## Integration Patterns
 
@@ -266,8 +273,8 @@ The system uses a Repository Registry pattern to manage metadata about registere
 - **Access Control**: Manages repository access permissions
 
 **Section sources**
-- [VDW虚拟工作空间_需求文档_v1.0.md:123-154](file://ai_workspace/VDW虚拟工作空间_需求文档_v1.0.md#L123-L154)
-- [VDW虚拟工作空间_需求文档_v1.0.md:57-63](file://ai_workspace/VDW虚拟工作空间_需求文档_v1.0.md#L57-L63)
+- [store/mod.rs](file://vdw/src/store/mod.rs)
+- [commands/mod.rs](file://vdw/src/commands/mod.rs)
 
 ## Technology Stack
 
@@ -298,7 +305,158 @@ The VDW system leverages a carefully selected technology stack that balances per
 - **path**: Path manipulation utilities
 
 **Section sources**
-- [VDW虚拟工作空间_需求文档_v1.0.md:429-439](file://ai_workspace/VDW虚拟工作空间_需求文档_v1.0.md#L429-L439)
+- [Cargo.toml:12-35](file://vdw/Cargo.toml#L12-L35)
+
+## Cross-Platform Implementation
+
+The VDW system implements comprehensive cross-platform support through platform detection, conditional compilation, and adaptive strategy selection.
+
+### Platform Detection and Strategy Selection
+
+The system uses Rust's conditional compilation features to select optimal linking strategies based on the target platform:
+
+```mermaid
+flowchart TD
+Platform[Platform Detection] --> Mac[macOS/Linux]
+Platform --> Windows[Windows]
+Mac --> HardLink[Hard Link Default]
+Windows --> Junction[Junction Default]
+HardLink --> Fallback[Symlink Fallback]
+Junction --> Fallback
+Fallback --> SamePartition{Same Partition?}
+SamePartition --> |Yes| HardLink
+SamePartition --> |No| Symlink
+```
+
+**Diagram sources**
+- [platform.rs:12-30](file://vdw/src/link/platform.rs#L12-L30)
+
+### Platform-Specific Implementations
+
+**Hard Link Strategy (macOS/Linux):**
+- Default strategy for file linking
+- Requires same filesystem partition
+- Provides true filesystem-level deduplication
+
+**Junction Strategy (Windows):**
+- Uses Windows junction points for directories
+- Falls back to symlinks when junctions unsupported
+- Handles Windows-specific path limitations
+
+**Universal Fallback (All Platforms):**
+- Symbolic links for cross-partition scenarios
+- Universal compatibility across all platforms
+- Handles edge cases and permission restrictions
+
+**Section sources**
+- [platform.rs:12-82](file://vdw/src/link/platform.rs#L12-L82)
+
+## Build System and Deployment
+
+The VDW system implements a comprehensive build and deployment infrastructure supporting multiple platforms and distribution channels.
+
+### Cargo Build Configuration
+
+The Rust project uses Cargo for dependency management and building with the following key configurations:
+
+**Core Dependencies:**
+- **clap**: Command-line interface with derive macros
+- **git2**: Native Git operations with vendored OpenSSL
+- **tokio**: Asynchronous runtime for concurrent operations
+- **serde**: Serialization framework for configuration files
+
+**Development Dependencies:**
+- **criterion**: Benchmarking framework for performance testing
+- **tempfile**: Temporary file management for tests
+
+**Section sources**
+- [Cargo.toml:12-35](file://vdw/Cargo.toml#L12-L35)
+
+### Makefile Build Automation
+
+The Makefile provides convenient shortcuts for common development tasks:
+
+**Build Targets:**
+- **build**: Creates optimized release binaries
+- **install**: Full installation with platform detection
+- **install-quick**: Developer-focused quick install
+- **test**: Runs unit and integration tests
+- **clean**: Cleans build artifacts
+
+**Platform Integration:**
+- Automatic binary copying for VS Code plugin compatibility
+- macOS quarantine attribute clearing
+- Cross-platform path handling
+
+**Section sources**
+- [Makefile:8-41](file://vdw/Makefile#L8-L41)
+
+### Cross-Compilation and CI/CD Pipeline
+
+The GitHub Actions workflow automates cross-platform builds and releases:
+
+**Supported Targets:**
+- macOS: aarch64-apple-darwin, x86_64-apple-darwin
+- Linux: x86_64-unknown-linux-gnu, aarch64-unknown-linux-gnu
+- Windows: x86_64-pc-windows-msvc
+
+**Build Process:**
+- Rust toolchain installation with target-specific compilers
+- Cross-compilation dependencies for ARM targets
+- Binary packaging with platform-specific suffixes
+- Automated checksum generation and release creation
+
+**Section sources**
+- [release.yml:18-33](file://.github/workflows/release.yml#L18-L33)
+- [release.yml:49-65](file://.github/workflows/release.yml#L49-L65)
+
+### Installation System
+
+The installer script provides comprehensive platform support:
+
+**Platform Detection:**
+- Automatic OS and architecture detection
+- Platform-specific installation paths
+- Pre-requisite validation (Rust, Git)
+
+**Installation Methods:**
+- **Source Build**: Compiles from local source with cargo
+- **Pre-built Binary**: Downloads platform-specific releases
+- **Fallback Logic**: Automatically selects installation method
+
+**Cross-Platform Features:**
+- Windows executable naming (.exe suffix)
+- macOS quarantine attribute clearing
+- VS Code plugin binary synchronization
+
+**Section sources**
+- [install.sh:71-90](file://vdw/install.sh#L71-L90)
+- [install.sh:107-179](file://vdw/install.sh#L107-L179)
+- [install.sh:185-237](file://vdw/install.sh#L185-L237)
+
+### VS Code Plugin Build System
+
+The VS Code extension uses a modern TypeScript build pipeline:
+
+**Build Configuration:**
+- **TypeScript Compiler**: ES2020 target with strict typing
+- **CommonJS Modules**: Node.js compatible module system
+- **Source Maps**: Debugging support with inline source maps
+
+**Package Scripts:**
+- **compile**: TypeScript compilation to JavaScript
+- **watch**: Continuous compilation during development
+- **package**: Extension packaging with vsce
+- **publish**: Direct extension publishing to marketplace
+
+**Development Tools:**
+- **vsce**: Visual Studio Code Extension publisher
+- **TypeScript**: Language and type checking
+- **Mocha**: Testing framework for extension tests
+
+**Section sources**
+- [tsconfig.json:2-16](file://vdw-vscode/tsconfig.json#L2-L16)
+- [package.json:171-181](file://vdw-vscode/package.json#L171-L181)
 
 ## Infrastructure Requirements
 
@@ -330,7 +488,7 @@ The VDW system requires minimal infrastructure while providing maximum flexibili
 - **SSH**: For secure repository access
 
 **Section sources**
-- [VDW虚拟工作空间_需求文档_v1.0.md:401-410](file://ai_workspace/VDW虚拟工作空间_需求文档_v1.0.md#L401-L410)
+- [install.sh:42-46](file://vdw/install.sh#L42-L46)
 
 ## Scalability Considerations
 
@@ -361,7 +519,7 @@ The VDW system is designed with scalability as a core architectural principle, i
 - **Compression**: Optional compression for network transfers
 
 **Section sources**
-- [VDW虚拟工作空间_需求文档_v1.0.md:390-400](file://ai_workspace/VDW虚拟工作空间_需求文档_v1.0.md#L390-L400)
+- [platform.rs:32-47](file://vdw/src/link/platform.rs#L32-L47)
 
 ## Deployment Topology
 
@@ -481,7 +639,7 @@ The VDW system addresses several cross-cutting concerns that are essential for p
 - **User-Friendly Messages**: Clear error messages with resolution steps
 
 **Section sources**
-- [VDW虚拟工作空间_需求文档_v1.0.md:411-424](file://ai_workspace/VDW虚拟工作空间_需求文档_v1.0.md#L411-L424)
+- [main.rs:155-168](file://vdw/src/main.rs#L155-L168)
 
 ## Security Architecture
 
@@ -524,7 +682,7 @@ The VDW system implements comprehensive security measures across all architectur
 - **Suspicious Activity Detection**: Automated alerts for unusual access patterns
 
 **Section sources**
-- [VDW虚拟工作空间_需求文档_v1.0.md:411-417](file://ai_workspace/VDW虚拟工作空间_需求文档_v1.0.md#L411-L417)
+- [install.sh:165-170](file://vdw/install.sh#L165-L170)
 
 ## Monitoring and Observability
 
@@ -651,7 +809,7 @@ The VDW system is optimized for performance across all architectural layers, wit
 - **Network Scaling**: Multi-gigabit network throughput
 
 **Section sources**
-- [VDW虚拟工作空间_需求文档_v1.0.md:390-400](file://ai_workspace/VDW虚拟工作空间_需求文档_v1.0.md#L390-L400)
+- [link_benchmark.rs:1-9](file://vdw/benches/link_benchmark.rs#L1-L9)
 
 ## Conclusion
 
@@ -661,4 +819,4 @@ The system's design emphasizes performance, scalability, and reliability while m
 
 The technology stack choices reflect a balance between performance and maintainability, with Rust providing the foundation for high-performance operations and TypeScript enabling seamless integration with the VS Code ecosystem. The implementation of architectural patterns like Factory and Observer ensures extensibility and maintainability as the system evolves.
 
-Future enhancements, including AST-based context analysis, FUSE virtual file system integration, and enterprise features, build upon this solid architectural foundation to deliver an increasingly sophisticated development experience.
+The comprehensive cross-platform implementation, sophisticated build system, and automated CI/CD pipeline demonstrate the system's commitment to developer experience and operational excellence. Future enhancements, including AST-based context analysis, FUSE virtual file system integration, and enterprise features, build upon this solid architectural foundation to deliver an increasingly sophisticated development experience.

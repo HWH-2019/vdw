@@ -25,7 +25,8 @@ fn test_load_fixture_all_fields_parsed() {
 
     // Verify first dependency (frontend)
     let frontend = &config.dependencies[0];
-    assert_eq!(frontend.repo, "https://github.com/example/frontend.git");
+    assert_eq!(frontend.remote, "https://github.com/example/frontend.git");
+    assert_eq!(frontend.local, "");
     assert_eq!(frontend.path, "./apps/web");
     assert_eq!(frontend.branch, Some("main".to_string()));
     assert_eq!(frontend.tag, None);
@@ -40,7 +41,8 @@ fn test_load_fixture_all_fields_parsed() {
 
     // Verify second dependency (shared-utils)
     let shared_utils = &config.dependencies[1];
-    assert_eq!(shared_utils.repo, "https://github.com/example/shared-utils.git");
+    assert_eq!(shared_utils.remote, "https://github.com/example/shared-utils.git");
+    assert_eq!(shared_utils.local, "");
     assert_eq!(shared_utils.path, "./packages/utils");
     assert_eq!(shared_utils.branch, None);
     assert_eq!(shared_utils.tag, Some("v2.1.0".to_string()));
@@ -69,7 +71,7 @@ fn test_fixture_config_validates() {
 
     // Also validate each dependency individually
     for dep in &config.dependencies {
-        assert!(dep.validate().is_ok(), "Dependency '{}' should be valid", dep.repo);
+        assert!(dep.validate().is_ok(), "Dependency '{}' should be valid", dep.remote);
     }
 }
 
@@ -84,7 +86,7 @@ workspace:
   name: env-test
   version: "1.0"
 dependencies:
-  - repo: ${VDW_ITEST_REPO_URL}
+  - remote: ${VDW_ITEST_REPO_URL}
     path: ${VDW_ITEST_REPO_PATH}
     branch: main
     scope:
@@ -95,14 +97,14 @@ dependencies:
     let mut config: VDWConfig = parser::parse_yaml(yaml).expect("Failed to parse YAML with env vars");
 
     // Before resolution, raw values should contain ${...}
-    assert!(config.dependencies[0].repo.contains("${"));
+    assert!(config.dependencies[0].remote.contains("${"));
     assert!(config.dependencies[0].path.contains("${"));
 
     // Resolve env vars
     env_resolver::resolve_env_vars(&mut config).expect("Failed to resolve env vars");
 
     // After resolution, values should be substituted
-    assert_eq!(config.dependencies[0].repo, "https://github.com/example/resolved.git");
+    assert_eq!(config.dependencies[0].remote, "https://github.com/example/resolved.git");
     assert_eq!(config.dependencies[0].path, "./libs/resolved");
 
     // Config should still validate after resolution
@@ -121,7 +123,7 @@ workspace:
   name: env-test
   version: "1.0"
 dependencies:
-  - repo: ${VDW_ITEST_DEFINITELY_MISSING_12345}
+  - remote: ${VDW_ITEST_DEFINITELY_MISSING_12345}
     path: ./libs/test
     branch: main
     scope:

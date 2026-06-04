@@ -96,7 +96,7 @@ pub fn generate_context_summary(
         total_size += size;
 
         per_dep.push(DependencyStats {
-            repo: dep.repo.clone(),
+            repo: dep.dep_id().to_string(),
             path: dep.path.clone(),
             file_count: files.len(),
             size_bytes: size,
@@ -230,7 +230,10 @@ mod tests {
                 version: "1.0".to_string(),
             },
             dependencies: vec![Dependency {
-                repo: "https://github.com/example/core.git".to_string(),
+                remote: "https://github.com/example/core.git".to_string(),
+                origin: String::new(),
+                local: String::new(),
+                repo: String::new(),
                 path: "libs/core".to_string(),
                 branch: Some("main".to_string()),
                 tag: None,
@@ -285,7 +288,10 @@ mod tests {
                 version: "1.0".to_string(),
             },
             dependencies: vec![Dependency {
-                repo: "https://github.com/example/missing.git".to_string(),
+                remote: "https://github.com/example/missing.git".to_string(),
+                origin: String::new(),
+                local: String::new(),
+                repo: String::new(),
                 path: "libs/missing".to_string(),
                 branch: Some("main".to_string()),
                 tag: None,

@@ -13,7 +13,7 @@ pub fn preview() -> Result<()> {
 
     for dep in &config.dependencies {
         let dep_path = cwd.join(&dep.path);
-        println!("📦 {} ({})", dep.repo, dep.path);
+        println!("📦 {} ({})", dep.dep_id(), dep.path);
 
         if !dep_path.exists() {
             println!("   ⚠️  Path not linked yet. Run 'vdw link' first.\n");

@@ -9,8 +9,10 @@ export interface WorkspaceMeta {
 }
 
 export interface Dependency {
-    repo: string;
-    path: string;
+    remote: string;   // Remote Git URL, empty string for local repos
+    origin: string;   // Original source path for local-only repos (preserved when local is overwritten)
+    local: string;    // VDW-managed worktree path (or original path for old-format configs)
+    path: string;     // Workspace link path (relative)
     branch?: string;
     tag?: string;
     commit?: string;
@@ -26,7 +28,6 @@ export interface Scope {
 export interface WorkspaceState {
     workspace_root: string;
     links: LinkEntry[];
-    worktrees: WorktreeInfo[];
 }
 
 export interface LinkEntry {
@@ -34,12 +35,6 @@ export interface LinkEntry {
     target: string;
     link_type: 'HardLink' | 'Symlink' | 'Junction';
     dependency_repo: string;
-}
-
-export interface WorktreeInfo {
-    repo_url: string;
-    branch: string;
-    path: string;
 }
 
 export interface ValidationResult {

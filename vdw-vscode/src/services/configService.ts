@@ -33,15 +33,31 @@ export class ConfigService {
                 return null;
             }
 
-            // Ensure defaults
-            parsed.dependencies = parsed.dependencies.map(dep => ({
-                ...dep,
-                editable: dep.editable ?? false,
-                scope: {
-                    include: dep.scope?.include ?? [],
-                    exclude: dep.scope?.exclude ?? [],
-                },
-            }));
+            // Ensure defaults & backward compatibility
+            parsed.dependencies = parsed.dependencies.map((dep: any) => {
+                // Backward compatibility: map old 'repo' field
+                let remote = dep.remote ?? '';
+                let local = dep.local ?? '';
+                if (!remote && !local && dep.repo) {
+                    if (dep.repo.startsWith('git@') || dep.repo.startsWith('https://') || dep.repo.startsWith('http://')) {
+                        remote = dep.repo;
+                    } else {
+                        local = dep.repo;
+                    }
+                }
+                const { repo, ...rest } = dep;
+                return {
+                    ...rest,
+                    remote,
+                    origin: dep.origin ?? '',
+                    local,
+                    editable: dep.editable ?? false,
+                    scope: {
+                        include: dep.scope?.include ?? [],
+                        exclude: dep.scope?.exclude ?? [],
+                    },
+                };
+            });
 
             this.config = parsed;
             this.configPath = vdwrcPath;

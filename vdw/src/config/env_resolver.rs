@@ -4,10 +4,11 @@ use crate::utils::errors::ConfigError;
 use crate::types::config::VDWConfig;
 
 /// Resolve environment variables in config values
-/// Supports ${VAR_NAME} syntax in repo URLs and paths
+/// Supports ${VAR_NAME} syntax in remote URLs, local paths, and link paths
 pub fn resolve_env_vars(config: &mut VDWConfig) -> Result<()> {
     for dep in &mut config.dependencies {
-        dep.repo = resolve_string(&dep.repo)?;
+        dep.remote = resolve_string(&dep.remote)?;
+        dep.local = resolve_string(&dep.local)?;
         dep.path = resolve_string(&dep.path)?;
     }
     Ok(())
@@ -103,7 +104,10 @@ mod tests {
                 version: "1.0".to_string(),
             },
             dependencies: vec![Dependency {
-                repo: "${VDW_TEST_REPO}".to_string(),
+                remote: "${VDW_TEST_REPO}".to_string(),
+                origin: String::new(),
+                local: String::new(),
+                repo: String::new(),
                 path: "${VDW_TEST_PATH}".to_string(),
                 branch: Some("main".to_string()),
                 tag: None,
@@ -117,7 +121,7 @@ mod tests {
         };
 
         resolve_env_vars(&mut config).unwrap();
-        assert_eq!(config.dependencies[0].repo, "https://github.com/test/repo.git");
+        assert_eq!(config.dependencies[0].remote, "https://github.com/test/repo.git");
         assert_eq!(config.dependencies[0].path, "libs/test");
 
         std::env::remove_var("VDW_TEST_REPO");

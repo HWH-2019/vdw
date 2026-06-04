@@ -72,7 +72,7 @@ export class ContextService {
             totalFiles += depFiles.length;
             totalSizeBytes += depSize;
             perDependency.push({
-                repo: dep.repo,
+                repo: dep.remote || dep.local,
                 path: dep.path,
                 fileCount: depFiles.length,
                 sizeBytes: depSize,

@@ -23,6 +23,10 @@ pub fn create_dependency_links(
         ));
     }
 
+    // Determine link strategy ONCE for the entire dependency
+    // (avoids per-file probing that causes random hardlink/symlink inconsistency)
+    let base_strategy = platform::determine_strategy(source_dir, target_dir);
+
     // Walk the source directory and link files matching scope
     for entry in WalkDir::new(source_dir)
         .into_iter()
@@ -43,20 +47,14 @@ pub fn create_dependency_links(
         let source_path = entry.path().to_path_buf();
         let target_path = target_dir.join(rel_path);
 
-        // Select strategy and create link
-        let strategy = platform::select_strategy(&source_path, target_dir);
-        create_single_link(&source_path, &target_path, strategy)?;
-
-        let link_type = match strategy {
-            platform::LinkStrategy::HardLink => LinkType::HardLink,
-            platform::LinkStrategy::Symlink => LinkType::Symlink,
-            platform::LinkStrategy::Junction => LinkType::Junction,
-        };
+        // Select strategy for this specific file (usually base_strategy, but dirs get symlink)
+        let strategy = platform::select_strategy_for_file(&source_path, base_strategy);
+        let actual_link_type = create_single_link(&source_path, &target_path, strategy)?;
 
         entries.push(LinkEntry {
             source: source_path,
             target: target_path,
-            link_type,
+            link_type: actual_link_type,
             dependency_repo: dep_repo.to_string(),
         });
     }
@@ -64,19 +62,36 @@ pub fn create_dependency_links(
     Ok(entries)
 }
 
-/// Create a single link using the given strategy
+/// Create a single link using the given strategy.
+/// Returns the ACTUAL LinkType used (may differ from strategy if hardlink fell back to symlink).
 fn create_single_link(
     source: &Path,
     target: &Path,
     strategy: platform::LinkStrategy,
-) -> Result<()> {
+) -> Result<LinkType> {
     match strategy {
         platform::LinkStrategy::HardLink => {
-            hardlink::create_hardlink(source, target)
-                .or_else(|_| symlink::create_symlink(source, target)) // fallback
+            match hardlink::create_hardlink(source, target) {
+                Ok(()) => Ok(LinkType::HardLink),
+                Err(e) => {
+                    // Hardlink failed — fall back to symlink and log the real error
+                    tracing::warn!(
+                        "Hardlink failed for {:?} -> {:?} ({}), falling back to symlink",
+                        source, target, e
+                    );
+                    symlink::create_symlink(source, target)?;
+                    Ok(LinkType::Symlink)
+                }
+            }
         }
-        platform::LinkStrategy::Symlink => symlink::create_symlink(source, target),
-        platform::LinkStrategy::Junction => junction::create_junction(source, target),
+        platform::LinkStrategy::Symlink => {
+            symlink::create_symlink(source, target)?;
+            Ok(LinkType::Symlink)
+        }
+        platform::LinkStrategy::Junction => {
+            junction::create_junction(source, target)?;
+            Ok(LinkType::Junction)
+        }
     }
 }
 

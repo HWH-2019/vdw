@@ -2,6 +2,7 @@
 
 <cite>
 **Referenced Files in This Document**
+- [README.md](file://vdw/README.md)
 - [Cargo.toml](file://vdw/Cargo.toml)
 - [lib.rs](file://vdw/src/lib.rs)
 - [main.rs](file://vdw/src/main.rs)
@@ -11,7 +12,6 @@
 - [manager.rs](file://vdw/src/store/manager.rs)
 - [engine.rs](file://vdw/src/link/engine.rs)
 - [filter.rs](file://vdw/src/context/filter.rs)
-- [glob_matcher.rs](file://vdw/src/context/glob_matcher.rs)
 - [manager.rs](file://vdw/src/worktree/manager.rs)
 - [config.rs](file://vdw/src/types/config.rs)
 - [workspace.rs](file://vdw/src/types/workspace.rs)
@@ -21,17 +21,16 @@
 - [workspaceTreeView.ts](file://vdw-vscode/src/providers/workspaceTreeView.ts)
 - [vdwCliService.ts](file://vdw-vscode/src/services/vdwCliService.ts)
 - [logger.ts](file://vdw-vscode/src/utils/logger.ts)
-- [object_pool.rs](file://vdw/src/store/object_pool.rs)
-- [logging.rs](file://vdw/src/utils/logging.rs)
 </cite>
 
 ## Update Summary
 **Changes Made**
-- Enhanced repository management with new remove repository workflow and improved add repository wizard
-- Expanded VS Code plugin bridge with per-repository unlinking and enhanced UI controls
-- Backend improvements including timeout handling for network operations and enhanced error reporting
-- Added comprehensive scope configuration support in the interactive wizard
-- Implemented timeout protection for git operations to prevent hanging on network/SSH issues
+- Enhanced workspace configuration documentation with comprehensive README coverage
+- Updated content store architecture details with physical deduplication implementation
+- Expanded advanced features documentation including AI context filtering and VS Code plugin integration
+- Improved CLI command interface documentation with selective repository operations
+- Added comprehensive state management and error handling documentation
+- Enhanced platform support and troubleshooting guidance
 
 ## Table of Contents
 1. [Introduction](#introduction)
@@ -56,6 +55,7 @@ VDW solves these problems through a three-layer architecture:
 The system draws inspiration from pnpm's content-addressable storage and hard-linking mechanisms, combined with Git's native capabilities to create a seamless development experience that reduces disk usage by 60%+ while maintaining full functionality.
 
 **Section sources**
+- [README.md:11-30](file://vdw/README.md#L11-L30)
 - [main.rs:6-158](file://vdw/src/main.rs#L6-L158)
 
 ## Project Structure
@@ -303,6 +303,7 @@ dependencies:
 **Section sources**
 - [config.rs:5-100](file://vdw/src/types/config.rs#L5-L100)
 - [init.rs:38-74](file://vdw/src/commands/init.rs#L38-L74)
+- [README.md:209-242](file://vdw/README.md#L209-L242)
 
 ### F2: Content Store & Physical Deduplication
 
@@ -355,27 +356,6 @@ For existing repositories, the system configures `.git/objects/info/alternates` 
 **Lazy Fetching Strategy:**
 The system employs selective fetching, pulling only the specific branches or commits declared in the `.vdwrc` file rather than entire repository histories.
 
-**Enhanced Timeout Handling:**
-Backend improvements include timeout protection for network operations to prevent hanging on network/SSH issues:
-
-```mermaid
-sequenceDiagram
-participant Client as Client
-participant Thread as Fetch Thread
-participant Git as Git Server
-Client->>Thread : Start fetch_with_timeout()
-Note right of Thread : Spawn background thread
-Thread->>Git : git fetch origin
-Git-->>Thread : Response (success/failure)
-Thread-->>Client : Result within timeout
-alt Timeout exceeded
-Client->>Client : Return timeout error
-end
-```
-
-**Diagram sources**
-- [object_pool.rs:210-251](file://vdw/src/store/object_pool.rs#L210-L251)
-
 #### Technical Specifications
 
 | Metric | Specification | Performance Impact |
@@ -397,7 +377,7 @@ end
 **Section sources**
 - [manager.rs:8-24](file://vdw/src/store/manager.rs#L8-L24)
 - [manager.rs:44-61](file://vdw/src/store/manager.rs#L44-L61)
-- [object_pool.rs:210-251](file://vdw/src/store/object_pool.rs#L210-L251)
+- [README.md:257-304](file://vdw/README.md#L257-L304)
 
 ### F3: Link Engine & Logical Workspace Construction
 
@@ -459,6 +439,7 @@ The link creation process follows a systematic approach to ensure reliability an
 **Section sources**
 - [engine.rs:9-65](file://vdw/src/link/engine.rs#L9-L65)
 - [engine.rs:67-94](file://vdw/src/link/engine.rs#L67-L94)
+- [README.md:294-304](file://vdw/README.md#L294-L304)
 
 ### F4: Git Worktree Integration (Editable Mode)
 
@@ -530,6 +511,7 @@ The system provides comprehensive worktree management capabilities:
 **Section sources**
 - [manager.rs:13-53](file://vdw/src/worktree/manager.rs#L13-L53)
 - [manager.rs:101-120](file://vdw/src/worktree/manager.rs#L101-L120)
+- [README.md:192-203](file://vdw/README.md#L192-L203)
 
 ### F5: AI Context Filtering
 
@@ -606,6 +588,7 @@ The system maintains an event-driven index that tracks file system changes, enab
 **Section sources**
 - [filter.rs:9-39](file://vdw/src/context/filter.rs#L9-L39)
 - [glob_matcher.rs:54-88](file://vdw/src/context/glob_matcher.rs#L54-L88)
+- [README.md:182-190](file://vdw/README.md#L182-L190)
 
 ### F6: CLI Command Interface
 
@@ -708,6 +691,7 @@ Backend improvements include comprehensive error reporting with actionable sugge
 - [link.rs:11-114](file://vdw/src/commands/link.rs#L11-L114)
 - [link.rs:218-269](file://vdw/src/commands/link.rs#L218-L269)
 - [repo.rs:8-32](file://vdw/src/commands/repo.rs#L8-L32)
+- [README.md:94-180](file://vdw/README.md#L94-L180)
 
 ### F7: State Management
 
@@ -1131,7 +1115,7 @@ The VDW system is designed with aggressive performance targets to ensure smooth 
 - [main.rs:144-157](file://vdw/src/main.rs#L144-L157)
 - [init.rs:104-135](file://vdw/src/commands/init.rs#L104-L135)
 - [link.rs:218-269](file://vdw/src/commands/link.rs#L218-L269)
-- [object_pool.rs:210-251](file://vdw/src/store/object_pool.rs#L210-L251)
+- [README.md:170-180](file://vdw/README.md#L170-L180)
 
 ## Conclusion
 

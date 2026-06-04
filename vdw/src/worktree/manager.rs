@@ -4,7 +4,13 @@ use std::process::Command;
 use anyhow::Result;
 
 use crate::worktree::git_ops;
-use crate::types::workspace::WorktreeInfo;
+
+/// Info about a created worktree (local to worktree module)
+#[derive(Debug, Clone)]
+pub struct WorktreeInfo {
+    pub branch: String,
+    pub path: PathBuf,
+}
 
 /// Create a git worktree from a bare repository
 ///
@@ -108,7 +114,6 @@ pub fn list_worktrees(bare_repo_path: &Path) -> Result<Vec<WorktreeInfo>> {
         let wt = repo.find_worktree(name)?;
         let path = wt.path().to_path_buf();
         infos.push(WorktreeInfo {
-            repo_url: String::new(), // filled by caller
             branch: name.to_string(),
             path,
         });

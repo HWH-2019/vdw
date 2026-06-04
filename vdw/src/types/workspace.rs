@@ -8,8 +8,6 @@ pub struct WorkspaceState {
     pub workspace_root: PathBuf,
     /// All link entries created by VDW
     pub links: Vec<LinkEntry>,
-    /// Worktree info for editable deps
-    pub worktrees: Vec<WorktreeInfo>,
 }
 
 /// A single link entry (file or directory)
@@ -33,20 +31,11 @@ pub enum LinkType {
     Junction,
 }
 
-/// Info about a created worktree
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct WorktreeInfo {
-    pub repo_url: String,
-    pub branch: String,
-    pub path: PathBuf,
-}
-
 impl WorkspaceState {
     pub fn new(workspace_root: PathBuf) -> Self {
         Self {
             workspace_root,
             links: Vec::new(),
-            worktrees: Vec::new(),
         }
     }
 
@@ -81,7 +70,6 @@ mod tests {
         let state = WorkspaceState::new(root.clone());
         assert_eq!(state.workspace_root, root);
         assert!(state.links.is_empty());
-        assert!(state.worktrees.is_empty());
     }
 
     #[test]
@@ -96,11 +84,6 @@ mod tests {
             link_type: LinkType::HardLink,
             dependency_repo: "https://github.com/example/repo.git".to_string(),
         });
-        state.worktrees.push(WorktreeInfo {
-            repo_url: "https://github.com/example/repo.git".to_string(),
-            branch: "main".to_string(),
-            path: PathBuf::from("/workspace/.vdw/worktrees/repo"),
-        });
 
         state.save().expect("Failed to save state");
 
@@ -114,9 +97,6 @@ mod tests {
             loaded.links[0].dependency_repo,
             "https://github.com/example/repo.git"
         );
-        assert_eq!(loaded.worktrees.len(), 1);
-        assert_eq!(loaded.worktrees[0].repo_url, "https://github.com/example/repo.git");
-        assert_eq!(loaded.worktrees[0].branch, "main");
     }
 
     #[test]
@@ -127,7 +107,6 @@ mod tests {
         let state = WorkspaceState::load(dir.path()).expect("Failed to load missing state");
         assert_eq!(state.workspace_root, root);
         assert!(state.links.is_empty());
-        assert!(state.worktrees.is_empty());
     }
 
     #[test]

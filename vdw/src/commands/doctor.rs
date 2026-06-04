@@ -73,7 +73,7 @@ pub fn validate() -> Result<()> {
             println!("  Workspace: {}", config.workspace.name);
             println!("  Dependencies: {}", config.dependencies.len());
             for dep in &config.dependencies {
-                println!("    - {} -> {}", dep.repo, dep.path);
+                println!("    - {} -> {}", dep, dep.path);
             }
             Ok(())
         }

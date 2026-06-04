@@ -187,7 +187,10 @@ fn test_generate_context_summary_with_vdwrc_config() {
         },
         dependencies: vec![
             Dependency {
-                repo: "https://github.com/example/core.git".to_string(),
+                remote: "https://github.com/example/core.git".to_string(),
+                origin: String::new(),
+                local: String::new(),
+                repo: String::new(),
                 path: "libs/core".to_string(),
                 branch: Some("main".to_string()),
                 tag: None,
@@ -199,7 +202,10 @@ fn test_generate_context_summary_with_vdwrc_config() {
                 editable: false,
             },
             Dependency {
-                repo: "https://github.com/example/frontend.git".to_string(),
+                remote: "https://github.com/example/frontend.git".to_string(),
+                origin: String::new(),
+                local: String::new(),
+                repo: String::new(),
                 path: "apps/web".to_string(),
                 branch: Some("main".to_string()),
                 tag: None,
@@ -271,7 +277,10 @@ fn test_generate_context_summary_missing_path() {
             version: "1.0".to_string(),
         },
         dependencies: vec![Dependency {
-            repo: "https://github.com/example/missing.git".to_string(),
+            remote: "https://github.com/example/missing.git".to_string(),
+            origin: String::new(),
+            local: String::new(),
+            repo: String::new(),
             path: "libs/missing".to_string(),
             branch: Some("main".to_string()),
             tag: None,

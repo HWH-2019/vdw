@@ -62,7 +62,7 @@ workspace:
   name: integration-test
   version: "1.0"
 dependencies:
-  - repo: "https://github.com/example/local-repo.git"
+  - remote: "https://github.com/example/local-repo.git"
     path: libs/local-repo
     branch: main
     scope:
@@ -261,7 +261,7 @@ fn test_link_with_parsed_vdwrc_scope() {
         source_dir.path(),
         &target_dir,
         &shared_utils.scope,
-        &shared_utils.repo,
+        &shared_utils.remote,
     )
     .expect("Failed to create dependency links with parsed scope");
 
