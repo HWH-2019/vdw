@@ -1,0 +1,375 @@
+# 🏗️ VDW — Virtual Dev Workspace
+
+> **Cross-repo development middleware for the AI era**  
+> Seamlessly stitch multiple repositories into one development workspace, then serve the context to your AI coding assistant.
+
+[![Rust](https://img.shields.io/badge/Rust-🦀-orange?style=flat-square)](https://www.rust-lang.org)
+[![License](https://img.shields.io/badge/license-MIT-blue?style=flat-square)](LICENSE)
+
+---
+
+## 🤔 What is VDW?
+
+Modern development doesn't live in a single repo. You have:
+
+- A **frontend** app → `git@github.com:org/web-app.git`
+- A **shared UI library** → `git@github.com:org/ui-kit.git`
+- A **backend service** → `git@github.com:org/api-service.git`
+- A **protobuf schema** repo → `git@github.com:org/protos.git`
+
+You need them all in one place during development. But cloning them manually, keeping them in sync, and managing file paths is a **nightmare**. 😩
+
+**VDW solves this.** It gives you:
+
+1. 🗄️ A **content-addressable store** on your machine that deduplicates repos
+2. 🔗 **Smart linking** — expose only the files you want via hardlinks / symlinks
+3. 🤖 **AI context filtering** — generate a clean file list for LLM-based coding assistants
+4. 📝 **Editable workspaces** — use git worktrees to modify dependencies in place
+
+Think of it as **`npm link` but for any language**, combined with **AI-aware file scoping**.
+
+---
+
+## ✨ Features
+
+| Feature | Description |
+|---------|-------------|
+| 📦 **Content Store** | Bare git repos in `~/.vdw/store/objects/` — automatic dedup via SHA256 |
+| 🔗 **Smart Linking** | Hardlinks on same filesystem, symlinks cross-filesystem (or junctions on Windows) |
+| 🎯 **Scope Filtering** | Glob patterns to include/exclude files per dependency |
+| ✏️ **Editable Mode** | Git worktrees for repos you need to modify |
+| 🔍 **AI Context** | Generate filtered file lists for LLM-powered coding tools |
+| 🌐 **SSH Auth** | Delegates to system OpenSSH — no key management needed |
+| 🛡️ **Idempotent** | Run `vdw link` 100 times — same result every time |
+| 🖥️ **VS Code Plugin** | GUI for adding/linking repos (see [vdw-vscode](../vdw-vscode)) |
+
+---
+
+## 🚀 Quick Start
+
+### Prerequisites
+
+- **[Rust toolchain](https://rustup.rs)** (`cargo` + `rustc`)
+- **[Git](https://git-scm.com)**
+- **macOS**, **Linux**, or **Windows** (Git Bash / WSL)
+
+### Install
+
+```bash
+# 🏆 One-command install (recommended)
+cd vdw && make install
+
+# Or using the install script directly
+./install.sh
+
+# Or if you already have Rust and just want the binary:
+make install-quick
+```
+
+> `make install` handles everything: builds the release binary, copies it to `~/.local/bin`, clears macOS EDR quarantine, and updates the local copy for the VS Code plugin.
+
+After install:
+```bash
+# Verify it works
+vdw --version
+vdw --help
+```
+
+<details>
+<summary><b>📦 Installing without Rust (via pre-built binary)</b></summary>
+
+Once the project is published to GitHub and CI releases are configured, you'll be able to:
+
+```bash
+# Direct download (example — configure DOWNLOAD_BASE first)
+curl -sfL https://github.com/YOUR_ORG/vdw/releases/latest/download/vdw-x86_64-unknown-linux-gnu -o /usr/local/bin/vdw
+chmod +x /usr/local/bin/vdw
+```
+
+See [`.github/workflows/release.yml`](.github/workflows/release.yml) for the CI pipeline that builds binaries for all platforms.
+</details>
+
+---
+
+## 🎮 Usage
+
+### 🏁 Start a workspace
+
+```bash
+cd my-project
+
+# Initialize with a .vdwrc config file
+vdw init
+
+# Or with a fullstack template (pre-filled examples)
+vdw init --template fullstack
+```
+
+### 📥 Add a repository
+
+```bash
+# Via HTTPS
+vdw repo add https://github.com/org/ui-lib.git --path libs/ui-lib --branch main
+
+# Via SSH
+vdw repo add git@github.com:org/api-service.git --path services/api --branch develop
+
+# In editable mode (creates a git worktree so you can make changes)
+vdw repo add git@github.com:org/shared.git --path packages/shared --branch master --editable
+```
+
+This will:
+1. Clone the repo as a bare git repo into `~/.vdw/store/objects/`
+2. Create a `metadata.json` with commit hash, size, branch info
+3. Add an entry to your `.vdwrc` configuration
+
+### 🔗 Link files into your workspace
+
+```bash
+# Link all dependencies
+vdw link
+
+# Link a specific repo only
+vdw link --repo git@github.com:org/ui-lib.git
+```
+
+VDW walks each dependency's source directory, applies scope filters, and creates hardlinks (or symlinks) at the configured path. Run it anytime to refresh.
+
+### ❌ Unlink
+
+```bash
+# Unlink all
+vdw unlink
+
+# Unlink a specific repo
+vdw unlink --repo git@github.com:org/ui-lib.git
+```
+
+### 🗑️ Remove a repo
+
+```bash
+# By URL
+vdw repo remove https://github.com/org/ui-lib.git
+
+# By name (fuzzy search)
+vdw repo remove ui-lib
+```
+
+### 📋 List repositories
+
+```bash
+vdw repo list
+```
+
+```
+NAME                           BRANCH       REFS       ALT      URL
+alsc.sales_aoi_service-3f8a1   master       1          no       git@gitlab.alibaba-inc...
+ui-lib-a1b2c3d4                main         2          yes      https://github.com/org...
+```
+
+### 🩺 Doctor (diagnose issues)
+
+```bash
+vdw doctor
+```
+
+### ✅ Validate config
+
+```bash
+vdw validate
+```
+
+### 🧠 AI context
+
+```bash
+# Preview files that will be included in AI context
+vdw context preview
+
+# Show statistics (file count, total size by dependency)
+vdw context stats
+```
+
+### 🌿 Worktrees (for editable repos)
+
+```bash
+# Create a worktree for a specific branch
+vdw worktree create ui-lib feature/new-button
+
+# List worktrees
+vdw worktree list
+
+# Remove a worktree
+vdw worktree delete ui-lib feature/new-button --force
+```
+
+---
+
+## 📋 Configuration
+
+A `.vdwrc` file (YAML) defines your workspace:
+
+```yaml
+workspace:
+  name: my-monorepo
+  version: "1.0"
+
+dependencies:
+  - repo: "https://github.com/org/ui-lib.git"
+    path: libs/ui-lib
+    branch: main
+    scope:
+      include:
+        - "src/components/**"
+        - "src/hooks/**"
+      exclude:
+        - "**/*.test.ts"
+        - "**/node_modules/**"
+
+  - repo: "git@github.com:org/protos.git"
+    path: packages/protos
+    tag: v2.0.0
+    scope:
+      include:
+        - "**/*.proto"
+
+  - repo: "git@github.com:org/api-service.git"
+    path: services/api
+    branch: develop
+    editable: true
+    scope:
+      include:
+        - "src/**/*.rs"
+```
+
+### Dependency fields
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `repo` | ✅ | Git URL (https://, git@, or local path) |
+| `path` | ✅ | Where to link in your workspace |
+| `branch` / `tag` / `commit` | ✅ (pick one) | Which version to track |
+| `scope.include` | ✅ | Glob patterns for files to expose |
+| `scope.exclude` | ❌ | Glob patterns to filter out |
+| `editable` | ❌ | Enable git worktree (default: `false`) |
+
+---
+
+## ⚙️ How It Works
+
+```
+                    ┌─────────────────────────────────────┐
+                    │         Your Workspace               │
+                    │                                     │
+                    │   packages/ui-lib/ (hardlinks)      │
+                    │   services/api/    (worktree)        │
+                    │   packages/protos/ (symlinks)        │
+                    │                                     │
+                    └───────────┬─────────────────────────┘
+                                │ link / unlink
+                    ┌───────────▼─────────────────────────┐
+                    │     VDW Content Store                │
+                    │     ~/.vdw/store/objects/             │
+                    │                                     │
+                    │   ui-lib-a1b2c3/   (bare.git)        │
+                    │   api-svc-d4e5f6/  (bare.git)        │
+                    │   protos-7890ab/   (bare.git)        │
+                    └───────────┬─────────────────────────┘
+                                │ clone / fetch
+                    ┌───────────▼─────────────────────────┐
+                    │      Remote Git Repositories         │
+                    │                                     │
+                    │   github.com/org/ui-lib.git          │
+                    │   github.com/org/api-service.git     │
+                    │   github.com/org/protos.git          │
+                    └─────────────────────────────────────┘
+```
+
+**The flow:**
+
+1. **`vdw repo add`** → clones a bare git repo into the content store, records commit hash + metadata
+2. **`vdw link`** → walks each repo's files, matches scope filters, creates hardlinks/symlinks in your workspace
+3. **`vdw unlink`** → removes all links (but keeps the store intact)
+4. **Editable mode** → creates a git worktree from the bare repo so you can commit/push changes
+
+### Link strategies (auto-selected)
+
+| Condition | Strategy | Fallback |
+|-----------|----------|----------|
+| Same filesystem (macOS/Linux) | 🔗 HardLink | Symlink |
+| Cross-filesystem (macOS/Linux) | 🔗 Symlink | — |
+| Windows (directory) | 🪟 Junction | Symlink |
+| Windows (file) | 🪟 Symlink | — |
+
+Hardlinks are preferred because they take zero disk space and don't break when the source moves.
+
+---
+
+## 🖥️ VS Code Extension
+
+VDW ships with a VS Code extension for visual management:
+
+- ➕ **Add repos** from the command palette
+- 🔗 **Link / Unlink** with one click
+- 📋 **Browse** all dependency files in a custom tree view
+- 🩺 **Status bar** shows workspace health
+
+The extension auto-detects the `vdw` binary — first in the repo directory (`./vdw/vdw`), then from system PATH.
+
+---
+
+## 💻 Platform Support
+
+| OS | Architectures | Link Strategy | Status |
+|----|--------------|---------------|--------|
+| 🍎 macOS | arm64 (M1/M2/M3), x86_64 | HardLink → Symlink | ✅ |
+| 🐧 Linux | x86_64, aarch64 | HardLink → Symlink | ✅ |
+| 🪟 Windows | x86_64 (Git Bash / WSL) | Junction → Symlink | ✅ |
+
+> **macOS note**: If you encounter `SIGKILL` (exit code 137) with the release binary, clear the EDR quarantine:
+> ```bash
+> xattr -d com.alibaba.security.edr.antivirus.cloudquery /path/to/vdw
+> ```
+> The `install.sh` script handles this automatically.
+
+---
+
+## 🧑‍💻 Development
+
+```bash
+# Build
+cargo build --release
+
+# Run tests
+cargo test
+
+# Run all tests including integration
+cargo test -- --ignored
+
+# Benchmarks
+cargo bench
+```
+
+### Project structure
+
+```
+vdw/
+├── src/
+│   ├── commands/       # CLI command implementations
+│   ├── config/         # .vdwrc parsing + validation
+│   ├── context/        # AI context file filtering
+│   ├── link/           # Link engine (hardlink, symlink, junction)
+│   ├── store/          # Content store (clone, fetch, metadata)
+│   ├── types/          # Shared types
+│   ├── utils/          # Utilities (git, fs, logging)
+│   └── worktree/       # Git worktree management
+├── tests/              # Integration tests
+├── Cargo.toml
+├── Makefile            # Build + install targets
+└── install.sh          # Cross-platform installer
+```
+
+---
+
+## 📄 License
+
+MIT

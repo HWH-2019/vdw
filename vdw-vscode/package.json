@@ -1,40 +1,87 @@
 {
   "name": "vdw-vscode",
   "displayName": "VDW - Virtual Dev Workspace",
-  "description": "VS Code integration for VDW cross-repo development middleware",
+  "description": "Cross-repo dependency management and AI context filtering for multi-repository development",
   "version": "0.1.0",
   "publisher": "vdw-team",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/vdw/vdw"
+  },
+  "bugs": {
+    "url": "https://github.com/vdw/vdw/issues"
+  },
+  "homepage": "https://github.com/vdw/vdw#readme",
   "engines": {
     "vscode": "^1.85.0"
   },
-  "categories": ["Other"],
+  "categories": [
+    "Other",
+    "Workflow",
+    "SCM Providers"
+  ],
+  "keywords": [
+    "multi-repo",
+    "monorepo",
+    "workspace",
+    "dependency",
+    "link",
+    "git",
+    "worktree",
+    "context",
+    "AI"
+  ],
+  "icon": "resources/icons/vdw.png",
+  "galleryBanner": {
+    "color": "#1a1a2e",
+    "theme": "dark"
+  },
   "activationEvents": [
     "workspaceContains:.vdwrc"
   ],
   "main": "./out/extension.js",
   "contributes": {
-   "commands": [
-      { "command": "vdw.init", "title": "VDW: Initialize Workspace" },
-      { 
-        "command": "vdw.linkRepo", 
-        "title": "Link Repository", 
+    "commands": [
+      {
+        "command": "vdw.init",
+        "title": "VDW: Initialize Workspace"
+      },
+      {
+        "command": "vdw.linkRepo",
+        "title": "Link Repository",
         "icon": "$(link)"
       },
-      { 
-        "command": "vdw.unlinkRepo", 
-        "title": "Unlink Repository", 
+      {
+        "command": "vdw.unlinkRepo",
+        "title": "Unlink Repository",
         "icon": {
           "light": "resources/icons/unlink-light.svg",
           "dark": "resources/icons/unlink-dark.svg"
         }
       },
-      { "command": "vdw.relink", "title": "VDW: Relink allRepo", "icon": "$(sync)" },
-      { "command": "vdw.validate", "title": "VDW: Validate Configuration" },
-      { "command": "vdw.addRepo", "title": "VDW: Add Repository", "icon": "$(add)" },
-     { "command": "vdw.refreshContext", "title": "VDW: Refresh Context", "icon": "$(refresh)" },
-      { 
-        "command": "vdw.removeRepo", 
-        "title": "Remove Repository", 
+      {
+        "command": "vdw.relink",
+        "title": "VDW: Relink allRepo",
+        "icon": "$(sync)"
+      },
+      {
+        "command": "vdw.validate",
+        "title": "VDW: Validate Configuration"
+      },
+      {
+        "command": "vdw.addRepo",
+        "title": "VDW: Add Repository",
+        "icon": "$(add)"
+      },
+      {
+        "command": "vdw.refreshContext",
+        "title": "VDW: Refresh Context",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "vdw.removeRepo",
+        "title": "Remove Repository",
         "icon": "$(trash)"
       }
     ],
@@ -125,7 +172,11 @@
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
     "lint": "tsc --noEmit",
+    "generate-icon": "node scripts/generate-icon.js",
+    "prepackage": "npm run generate-icon && npm run compile",
     "package": "vsce package --no-dependencies",
+    "prepublish": "npm run prepackage",
+    "publish": "vsce publish --no-dependencies",
     "test": "npm run compile && node ./out/test/runTests.js"
   },
   "dependencies": {
@@ -133,15 +184,15 @@
     "minimatch": "^9.0.3"
   },
   "devDependencies": {
-    "@types/vscode": "^1.85.0",
+    "@types/glob": "^8.1.0",
     "@types/js-yaml": "^4.0.9",
     "@types/minimatch": "^5.1.2",
-    "@types/node": "^20.11.0",
-    "typescript": "^5.3.3",
-    "@vscode/vsce": "^2.22.0",
-    "mocha": "^10.2.0",
     "@types/mocha": "^10.0.6",
+    "@types/node": "^20.11.0",
+    "@types/vscode": "^1.85.0",
+    "@vscode/vsce": "^2.22.0",
     "glob": "^10.3.10",
-    "@types/glob": "^8.1.0"
+    "mocha": "^10.2.0",
+    "typescript": "^5.3.3"
   }
 }
