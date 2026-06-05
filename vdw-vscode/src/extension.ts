@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import * as path from 'path';
 import { VDWCliService } from './services/vdwCliService';
 import { ConfigService } from './services/configService';
 import { ContextService } from './services/contextService';
@@ -76,12 +77,42 @@ export function activate(context: vscode.ExtensionContext) {
         fileProvider?.refresh();
         treeProvider?.refresh();
         statusBar?.update();
+        // Refresh Git repositories for editable deps
+        const cfg = configService.getConfig();
+        if (cfg) {
+            const candidatePaths: string[] = [];
+            for (const dep of cfg.dependencies) {
+                if (dep.editable) {
+                    if (dep.origin) candidatePaths.push(dep.origin);
+                    if (dep.local) candidatePaths.push(dep.local);
+                    candidatePaths.push(path.join(workspacePath, dep.path));
+                }
+            }
+            if (candidatePaths.length > 0) {
+                autoOpenService?.refreshGitRepositories(...candidatePaths);
+            }
+        }
     });
     watcher.onDidCreate(() => {
         log('.vdwrc created, loading...');
         configService.reload();
         treeProvider?.refresh();
         statusBar?.update();
+        // Refresh Git repositories for editable deps
+        const cfg = configService.getConfig();
+        if (cfg) {
+            const candidatePaths: string[] = [];
+            for (const dep of cfg.dependencies) {
+                if (dep.editable) {
+                    if (dep.origin) candidatePaths.push(dep.origin);
+                    if (dep.local) candidatePaths.push(dep.local);
+                    candidatePaths.push(path.join(workspacePath, dep.path));
+                }
+            }
+            if (candidatePaths.length > 0) {
+                autoOpenService?.refreshGitRepositories(...candidatePaths);
+            }
+        }
     });
     watcher.onDidDelete(() => {
         log('.vdwrc deleted');
@@ -96,10 +127,27 @@ export function activate(context: vscode.ExtensionContext) {
         statusBar?.update(count);
     });
 
-    // 10. Auto-open editable Git repositories on extension activation
-    autoOpenService.openAllEditableRepositories().then(() => {
+    // 10. Auto-open editable Git repositories on extension activation, then refresh
+    (async () => {
+        await autoOpenService.openAllEditableRepositories();
         log('Auto-open Git repositories completed');
-    });
+
+        // Collect candidate paths for editable deps and refresh via refreshGitRepositories,
+        // which waits for each repo to reach IDLE state before calling status().
+        const config = configService.getConfig();
+        if (!config) return;
+        const candidatePaths: string[] = [];
+        for (const dep of config.dependencies) {
+            if (dep.editable) {
+                if (dep.origin) candidatePaths.push(dep.origin);
+                if (dep.local) candidatePaths.push(dep.local);
+                candidatePaths.push(path.join(workspacePath, dep.path));
+            }
+        }
+        if (candidatePaths.length > 0) {
+            await autoOpenService.refreshGitRepositories(...candidatePaths);
+        }
+    })();
 
     log('VDW extension activated successfully');
 }

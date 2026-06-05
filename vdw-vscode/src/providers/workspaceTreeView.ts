@@ -136,12 +136,13 @@ export class WorkspaceTreeProvider implements vscode.TreeDataProvider<WorkspaceT
             const dep = element.dependency;
             const children: WorkspaceTreeItem[] = [];
 
-            // Path
+            // Path — use 'linkedPath' so terminal icon only shows for linked repos
+            const pathContextValue = element.contextType === 'linkedRepo' ? 'linkedPath' : 'path';
             const pathItem = new WorkspaceTreeItem(
                 `${dep.path}`,
                 vscode.TreeItemCollapsibleState.None,
-                'path',
-                undefined,
+                pathContextValue,
+                dep,
                 '路径'
             );
             pathItem.iconPath = new vscode.ThemeIcon('folder');

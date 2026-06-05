@@ -21,11 +21,60 @@ export class AutoOpenService implements vscode.Disposable {
     }
 
     /**
+     * Wait for the Git extension to finish its initial scan.
+     * Resolves immediately if already initialized, or after a timeout (default 15s).
+     */
+    async waitForGitReady(timeoutMs: number = 15000): Promise<boolean> {
+        const gitExtension = vscode.extensions.getExtension('vscode.git');
+        if (!gitExtension) {
+            log('AutoOpen: Git extension not found');
+            return false;
+        }
+        if (!gitExtension.isActive) {
+            await gitExtension.activate();
+        }
+        const gitAPI = gitExtension.exports?.getAPI(1);
+        if (!gitAPI) {
+            log('AutoOpen: Git API not available');
+            return false;
+        }
+        if (gitAPI.state === 'initialized') {
+            return true;
+        }
+        log(`AutoOpen: Git extension state is '${gitAPI.state}', waiting for initialized...`);
+        return new Promise<boolean>((resolve) => {
+            const timer = setTimeout(() => {
+                sub.dispose();
+                log('AutoOpen: Timed out waiting for Git extension to initialize');
+                resolve(false);
+            }, timeoutMs);
+            const sub = gitAPI.onDidChangeState((state: string) => {
+                if (state === 'initialized') {
+                    clearTimeout(timer);
+                    sub.dispose();
+                    log('AutoOpen: Git extension initialized');
+                    resolve(true);
+                }
+            });
+        });
+    }
+
+    /**
      * Refresh specific Git repositories by path, so VS Code detects stale repos and drops them.
      * Uses the Git extension API to find and refresh the repo, avoiding path-matching issues.
+     * Waits for the Git extension to be ready before attempting refresh.
+     *
+     * NOTE: repo.state is a NUMBER (RepositoryState enum: UNINITIALIZED=0, IDLE=1, ...)
+     *       repo.HEAD is a SEPARATE property on the Repository object (not on repo.state)
      */
     async refreshGitRepositories(...candidatePaths: string[]): Promise<void> {
         try {
+            const ready = await this.waitForGitReady();
+            if (!ready) {
+                log('AutoOpen: Git extension not ready, skipping refresh');
+                return;
+            }
+
             const gitExtension = vscode.extensions.getExtension('vscode.git')?.exports;
             const gitAPI = gitExtension?.getAPI(1);
             if (!gitAPI) {
@@ -33,21 +82,72 @@ export class AutoOpenService implements vscode.Disposable {
                 return;
             }
 
-            let refreshed = false;
+            // Diagnostic: dump ALL repos known to the Git extension
+            log(`AutoOpen: Git extension has ${gitAPI.repositories.length} repos:`);
+            for (const r of gitAPI.repositories) {
+                log(`  - ${r.rootUri.fsPath} | state=${r.state} | HEAD.name=${r.HEAD?.name || '(none)'} | HEAD.commit=${r.HEAD?.commit?.slice(0, 7) || '(none)'}`);
+            }
+            log(`AutoOpen: Candidate paths: ${JSON.stringify(candidatePaths)}`);
+
+            let refreshed = 0;
+            const seen = new Set<string>();
+
             for (const p of candidatePaths) {
-                if (!p) continue;
-                const repo = gitAPI.getRepository(vscode.Uri.file(p));
-                if (repo) {
-                    log(`AutoOpen: Refreshing Git repository: ${p}`);
-                    await repo.status();
-                    log(`AutoOpen: Repository refreshed: ${p}`);
-                    refreshed = true;
-                    // Don't return — other candidate paths may match other repos
+                if (!p || p.trim() === '') continue;
+
+                let repo = gitAPI.getRepository(vscode.Uri.file(p));
+
+                // Repo not registered with Git extension — try to open it.
+                // Skip VDW store paths to avoid exposing internal worktree dirs.
+                if (!repo) {
+                    if (p.includes(path.sep + '.vdw' + path.sep)) {
+                        log(`AutoOpen: Skipping VDW store path: ${p}`);
+                        continue;
+                    }
+                    log(`AutoOpen: Repo not found at ${p}, attempting git.openRepository`);
+                    try {
+                        await vscode.commands.executeCommand('git.openRepository', p);
+                        await new Promise(resolve => setTimeout(resolve, 500));
+                    } catch (err) {
+                        logError(`AutoOpen: Failed to open repository at ${p}`, err);
+                        continue;
+                    }
+                    repo = gitAPI.getRepository(vscode.Uri.file(p));
+                    if (!repo) {
+                        log(`AutoOpen: Still not found after openRepository: ${p}`);
+                        continue;
+                    }
+                }
+
+                const repoPath = repo.rootUri.fsPath;
+                if (seen.has(repoPath)) continue;
+                seen.add(repoPath);
+
+                const headName = repo.HEAD?.name;
+                log(`AutoOpen: Matched repo: ${repoPath}, state=${repo.state}, HEAD.name=${headName || '(none)'}`);
+
+                // Already has branch info — no refresh needed
+                if (headName) {
+                    log(`AutoOpen: Skipping (already has branch "${headName}"): ${repoPath}`);
+                    continue;
+                }
+
+                // No branch info — call status() to trigger a refresh.
+                // git status -b output includes "## branchname..." which updates HEAD.name
+                log(`AutoOpen: Calling status() to refresh: ${repoPath}`);
+                await repo.status();
+
+                const afterHead = repo.HEAD?.name;
+                log(`AutoOpen: After status(): HEAD.name=${afterHead || '(still none)'}`);
+                if (afterHead) {
+                    refreshed++;
                 }
             }
-            if (!refreshed) {
-                log(`AutoOpen: No matching repository found for: ${JSON.stringify(candidatePaths)}`);
+
+            if (seen.size === 0) {
+                log(`AutoOpen: No matching repository found for candidates`);
             }
+            log(`AutoOpen: Refresh done — ${refreshed} refreshed, ${seen.size} unique repos found`);
         } catch (err) {
             logError('AutoOpen: Failed to refresh Git repositories', err);
         }
@@ -55,7 +155,8 @@ export class AutoOpenService implements vscode.Disposable {
 
     /**
      * 打开所有可编辑仓库的 Git 仓库注册
-     * 遍历依赖列表，对每个 editable 的依赖直接从 dep.local 读取路径并调用 git.openRepository
+     * 遍历依赖列表，对每个 editable 的依赖优先使用 dep.origin（用户原始仓库路径），
+     * 避免暴露 VDW store 内部路径（dep.local）到 Source Control。
      */
     async openAllEditableRepositories(): Promise<void> {
         const config = this.configService.getConfig();
@@ -66,9 +167,15 @@ export class AutoOpenService implements vscode.Disposable {
         const delay = this.getOpenDelay();
 
         for (const dep of editableDeps) {
-            const repoPath = dep.local;
+            // Prefer dep.origin (user's original repo) over dep.local (VDW store worktree)
+            const repoPath = dep.origin || dep.local;
             if (!repoPath) {
-                log(`AutoOpen: ${dep.remote || dep.path} has no local path set`);
+                log(`AutoOpen: ${dep.remote || dep.path} has no origin or local path set`);
+                continue;
+            }
+            // Never expose VDW store internal paths to Source Control
+            if (repoPath.includes(path.sep + '.vdw' + path.sep)) {
+                log(`AutoOpen: Skipping VDW store path: ${repoPath}`);
                 continue;
             }
             if (this.isValidGitRepository(repoPath)) {

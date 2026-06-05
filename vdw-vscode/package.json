@@ -2,7 +2,7 @@
   "name": "vdw-vscode",
   "displayName": "VDW - Virtual Dev Workspace",
   "description": "Cross-repo dependency management and AI context filtering for multi-repository development",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "publisher": "vdw-team",
   "license": "MIT",
   "repository": {
@@ -83,6 +83,14 @@
         "command": "vdw.removeRepo",
         "title": "Remove Repository",
         "icon": "$(trash)"
+      },
+      {
+        "command": "vdw.openInTerminal",
+        "title": "Open in Terminal",
+        "icon": {
+          "light": "resources/icons/terminal-light.svg",
+          "dark": "resources/icons/terminal-dark.svg"
+        }
       }
     ],
     "viewsContainers": {
@@ -144,6 +152,11 @@
           "command": "vdw.removeRepo",
           "when": "view == vdwWorkspace && viewItem == unlinkedRepo",
           "group": "2@remove"
+        },
+        {
+          "command": "vdw.openInTerminal",
+          "when": "view == vdwWorkspace && viewItem == linkedPath",
+          "group": "inline@2"
         }
       ]
     },
@@ -174,7 +187,7 @@
     "lint": "tsc --noEmit",
     "generate-icon": "node scripts/generate-icon.js",
     "prepackage": "npm run generate-icon && npm run compile",
-    "package": "vsce package --no-dependencies",
+    "package": "vsce package",
     "prepublish": "npm run prepackage",
     "publish": "vsce publish --no-dependencies",
     "test": "npm run compile && node ./out/test/runTests.js"

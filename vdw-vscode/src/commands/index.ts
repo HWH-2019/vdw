@@ -417,6 +417,23 @@ export function registerCommands(
         })
     );
 
+    // vdw.openInTerminal - Open dependency path in terminal
+    context.subscriptions.push(
+        vscode.commands.registerCommand('vdw.openInTerminal', (treeItem: any) => {
+            if (!treeItem?.dependency?.path) {
+                return;
+            }
+            const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+            if (!workspaceRoot) {
+                return;
+            }
+            const fullPath = path.join(workspaceRoot, treeItem.dependency.path);
+            const repoName = path.basename(treeItem.dependency.path);
+            const terminal = vscode.window.createTerminal({ cwd: fullPath, name: repoName });
+            terminal.show();
+        })
+    );
+
     // vdw.refreshContext
     context.subscriptions.push(
         vscode.commands.registerCommand('vdw.refreshContext', async () => {
@@ -427,6 +444,24 @@ export function registerCommands(
                 treeProvider.refresh();
                 const fileCount = await contextService.getFileCount();
                 statusBar.update(fileCount);
+
+                // Refresh Git repositories for editable deps
+                const cfg = configService.getConfig();
+                if (cfg) {
+                    const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+                    const candidates: string[] = [];
+                    for (const dep of cfg.dependencies) {
+                        if (dep.editable) {
+                            if (dep.local) candidates.push(dep.local);
+                            if (dep.origin) candidates.push(dep.origin);
+                            if (workspaceRoot) candidates.push(path.join(workspaceRoot, dep.path));
+                        }
+                    }
+                    if (candidates.length > 0) {
+                        await autoOpenService?.refreshGitRepositories(...candidates);
+                    }
+                }
+
                 vscode.window.showInformationMessage(`Context refreshed: ${fileCount} files in scope`);
             } catch (err) {
                 logError('Refresh context failed', err);
