@@ -12,19 +12,19 @@
 - [engine.rs](file://vdw/src/link/engine.rs)
 - [main.rs](file://vdw/src/main.rs)
 - [worktree_integration_test.rs](file://vdw/tests/worktree_integration_test.rs)
-- [VDW虚拟工作空间_技术设计文档_v1.0.md](file://ai_workspace/VDW虚拟工作空间_技术设计文档_v1.0.md)
+- [link.rs](file://vdw/src/commands/link.rs)
+- [manager.rs](file://vdw/src/store/manager.rs)
+- [workspace.rs](file://vdw/src/types/workspace.rs)
 </cite>
 
 ## Update Summary
 **Changes Made**
-- Complete implementation of Git worktree manager with robust error handling and fallback mechanisms
-- Enhanced git operations module with comprehensive branch management and repository utilities
-- Detailed worktree lifecycle management with create, list, and delete operations
-- Improved editable mode implementation with proper worktree isolation and cleanup
-- Enhanced integration with link engine for seamless IDE support
-- Comprehensive error handling and logging throughout the worktree management system
-- Added integration tests validating complete worktree functionality
-- Updated CLI commands to support worktree management operations
+- Enhanced backend repository management with improved branch handling in object pool (vdw/src/store/object_pool.rs)
+- Better worktree creation logic in link command (vdw/src/commands/link.rs) with automatic HEAD fixing mechanisms for bare repositories
+- Comprehensive automatic HEAD fixing for bare repositories to resolve worktree creation failures
+- Enhanced branch resolution and fallback mechanisms for worktree operations
+- Improved error handling and logging throughout the worktree management system
+- Added robust fallback mechanisms from git2 API to git CLI for maximum compatibility
 
 ## Table of Contents
 1. [Introduction](#introduction)
@@ -32,16 +32,19 @@
 3. [Core Components](#core-components)
 4. [Architecture Overview](#architecture-overview)
 5. [Detailed Component Analysis](#detailed-component-analysis)
-6. [Dependency Analysis](#dependency-analysis)
-7. [Performance Considerations](#performance-considerations)
-8. [Troubleshooting Guide](#troubleshooting-guide)
-9. [Conclusion](#conclusion)
-10. [Appendices](#appendices)
+6. [Enhanced Backend Repository Management](#enhanced-backend-repository-management)
+7. [Improved Worktree Creation Logic](#improved-worktree-creation-logic)
+8. [Automatic HEAD Fixing Mechanisms](#automatic-head-fixing-mechanisms)
+9. [Dependency Analysis](#dependency-analysis)
+10. [Performance Considerations](#performance-considerations)
+11. [Troubleshooting Guide](#troubleshooting-guide)
+12. [Conclusion](#conclusion)
+13. [Appendices](#appendices)
 
 ## Introduction
 This document explains the comprehensive Git worktree integration feature for editable mode in the virtual development workspace. The implementation provides independent working copies under a shared Git object library, with robust bare repository management, symlink-based logical path mapping, and full compatibility with standard Git operations. The system includes detailed lifecycle management, cleanup procedures, and seamless IDE integration through the link engine.
 
-**Updated** The implementation is now fully functional with comprehensive worktree management capabilities, including robust error handling, fallback mechanisms, and complete integration with the VDW ecosystem.
+**Updated** The implementation now features enhanced backend repository management with improved branch handling, automatic HEAD fixing mechanisms for bare repositories, and comprehensive fallback mechanisms that ensure worktree operations succeed even when git2 API is unavailable.
 
 ## Project Structure
 The worktree integration is organized into several key modules within the VDW codebase:
@@ -56,33 +59,40 @@ end
 subgraph "Command Layer"
 D["commands/worktree.rs<br/>CLI interface"]
 E["main.rs<br/>Command routing"]
+F["commands/link.rs<br/>Link command with worktree logic"]
 end
 subgraph "Integration Modules"
-F["types/workspace.rs<br/>Workspace state types"]
-G["store/object_pool.rs<br/>Repository management"]
-H["store/alternates.rs<br/>Object sharing"]
-I["link/engine.rs<br/>File linking"]
+G["types/workspace.rs<br/>Workspace state types"]
+H["store/object_pool.rs<br/>Enhanced repository management"]
+I["store/alternates.rs<br/>Object sharing"]
+J["link/engine.rs<br/>File linking"]
+K["store/manager.rs<br/>Store management"]
 end
 A --> B
 A --> C
 D --> B
-D --> G
+D --> H
 E --> D
-F --> I
-G --> H
+F --> B
+F --> H
+G --> J
+H --> I
+K --> H
 ```
 
 **Diagram sources**
 - [mod.rs:1-9](file://vdw/src/worktree/mod.rs#L1-L9)
-- [manager.rs:1-469](file://vdw/src/worktree/manager.rs#L1-L469)
+- [manager.rs:1-474](file://vdw/src/worktree/manager.rs#L1-L474)
 - [git_ops.rs:1-382](file://vdw/src/worktree/git_ops.rs#L1-L382)
-- [worktree.rs:1-195](file://vdw/src/commands/worktree.rs#L1-L195)
+- [worktree.rs:1-196](file://vdw/src/commands/worktree.rs#L1-L196)
+- [link.rs:1-541](file://vdw/src/commands/link.rs#L1-L541)
 
 **Section sources**
 - [mod.rs:1-9](file://vdw/src/worktree/mod.rs#L1-L9)
-- [manager.rs:1-469](file://vdw/src/worktree/manager.rs#L1-L469)
+- [manager.rs:1-474](file://vdw/src/worktree/manager.rs#L1-L474)
 - [git_ops.rs:1-382](file://vdw/src/worktree/git_ops.rs#L1-L382)
-- [worktree.rs:1-195](file://vdw/src/commands/worktree.rs#L1-L195)
+- [worktree.rs:1-196](file://vdw/src/commands/worktree.rs#L1-L196)
+- [link.rs:1-541](file://vdw/src/commands/link.rs#L1-L541)
 
 ## Core Components
 
@@ -94,7 +104,7 @@ The worktree manager provides the core functionality for creating, listing, and 
 - **Remove Worktrees**: Handles both unlocked and locked worktrees with force removal capability
 - **Sanitization**: Converts branch names to safe directory names (slashes become hyphens)
 
-**Updated** The worktree manager now includes comprehensive error handling with graceful fallback from git2 API to git CLI when native API fails.
+**Updated** Enhanced with robust fallback mechanisms that automatically switch from git2 API to git CLI when native API fails, ensuring worktree operations succeed across different environments.
 
 ### Git Operations Utilities
 Comprehensive Git repository management utilities for branch operations and repository manipulation:
@@ -104,7 +114,7 @@ Comprehensive Git repository management utilities for branch operations and repo
 - **Commit Operations**: Get branch commits and HEAD commit information
 - **Testing Utilities**: Helper functions for creating test repositories and commits
 
-**Updated** Enhanced with robust branch resolution that handles both local and remote branch creation.
+**Updated** Enhanced with improved branch resolution that handles both local and remote branch creation, with automatic fallback mechanisms for branch detection.
 
 ### CLI Interface
 Command-line interface for worktree management with workspace integration:
@@ -114,7 +124,7 @@ Command-line interface for worktree management with workspace integration:
 - **Delete Command**: Removes worktrees with automatic cleanup
 - **Workspace Integration**: Integrates with VDW configuration and store management
 
-**Updated** Complete CLI implementation with proper argument parsing and error handling.
+**Updated** Complete CLI implementation with proper argument parsing, error handling, and integration with the enhanced object pool management.
 
 **Section sources**
 - [manager.rs:13-53](file://vdw/src/worktree/manager.rs#L13-L53)
@@ -129,14 +139,16 @@ graph TB
 subgraph "CLI Layer"
 CLI["commands/worktree.rs<br/>User interface"]
 CMD["main.rs<br/>Command routing"]
+LINK["commands/link.rs<br/>Link command with worktree logic"]
 end
 subgraph "Manager Layer"
 WM["worktree/manager.rs<br/>Worktree operations"]
 GO["worktree/git_ops.rs<br/>Git utilities"]
-end
+END
 subgraph "Store Integration"
-OP["store/object_pool.rs<br/>Repository management"]
+OP["store/object_pool.rs<br/>Enhanced repository management"]
 ALT["store/alternates.rs<br/>Object sharing"]
+SM["store/manager.rs<br/>Store management"]
 end
 subgraph "Workspace Layer"
 WS["types/workspace.rs<br/>State management"]
@@ -144,17 +156,20 @@ LE["link/engine.rs<br/>File linking"]
 end
 CLI --> WM
 CMD --> CLI
+LINK --> WM
 WM --> GO
 WM --> OP
 OP --> ALT
+OP --> SM
 WM --> WS
 WS --> LE
 ```
 
 **Diagram sources**
-- [worktree.rs:1-195](file://vdw/src/commands/worktree.rs#L1-L195)
-- [manager.rs:1-469](file://vdw/src/worktree/manager.rs#L1-L469)
+- [worktree.rs:1-196](file://vdw/src/commands/worktree.rs#L1-L196)
+- [manager.rs:1-474](file://vdw/src/worktree/manager.rs#L1-L474)
 - [git_ops.rs:1-382](file://vdw/src/worktree/git_ops.rs#L1-L382)
+- [link.rs:1-541](file://vdw/src/commands/link.rs#L1-L541)
 - [object_pool.rs:18-75](file://vdw/src/store/object_pool.rs#L18-L75)
 
 ## Detailed Component Analysis
@@ -291,6 +306,53 @@ E --> |"Junction"| L
 - [engine.rs:9-65](file://vdw/src/link/engine.rs#L9-L65)
 - [engine.rs:67-81](file://vdw/src/link/engine.rs#L67-L81)
 
+## Enhanced Backend Repository Management
+
+### Improved Branch Handling in Object Pool
+The object pool management has been significantly enhanced with improved branch handling and automatic HEAD fixing mechanisms:
+
+- **Branch Resolution**: Enhanced logic for determining the correct branch to use when creating worktrees
+- **HEAD Fixing**: Automatic correction of bare repository HEAD references to prevent worktree creation failures
+- **Fallback Mechanisms**: Robust fallback from git2 API to git CLI for maximum compatibility
+- **Metadata Management**: Improved tracking of repository branches and commit information
+
+**Updated** The `fix_bare_repo_head` function now intelligently detects the correct default branch (main/master/HEAD) and ensures the HEAD reference points to an existing branch, preventing worktree creation failures.
+
+**Section sources**
+- [object_pool.rs:152-204](file://vdw/src/store/object_pool.rs#L152-L204)
+- [object_pool.rs:124-150](file://vdw/src/store/object_pool.rs#L124-L150)
+
+## Improved Worktree Creation Logic
+
+### Enhanced Link Command Integration
+The link command now includes sophisticated worktree creation logic with intelligent branch resolution:
+
+- **Existing Worktree Detection**: Scans the store for existing worktrees and reuses them when available
+- **Conventional Path Scanning**: Checks conventional worktree locations in the store
+- **Intelligent Branch Selection**: Determines the appropriate branch based on dependency configuration
+- **Path Management**: Properly manages dep.local and dep.origin fields for editable dependencies
+
+**Updated** The link command now includes comprehensive logic for detecting existing worktrees, scanning conventional paths, and intelligently managing worktree paths to ensure consistent behavior across re-link operations.
+
+**Section sources**
+- [link.rs:72-130](file://vdw/src/commands/link.rs#L72-L130)
+- [link.rs:95-108](file://vdw/src/commands/link.rs#L95-L108)
+
+## Automatic HEAD Fixing Mechanisms
+
+### Comprehensive Bare Repository Management
+The system now includes automatic HEAD fixing mechanisms to ensure bare repositories are properly configured:
+
+- **Default Branch Detection**: Automatically detects whether the repository uses main or master as default branch
+- **HEAD Reference Correction**: Ensures HEAD points to an existing branch reference
+- **Local Branch Creation**: Creates local branch references from remote tracking branches when needed
+- **Error Prevention**: Prevents worktree creation failures caused by invalid HEAD references
+
+**Updated** The `fix_bare_repo_head` function provides comprehensive HEAD fixing that handles various repository configurations and ensures worktree operations succeed regardless of the repository's default branch naming convention.
+
+**Section sources**
+- [object_pool.rs:152-204](file://vdw/src/store/object_pool.rs#L152-L204)
+
 ## Dependency Analysis
 The worktree integration has well-defined dependencies and clear separation of concerns:
 
@@ -301,19 +363,25 @@ WM --> TI["types/workspace.rs"]
 WM --> OP["store/object_pool.rs"]
 CLI["commands/worktree.rs"] --> WM
 CLI --> OP
+LINK["commands/link.rs"] --> WM
+LINK --> OP
 MAIN["main.rs"] --> CLI
+MAIN --> LINK
 WS["types/workspace.rs"] --> LE["link/engine.rs"]
 OP --> ALT["store/alternates.rs"]
+SM["store/manager.rs"] --> OP
 ```
 
 **Diagram sources**
 - [manager.rs:1-8](file://vdw/src/worktree/manager.rs#L1-L8)
 - [worktree.rs:4-6](file://vdw/src/commands/worktree.rs#L4-L6)
+- [link.rs:1-9](file://vdw/src/commands/link.rs#L1-L9)
 - [main.rs:14-39](file://vdw/src/main.rs#L14-L39)
 
 **Section sources**
 - [manager.rs:1-8](file://vdw/src/worktree/manager.rs#L1-L8)
 - [worktree.rs:4-6](file://vdw/src/commands/worktree.rs#L4-L6)
+- [link.rs:1-9](file://vdw/src/commands/link.rs#L1-L9)
 - [main.rs:14-39](file://vdw/src/main.rs#L14-L39)
 
 ## Performance Considerations
@@ -324,8 +392,9 @@ The worktree integration is designed for optimal performance and resource utiliz
 - **Network Efficiency**: Reference-based cloning minimizes bandwidth usage
 - **Parallel Operations**: Asynchronous processing for multiple repository operations
 - **Lazy Initialization**: Worktrees created only when needed for editable dependencies
+- **Fallback Optimization**: Intelligent switching between git2 API and git CLI based on environment compatibility
 
-**Updated** Enhanced performance through robust fallback mechanisms that ensure worktree operations succeed even when git2 API is unavailable.
+**Updated** Enhanced performance through robust fallback mechanisms that ensure worktree operations succeed even when git2 API is unavailable, with automatic detection of optimal operation modes.
 
 ## Troubleshooting Guide
 
@@ -351,7 +420,12 @@ The worktree integration is designed for optimal performance and resource utiliz
 - **Solution**: Run `vdw init` to initialize the store
 - **Prevention**: Ensure proper permissions on `~/.vdw/` directory
 
-**Updated** Comprehensive error handling with detailed logging and fallback mechanisms for all failure scenarios.
+**HEAD Reference Issues**
+- **Issue**: Invalid HEAD reference prevents worktree creation
+- **Solution**: Automatic HEAD fixing resolves the issue
+- **Prevention**: System automatically detects and fixes HEAD references
+
+**Updated** Comprehensive error handling with detailed logging and fallback mechanisms for all failure scenarios, including automatic HEAD fixing for bare repositories.
 
 **Section sources**
 - [manager.rs:40-49](file://vdw/src/worktree/manager.rs#L40-L49)
@@ -366,8 +440,10 @@ The comprehensive Git worktree integration provides a robust foundation for edit
 - **Performance Optimization**: Efficient object sharing and resource utilization
 - **Seamless Integration**: Smooth IDE support through symlink-based mapping
 - **Cross-Platform Compatibility**: Native support for Windows, macOS, and Linux
+- **Enhanced Repository Management**: Automatic HEAD fixing and improved branch handling
+- **Intelligent Worktree Logic**: Sophisticated worktree detection and reuse mechanisms
 
-**Updated** The implementation is now fully tested and validated through comprehensive integration tests that verify all worktree operations including creation, listing, removal, and validation of worktree integrity.
+**Updated** The implementation is now fully tested and validated through comprehensive integration tests that verify all worktree operations including creation, listing, removal, and validation of worktree integrity. The enhanced backend repository management with automatic HEAD fixing mechanisms ensures reliable worktree operations across diverse environments.
 
 The system enables developers to work on multiple repositories simultaneously while maintaining isolation and performance, making it an essential component of the VDW ecosystem.
 
@@ -378,12 +454,13 @@ The system enables developers to work on multiple repositories simultaneously wh
 - `vdw worktree create <repo> <branch>`: Create worktree for specific repository and branch
 - `vdw worktree delete <repo> <branch>`: Remove worktree with cleanup
 
-**Updated** Complete CLI support for all worktree management operations.
+**Updated** Complete CLI support for all worktree management operations with enhanced error handling and fallback mechanisms.
 
 ### Configuration Options
 - Editable mode: Enable worktree creation for specific dependencies
 - Branch specification: Target specific branches for worktree creation
 - Store management: Automatic initialization and cleanup of worktree storage
+- HEAD fixing: Automatic correction of bare repository HEAD references
 
 ### Best Practices
 - Use descriptive branch names for worktrees
@@ -391,10 +468,11 @@ The system enables developers to work on multiple repositories simultaneously wh
 - Monitor disk usage with multiple worktrees
 - Leverage alternates for efficient object sharing
 - Maintain proper backup strategies for editable workspaces
+- Ensure git CLI availability for maximum compatibility
 
-**Updated** Enhanced with comprehensive testing coverage ensuring reliability and stability of worktree operations.
+**Updated** Enhanced with comprehensive testing coverage ensuring reliability and stability of worktree operations, including automatic HEAD fixing and intelligent worktree reuse mechanisms.
 
 **Section sources**
 - [main.rs:76-94](file://vdw/src/main.rs#L76-L94)
-- [worktree.rs:188-195](file://vdw/src/commands/worktree.rs#L188-L195)
-- [VDW虚拟工作空间_技术设计文档_v1.0.md:194-223](file://ai_workspace/VDW虚拟工作空间_技术设计文档_v1.0.md#L194-L223)
+- [worktree.rs:188-196](file://vdw/src/commands/worktree.rs#L188-L196)
+- [link.rs:110-130](file://vdw/src/commands/link.rs#L110-L130)
