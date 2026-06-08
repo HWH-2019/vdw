@@ -23,15 +23,17 @@
 - [package.json](file://vdw-vscode/package.json)
 - [glob_matcher.rs](file://vdw/src/context/glob_matcher.rs)
 - [filter.rs](file://vdw/src/context/filter.rs)
+- [README.md](file://vdw/README.md)
 </cite>
 
 ## Update Summary
 **Changes Made**
-- Updated to reflect major VDW configuration restructuring with new three-field dependency system (remote/origin/local)
-- Enhanced backward compatibility migration from legacy 'repo' field
-- Improved worktree management with integrated dependency tracking
-- Expanded VS Code integration with enhanced repository lifecycle operations
-- Updated configuration validation rules and dependency identifier system
+- Updated to reflect expanded configuration documentation with detailed .vdwrc YAML format examples from requirement documents
+- Enhanced field explanations with comprehensive three-field dependency system (remote/origin/local)
+- Added detailed configuration schemas and validation rules from VDW配置重构_需求文档_v1.0.md
+- Integrated concrete configuration scenarios with remote/local repository examples
+- Updated environment variable substitution and validation documentation
+- Enhanced backward compatibility migration guidance from legacy 'repo' field
 
 ## Table of Contents
 1. [Introduction](#introduction)
@@ -165,14 +167,14 @@ Enhanced key-value semantics:
 - dependencies[].scope.exclude: Glob patterns to exclude from AI context
 - dependencies[].editable: Boolean enabling editable workspaces via Git Worktree
 
-**Updated** Enhanced with three-field dependency system and backward compatibility migration
+Enhanced with three-field dependency system and backward compatibility migration
 
 Environment variable substitution:
 - Values may reference environment variables using ${VAR} syntax
 - Resolution occurs during configuration validation
 - Sensitive tokens should be provided via environment variables rather than embedded in .vdwrc
 
-**Updated** Enhanced with comprehensive environment variable resolution and improved template support
+Enhanced with comprehensive environment variable resolution and improved template support
 
 Validation rules:
 - At least one of remote, origin, or local must be set for each dependency
@@ -210,7 +212,7 @@ Validation rules:
 - Editable mode:
   - When true, enables Git Worktree-based editable workspace for the dependency
 
-**Updated** Enhanced with three-field dependency system and comprehensive validation rules
+Enhanced with three-field dependency system and comprehensive validation rules
 
 Best practices for scope definition:
 - Prefer explicit include patterns to minimize context blast radius
@@ -231,10 +233,10 @@ Best practices for scope definition:
 
 These examples demonstrate the new three-field dependency system with remote/origin/local separation, repository specification with branch/tag/commit locking, scope definition with include/exclude patterns, and editable mode settings.
 
-**Updated** Examples now showcase the new three-field dependency system and enhanced validation
+Enhanced with detailed YAML examples from requirement documents
 
 **Section sources**
-- [VDW配置重构_需求文档_v1.0.md:1-150](file://ai_workspace/VDW配置重构_需求文档_v1.0.md#L1-L150)
+- [VDW配置重构_需求文档_v1.0.md:54-84](file://ai_workspace/VDW配置重构_需求文档_v1.0.md#L54-L84)
 - [VDW虚拟工作空间_需求文档_v1.0.md:84-113](file://ai_workspace/VDW虚拟工作空间_需求文档_v1.0.md#L84-L113)
 - [sample.vdwrc:1-25](file://vdw/tests/fixtures/sample.vdwrc#L1-L25)
 
@@ -247,7 +249,7 @@ These examples demonstrate the new three-field dependency system with remote/ori
   - Run vdw link to materialize dependencies
   - Verify with vdw validate and vdw context preview
 
-**Updated** Enhanced with template support for faster workspace initialization
+Enhanced with template support for faster workspace initialization
 
 **Section sources**
 - [VDW虚拟工作空间_需求文档_v1.0.md:487-524](file://ai_workspace/VDW虚拟工作空间_需求文档_v1.0.md#L487-L524)
@@ -269,10 +271,10 @@ These examples demonstrate the new three-field dependency system with remote/ori
   - Detect cycles during resolution
   - Report dependency paths for cycle detection
 
-**Updated** Enhanced validation with three-field dependency requirements and backward compatibility
+Enhanced validation with three-field dependency requirements and backward compatibility
 
 **Section sources**
-- [VDW配置重构_需求文档_v1.0.md:1-150](file://ai_workspace/VDW配置重构_需求文档_v1.0.md#L1-L150)
+- [VDW配置重构_需求文档_v1.0.md:85-92](file://ai_workspace/VDW配置重构_需求文档_v1.0.md#L85-L92)
 - [VDW虚拟工作空间_需求文档_v1.0.md:115-119](file://ai_workspace/VDW虚拟工作空间_需求文档_v1.0.md#L115-L119)
 - [VDW虚拟工作空间_需求文档_v1.0.md:347-350](file://ai_workspace/VDW虚拟工作空间_需求文档_v1.0.md#L347-L350)
 - [VDW虚拟工作空间_需求文档_v1.0.md:516-518](file://ai_workspace/VDW虚拟工作空间_需求文档_v1.0.md#L516-L518)
@@ -283,7 +285,7 @@ These examples demonstrate the new three-field dependency system with remote/ori
 - Security: Use environment variables for sensitive values (e.g., tokens) instead of embedding in .vdwrc
 - Error handling: Missing environment variables cause validation failures with specific error messages
 
-**New** Added comprehensive environment variable substitution support
+Added comprehensive environment variable substitution support
 
 **Section sources**
 - [VDW虚拟工作空间_需求文档_v1.0.md:118](file://ai_workspace/VDW虚拟工作空间_需求文档_v1.0.md#L118)
@@ -297,7 +299,7 @@ These examples demonstrate the new three-field dependency system with remote/ori
 - Supports lifecycle operations including repository addition, linking, unlinking, and removal
 - Handles backward compatibility migration from legacy configurations
 
-**Updated** Enhanced integration with three-field dependency system and improved validation
+Enhanced integration with three-field dependency system and improved validation
 
 **Section sources**
 - [VDW配置重构_需求文档_v1.0.md:1-150](file://ai_workspace/VDW配置重构_需求文档_v1.0.md#L1-L150)
@@ -434,7 +436,7 @@ BC --> LEGACY["Legacy Config Migration"]
 - Enhanced three-field dependency system reduces ambiguity and improves lookup performance
 - Backward compatibility migration eliminates redundant configuration processing
 
-**Updated** Added three-field dependency performance benefits and migration optimizations
+Enhanced with three-field dependency performance benefits and migration optimizations
 
 ## Troubleshooting Guide
 Common configuration errors:
@@ -457,10 +459,10 @@ Diagnostic commands:
 - vdw context preview: Preview AI context files
 - vdw migrate-config: Migrate legacy configurations to new three-field system
 
-**Updated** Enhanced with three-field dependency troubleshooting and migration guidance
+Enhanced with three-field dependency troubleshooting and migration guidance
 
 **Section sources**
-- [VDW配置重构_需求文档_v1.0.md:1-150](file://ai_workspace/VDW配置重构_需求文档_v1.0.md#L1-L150)
+- [VDW配置重构_需求文档_v1.0.md:85-92](file://ai_workspace/VDW配置重构_需求文档_v1.0.md#L85-L92)
 - [VDW虚拟工作空间_需求文档_v1.0.md:115-119](file://ai_workspace/VDW虚拟工作空间_需求文档_v1.0.md#L115-L119)
 - [VDW虚拟工作空间_需求文档_v1.0.md:347-350](file://ai_workspace/VDW虚拟工作空间_需求文档_v1.0.md#L347-L350)
 - [VDW虚拟工作空间_需求文档_v1.0.md:516-519](file://ai_workspace/VDW虚拟工作空间_需求文档_v1.0.md#L516-L519)
@@ -468,7 +470,7 @@ Diagnostic commands:
 ## Conclusion
 The enhanced .vdwrc configuration file system with the new three-field dependency system provides comprehensive workspace configuration management with complete repository lifecycle support. The major restructuring introduces sophisticated dependency management using remote/origin/local fields, backward compatibility migration from legacy configurations, enhanced worktree management, and improved VS Code integration. It enables declarative dependency management, precise scope control for AI contexts, and flexible version locking. The integration with VS Code provides intuitive UI-driven repository management with enhanced feedback, while the CLI offers programmatic control. With the enhanced vdw init command supporting templates, improved validation rules, environment variable substitution, comprehensive repository lifecycle management, and backward compatibility migration, it provides a robust workflow for setting up and maintaining logical workspaces across multiple repositories while seamlessly integrating with the workspace orchestrator.
 
-**Updated** Enhanced with three-field dependency system, backward compatibility, and improved integration
+Enhanced with three-field dependency system, backward compatibility, and improved integration
 
 ## Appendices
 
@@ -489,10 +491,10 @@ The enhanced .vdwrc configuration file system with the new three-field dependenc
     - exclude: Array<String> (glob patterns)
   - editable: Boolean (defaults to false)
 
-**Updated** Enhanced with three-field dependency system and validation requirements
+Enhanced with three-field dependency system and validation requirements
 
 **Section sources**
-- [VDW配置重构_需求文档_v1.0.md:1-150](file://ai_workspace/VDW配置重构_需求文档_v1.0.md#L1-L150)
+- [VDW配置重构_需求文档_v1.0.md:71-84](file://ai_workspace/VDW配置重构_需求文档_v1.0.md#L71-L84)
 - [VDW虚拟工作空间_需求文档_v1.0.md:444-471](file://ai_workspace/VDW虚拟工作空间_需求文档_v1.0.md#L444-L471)
 - [config.rs:1-283](file://vdw/src/types/config.rs#L1-L283)
 
@@ -507,7 +509,7 @@ The enhanced .vdwrc configuration file system with the new three-field dependenc
 - vdw repo list: List repositories in Content Store
 - vdw migrate-config: Migrate legacy configurations to new three-field system
 
-**Updated** Enhanced with repository lifecycle commands and migration support
+Enhanced with repository lifecycle commands and migration support
 
 **Section sources**
 - [main.rs:18-49](file://vdw/src/main.rs#L18-L49)
@@ -525,7 +527,7 @@ The enhanced .vdwrc configuration file system with the new three-field dependenc
 - vdw.refreshContext: Refresh AI context based on current scope
 - vdw.migrateConfig: Migrate legacy configurations to new three-field system
 
-**Updated** Enhanced with migration and improved validation commands
+Enhanced with migration and improved validation commands
 
 **Section sources**
 - [package.json:16-39](file://vdw-vscode/package.json#L16-L39)
@@ -550,8 +552,78 @@ The enhanced .vdwrc configuration file system with the new three-field dependenc
 - State preservation: Original repository state is maintained during migration
 - Command support: vdw migrate-config command for manual migration control
 
-**New** Added comprehensive backward compatibility migration support
+Added comprehensive backward compatibility migration support
 
 **Section sources**
 - [parser.rs:56-73](file://vdw/src/config/parser.rs#L56-L73)
 - [config.rs:37-39](file://vdw/src/types/config.rs#L37-L39)
+
+### Appendix F: Detailed Configuration Examples
+The following examples demonstrate the new three-field dependency system with concrete YAML configurations:
+
+**Remote Repository Example:**
+```yaml
+dependencies:
+  - remote: git@github.com:org/repo.git
+    local: /Users/user/.vdw/store/objects/repo-abc123/worktrees/main
+    path: ./packages/repo
+    branch: main
+    scope:
+      include:
+        - "src/**/*.ts"
+        - "package.json"
+      exclude:
+        - "node_modules"
+        - "*.test.ts"
+    editable: true
+```
+
+**Local Repository Example:**
+```yaml
+dependencies:
+  - remote: ""
+    origin: "/old/path/to/repo"
+    local: /path/to/local/repo
+    path: ./packages/local-repo
+    branch: main
+    scope:
+      include:
+        - "src/**/*.rs"
+    editable: false
+```
+
+**Mixed Configuration Example:**
+```yaml
+workspace:
+  name: "mixed-workspace"
+  version: "1.0"
+dependencies:
+  # Remote dependency with worktree
+  - remote: https://github.com/example/frontend.git
+    local: ~/.vdw/store/objects/frontend-1a2b3c/worktrees/feat-ui
+    path: ./apps/web
+    branch: feat-ui
+    scope:
+      include:
+        - "src/**/*.{ts,tsx}"
+        - "public/**/*"
+      exclude:
+        - "**/*.test.{ts,tsx}"
+    editable: true
+
+  # Local dependency
+  - remote: ""
+    origin: ""
+    local: /Users/dev/projects/shared-lib
+    path: ./packages/shared
+    branch: main
+    scope:
+      include:
+        - "src/**/*.ts"
+    editable: false
+```
+
+**Section sources**
+- [VDW配置重构_需求文档_v1.0.md:54-84](file://ai_workspace/VDW配置重构_需求文档_v1.0.md#L54-L84)
+- [README.md:217-252](file://vdw/README.md#L217-L252)
+- [sample.vdwrc:1-25](file://vdw/tests/fixtures/sample.vdwrc#L1-L25)

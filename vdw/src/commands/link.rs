@@ -4,6 +4,7 @@ use anyhow::Result;
 
 use crate::config::{env_resolver, parser, validator};
 use crate::link::engine;
+use crate::store::editable_locks::{acquire_editable_lock, release_editable_lock};
 use crate::store::{manager as store_manager, object_pool};
 use crate::types::workspace::WorkspaceState;
 use crate::worktree::manager as worktree_manager;
@@ -109,6 +110,9 @@ pub fn execute(repo_filter: Option<&str>) -> Result<()> {
 
             if let Some(wt_path) = existing_worktree {
                 println!("  Using existing worktree: {}", wt_path.display());
+                if let Err(e) = acquire_editable_lock(&dep_id, branch, &cwd, &wt_path) {
+                    tracing::warn!("Failed to acquire editable lock for {} branch '{}': {}", dep_id, branch, e);
+                }
                 editable_count += 1;
                 wt_path
             } else {
@@ -123,6 +127,9 @@ pub fn execute(repo_filter: Option<&str>) -> Result<()> {
                     dep.origin = dep.local.clone();
                 }
                 dep.local = wt_path.to_string_lossy().to_string();
+                if let Err(e) = acquire_editable_lock(&dep_id, branch, &cwd, &wt_path) {
+                    tracing::warn!("Failed to acquire editable lock for {} branch '{}': {}", dep_id, branch, e);
+                }
 
                 editable_count += 1;
                 wt_path
@@ -171,8 +178,10 @@ fn checkout_from_bare(
     checkout_dir: &Path,
     dep: &crate::types::config::Dependency,
 ) -> Result<()> {
-    // If checkout already exists and is non-empty, skip
+    // If checkout already exists and is non-empty, ensure files are read-only
+    // (handles upgrade from older VDW versions that didn't set read-only)
     if checkout_dir.exists() && std::fs::read_dir(checkout_dir)?.next().is_some() {
+        make_dir_readonly_recursive(checkout_dir)?;
         return Ok(());
     }
 
@@ -241,7 +250,10 @@ fn find_tree_for_ref<'a>(repo: &'a git2::Repository, reference: &str) -> Result<
     ))
 }
 
-/// Recursively write a git tree to a directory
+/// Recursively write a git tree to a directory.
+/// Files are written as read-only (0o444) to enforce the read-only contract
+/// at the filesystem level, preventing accidental edits that would affect
+/// all workspaces sharing the same checkout via hardlinks.
 fn write_tree_to_dir(repo: &git2::Repository, tree: &git2::Tree, dir: &Path) -> Result<()> {
     for entry in tree.iter() {
         let name = entry.name().unwrap_or("unknown");
@@ -254,6 +266,8 @@ fn write_tree_to_dir(repo: &git2::Repository, tree: &git2::Tree, dir: &Path) -> 
                     std::fs::create_dir_all(parent)?;
                 }
                 std::fs::write(&entry_path, blob.content())?;
+                // Set file read-only to prevent accidental edits in shared checkout
+                set_readonly(&entry_path)?;
             }
             Some(git2::ObjectType::Tree) => {
                 std::fs::create_dir_all(&entry_path)?;
@@ -261,6 +275,56 @@ fn write_tree_to_dir(repo: &git2::Repository, tree: &git2::Tree, dir: &Path) -> 
                 write_tree_to_dir(repo, &subtree, &entry_path)?;
             }
             _ => {}
+        }
+    }
+    Ok(())
+}
+
+/// Set a file to read-only at the filesystem level.
+/// On Unix: removes all write bits (mode 0o444).
+/// On Windows: sets the read-only attribute.
+fn set_readonly(path: &Path) -> Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let perms = std::fs::Permissions::from_mode(0o444);
+        std::fs::set_permissions(path, perms)?;
+    }
+    #[cfg(not(unix))]
+    {
+        let mut perms = std::fs::metadata(path)?.permissions();
+        perms.set_readonly(true);
+        std::fs::set_permissions(path, perms)?;
+    }
+    Ok(())
+}
+
+/// Recursively set all files in a directory to read-only.
+/// Used to enforce read-only mode for existing checkouts from older VDW versions.
+fn make_dir_readonly_recursive(dir: &Path) -> Result<()> {
+    if !dir.exists() {
+        return Ok(());
+    }
+    for entry in walkdir::WalkDir::new(dir)
+        .into_iter()
+        .filter_map(|e| e.ok())
+    {
+        if entry.file_type().is_file() {
+            // Skip if already read-only
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let metadata = match std::fs::metadata(entry.path()) {
+                    Ok(m) => m,
+                    Err(_) => continue,
+                };
+                if metadata.permissions().mode() & 0o222 == 0 {
+                    continue; // already read-only
+                }
+            }
+            if let Err(e) = set_readonly(entry.path()) {
+                tracing::warn!("Failed to set read-only on {:?}: {}", entry.path(), e);
+            }
         }
     }
     Ok(())
@@ -335,6 +399,10 @@ pub fn unlink(repo_filter: Option<&str>) -> Result<()> {
         }
         let dep_id = dep.dep_id().to_string();
         if dep_ids_to_clear.contains(&dep_id) && dep.editable {
+            let branch = dep.branch.as_deref().unwrap_or("main");
+            if let Err(e) = release_editable_lock(&dep_id, branch, &cwd) {
+                tracing::warn!("Failed to release editable lock for {} branch '{}': {}", dep_id, branch, e);
+            }
             dep.local = String::new();
         }
     }

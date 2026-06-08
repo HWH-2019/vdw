@@ -1,8 +1,8 @@
 # VDW (Virtual Dev Workspace) - 产品需求文档
 
-**文档版本**: v1.2  
+**文档版本**: v1.3  
 **创建日期**: 2026-06-03  
-**最近更新**: 2026-06-03  
+**最近更新**: 2026-06-05  
 **产品定位**: 跨仓库全栈开发中间层 - 物理去重存储 + 逻辑工作空间 + AI 上下文智能管理
 
 ---
@@ -852,7 +852,11 @@ vdw <command> --help
 | AST | Abstract Syntax Tree，抽象语法树 |
 | LSP | Language Server Protocol，语言服务器协议 |
 
-### 9.2 参考项目
+### 9.2 关联文档
+
+- [VDW多工作空间共享修复_需求文档_v1.0](./VDW多工作空间共享修复_需求文档_v1.0.md)：修复多工作空间 editable 冲突与重复声明问题
+
+### 9.3 参考项目
 
 - **pnpm**: https://pnpm.io/ - 内容寻址存储和硬链接机制
 - **Git Worktree**: https://git-scm.com/docs/git-worktree - Git 多工作副本
@@ -868,6 +872,7 @@ vdw <command> --help
 | v1.0 | 2026-06-02 | 初始版本，MVP 需求定义 | AI Agent |
 | v1.1 | 2026-06-02 | 新增自动打开 Git 仓库功能需求（F6 增强） | AI Agent |
 | v1.2 | 2026-06-03 | 新增右键移除仓库功能；统一远程/本地添加仓库流程（F6 增强） | AI Agent |
+| v1.3 | 2026-06-05 | 关联多工作空间共享修复需求文档 | AI Agent |
 
 ---
 

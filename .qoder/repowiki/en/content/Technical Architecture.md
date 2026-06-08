@@ -7,6 +7,7 @@
 - [install.sh](file://vdw/install.sh)
 - [release.yml](file://.github/workflows/release.yml)
 - [platform.rs](file://vdw/src/link/platform.rs)
+- [engine.rs](file://vdw/src/link/engine.rs)
 - [main.rs](file://vdw/src/main.rs)
 - [lib.rs](file://vdw/src/lib.rs)
 - [package.json](file://vdw-vscode/package.json)
@@ -18,9 +19,19 @@
 - [context/mod.rs](file://vdw/src/context/mod.rs)
 - [worktree/mod.rs](file://vdw/src/worktree/mod.rs)
 - [store/manager.rs](file://vdw/src/store/manager.rs)
-- [link/engine.rs](file://vdw/src/link/engine.rs)
 - [context/filter.rs](file://vdw/src/context/filter.rs)
 - [worktree/manager.rs](file://vdw/src/worktree/manager.rs)
+- [types/config.rs](file://vdw/src/types/config.rs)
+- [config/parser.rs](file://vdw/src/config/parser.rs)
+- [config/validator.rs](file://vdw/src/config/validator.rs)
+- [config/env_resolver.rs](file://vdw/src/config/env_resolver.rs)
+- [autoOpenService.ts](file://vdw-vscode/src/services/autoOpenService.ts)
+- [vdwTypes.ts](file://vdw-vscode/src/types/vdwTypes.ts)
+- [addRepo.ts](file://vdw-vscode/src/commands/addRepo.ts)
+- [VDW虚拟工作空间_需求文档_v1.0.md](file://ai_workspace/VDW虚拟工作空间_需求文档_v1.0.md)
+- [VDW配置重构_需求文档_v1.0.md](file://ai_workspace/VDW配置重构_需求文档_v1.0.md)
+- [VDW插件功能增强_需求文档_v1.0.md](file://ai_workspace/VDW插件功能增强_需求文档_v1.0.md)
+- [README.md](file://vdw/README.md)
 </cite>
 
 ## Update Summary
@@ -31,6 +42,10 @@
 - Updated installation process with platform-specific considerations
 - Added VS Code plugin build system and packaging configuration
 - Expanded infrastructure requirements with cross-platform deployment topology
+- Enhanced linking strategy documentation with platform support matrices
+- Updated configuration management with new remote/local field structure
+- Added comprehensive technical specifications from requirement documents
+- Enhanced AI context management documentation with VS Code integration
 
 ## Table of Contents
 1. [Introduction](#introduction)
@@ -810,6 +825,149 @@ The VDW system is optimized for performance across all architectural layers, wit
 
 **Section sources**
 - [link_benchmark.rs:1-9](file://vdw/benches/link_benchmark.rs#L1-L9)
+
+## Configuration Architecture
+
+The VDW system implements a comprehensive configuration management system that supports both remote and local repositories with enhanced dependency tracking.
+
+### Enhanced Dependency Configuration
+
+The system now supports a dual-field configuration structure that clearly distinguishes between remote Git URLs and local repository paths:
+
+```mermaid
+graph TB
+subgraph "Enhanced Dependency Structure"
+Remote[Remote Repository]
+Local[Local Repository]
+Origin[Original Source Path]
+Path[Workspace Link Path]
+end
+Remote --> Path
+Local --> Path
+Origin --> Path
+Path --> Worktree[Git Worktree]
+Path --> LinkedFiles[Linked Files]
+```
+
+**Diagram sources**
+- [types/config.rs:20-52](file://vdw/src/types/config.rs#L20-L52)
+
+### Configuration Fields
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `remote` | ✅ (if local empty) | Git URL (`https://`, `git@`, or empty for local repos) |
+| `local` | ✅ (if remote empty) | Local repository path on disk |
+| `origin` | ❌ | Original source path (preserved when `local` is overwritten with worktree path) |
+| `path` | ✅ | Where to link in your workspace |
+| `branch` / `tag` / `commit` | ✅ (pick one) | Which version to track |
+| `scope.include` | ✅ | Glob patterns for files to expose |
+| `scope.exclude` | ❌ | Glob patterns to filter out |
+| `editable` | ❌ | Enable git worktree (default: `false`) |
+
+### Configuration Validation
+
+The system implements comprehensive validation for configuration files:
+
+**Validation Rules:**
+- `remote` must be a valid Git URL format
+- `local` must be a valid file system path
+- Exactly one of `branch`, `tag`, or `commit` must be specified
+- `scope.include` cannot be empty
+- At least one of `remote`, `origin`, or `local` must be set
+
+**Section sources**
+- [types/config.rs:80-134](file://vdw/src/types/config.rs#L80-L134)
+- [config/parser.rs](file://vdw/src/config/parser.rs)
+
+## VS Code Plugin Integration
+
+The VDW VS Code plugin provides seamless integration with the development workflow through enhanced Git repository management and improved user experience.
+
+### Enhanced Git Repository Management
+
+The plugin now features improved Git repository management with automatic refresh capabilities:
+
+```mermaid
+sequenceDiagram
+participant User as User
+participant Plugin as VDW Plugin
+participant AutoOpen as AutoOpenService
+participant GitExt as Git Extension
+participant Repo as Git Repository
+User->>Plugin : Activate Extension
+Plugin->>AutoOpen : openAllEditableRepositories()
+AutoOpen->>GitExt : waitForGitReady()
+GitExt-->>AutoOpen : Ready
+AutoOpen->>Repo : getRepository(path)
+Repo-->>AutoOpen : Found or Not Found
+AutoOpen->>GitExt : git.openRepository(path)
+GitExt->>Repo : Register Repository
+Repo-->>GitExt : Registered
+GitExt-->>AutoOpen : Success
+AutoOpen-->>Plugin : Repositories Opened
+Plugin-->>User : Git Repositories Available
+```
+
+**Diagram sources**
+- [autoOpenService.ts:161-193](file://vdw-vscode/src/services/autoOpenService.ts#L161-L193)
+
+### Improved User Interface
+
+The plugin provides enhanced user interface elements for better workflow management:
+
+**Terminal Integration:**
+- Terminal icons in TreeView for quick navigation
+- One-click terminal creation with automatic path setting
+- Theme-aware terminal icons (light/dark variants)
+
+**Icon Improvements:**
+- Unlink icon replaced with VS Code's built-in `$(unlink)` icon
+- Consistent iconography across all operations
+- Better visual semantics for user actions
+
+**Section sources**
+- [VDW插건功能增强_需求文档_v1.0.md:60-92](file://ai_workspace/VDW插件功能增强_需求文档_v1.0.md#L60-L92)
+- [VDW插건功能增强_需求文档_v1.0.md:125-141](file://ai_workspace/VDW插건功能增强_需求文档_v1.0.md#L125-L141)
+
+## AI Context Management
+
+The VDW system implements sophisticated AI context management that provides intelligent filtering and presentation of relevant code content to AI agents.
+
+### Context Filtering Architecture
+
+The AI context filter implements a multi-layered filtering system:
+
+```mermaid
+flowchart TD
+Source[Source Files] --> ScopeFilter[Scope Filter]
+ScopeFilter --> GlobMatcher[Glob Pattern Matching]
+GlobMatcher --> AIContext[AI Context]
+AIContext --> FileProvider[File Provider]
+FileProvider --> AIAgent[AI Agent]
+```
+
+**Diagram sources**
+- [context/filter.rs](file://vdw/src/context/filter.rs)
+
+### VS Code Integration
+
+The system integrates with VS Code's AI ecosystem through a custom FileProvider:
+
+**File Provider Implementation:**
+- Intercept file requests from AI plugins
+- Apply scope-based filtering before serving content
+- Maintain virtual file list for AI consumption
+- Support incremental updates for changed files
+
+**Context Statistics:**
+- File count per dependency
+- Total size calculation
+- Performance metrics for context generation
+
+**Section sources**
+- [context/filter.rs](file://vdw/src/context/filter.rs)
+- [VDW虚拟工作空间_需求文档_v1.0.md:226-279](file://ai_workspace/VDW虚拟工作空间_需求文档_v1.0.md#L226-L279)
 
 ## Conclusion
 

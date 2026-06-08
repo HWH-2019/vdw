@@ -14,6 +14,15 @@
 - [README.md](file://vdw-vscode/README.md)
 </cite>
 
+## Update Summary
+**Changes Made**
+- Enhanced installation methods section with comprehensive CLI installation steps from the new README.md
+- Added detailed VS Code extension installation and setup instructions
+- Expanded initial workspace configuration with complete initialization and repository addition workflows
+- Updated troubleshooting section with new common issues and solutions
+- Improved platform-specific setup with enhanced macOS, Linux, and Windows installation guidance
+- Added comprehensive usage examples for all major VDW commands
+
 ## Table of Contents
 1. [Introduction](#introduction)
 2. [Prerequisites](#prerequisites)
@@ -51,7 +60,7 @@ Before installing VDW, ensure your system meets the following requirements:
 | Windows | x86_64 (Git Bash/WSL) | Junction → Symlink |
 
 **Section sources**
-- [README.md:320-327](file://vdw/README.md#L320-L327)
+- [README.md:333-340](file://vdw/README.md#L333-L340)
 - [install.sh:71-86](file://vdw/install.sh#L71-L86)
 
 ## Installation Methods
@@ -152,7 +161,7 @@ Windows support through Git Bash and WSL:
 **Section sources**
 - [install.sh:165-170](file://vdw/install.sh#L165-L170)
 - [install.sh:201-210](file://vdw/install.sh#L201-L210)
-- [README.md:328-332](file://vdw/README.md#L328-L332)
+- [README.md:333-340](file://vdw/README.md#L333-L340)
 
 ## Post-Installation Verification
 
@@ -236,7 +245,7 @@ Key settings available in VS Code:
 ```
 
 **Section sources**
-- [README.md:307-317](file://vdw/README.md#L307-L317)
+- [README.md:320-331](file://vdw/README.md#L320-L331)
 - [README.md:108-118](file://vdw-vscode/README.md#L108-L116)
 - [package.json:150-169](file://vdw-vscode/package.json#L150-L169)
 
@@ -275,7 +284,7 @@ workspace:
   version: "1.0"
 
 dependencies:
-  - repo: "https://github.com/org/ui-lib.git"
+  - remote: "https://github.com/org/ui-lib.git"
     path: libs/ui-lib
     branch: main
     scope:
@@ -292,7 +301,7 @@ dependencies:
 
 | Field | Required | Description |
 |-------|----------|-------------|
-| `repo` | ✅ | Git URL (https://, git@, or local path) |
+| `remote` | ✅ | Git URL (https://, git@, or local path) |
 | `path` | ✅ | Where to link in your workspace |
 | `branch`/`tag`/`commit` | ✅ (one required) | Which version to track |
 | `scope.include` | ✅ | Glob patterns for files to expose |
@@ -377,7 +386,7 @@ xattr -d com.apple.quarantine /path/to/vdw
 **Section sources**
 - [install.sh:113-126](file://vdw/install.sh#L113-L126)
 - [install.sh:261-270](file://vdw/install.sh#L261-L270)
-- [README.md:328-332](file://vdw/README.md#L328-L332)
+- [README.md:333-340](file://vdw/README.md#L333-L340)
 
 ## Development Environment Setup
 
@@ -440,7 +449,7 @@ on:
 The pipeline builds binaries for multiple platforms and creates GitHub releases with checksums.
 
 **Section sources**
-- [README.md:336-350](file://vdw/README.md#L336-L350)
+- [README.md:349-363](file://vdw/README.md#L349-L363)
 - [Cargo.toml:12-31](file://vdw/Cargo.toml#L12-L31)
 - [.github/workflows/release.yml:1-92](file://.github/workflows/release.yml#L1-L92)
 

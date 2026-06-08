@@ -361,4 +361,35 @@ dependencies:
         assert!(scope.include.is_empty());
         assert!(scope.exclude.is_empty());
     }
+
+    #[test]
+    fn test_editable_lock_registry_new() {
+        let registry = EditableLockRegistry::new();
+        assert_eq!(registry.version, 1);
+        assert!(registry.locks.is_empty());
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EditableLockRegistry {
+    pub version: u32,
+    pub locks: Vec<EditableLock>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EditableLock {
+    pub repo_id: String,
+    pub branch: String,
+    pub workspace_path: String,
+    pub worktree_path: String,
+    pub created_at: String,
+}
+
+impl EditableLockRegistry {
+    pub fn new() -> Self {
+        Self {
+            version: 1,
+            locks: Vec::new(),
+        }
+    }
 }

@@ -4,6 +4,7 @@ use std::path::PathBuf;
 use crate::commands::link;
 use crate::config::parser;
 use crate::store::{get_store_path, init_store, object_pool};
+use crate::store::editable_locks::{check_editable_lock, acquire_editable_lock, release_editable_lock};
 use crate::types::config::{Dependency, Scope, VDWConfig};
 
 /// Check if the input looks like a remote URL (contains :// or @)
@@ -75,17 +76,21 @@ fn update_config(
         }
     };
 
-    // Duplicate detection: compare by remote for remote repos, local for local repos
-    if !remote.is_empty() {
-        if config.dependencies.iter().any(|dep| dep.remote == remote) {
-            println!("\x1b[33m\x1b[0m Repository already exists in configuration");
-            return Ok(());
-        }
-    } else if !local.is_empty() {
-        if config.dependencies.iter().any(|dep| dep.local == local) {
-            println!("\x1b[33m\x1b[0m Repository already exists in configuration");
-            return Ok(());
-        }
+    // Duplicate detection: same repo + same branch
+    let is_dup = config.dependencies.iter().any(|dep| {
+        let same_repo = if !remote.is_empty() {
+            dep.remote == remote
+        } else if !local.is_empty() {
+            dep.local == local || dep.origin == local
+        } else {
+            false
+        };
+        let same_branch = dep.branch == branch;
+        same_repo && same_branch
+    });
+    if is_dup {
+        println!("\x1b[33m\x1b[0m Repository already exists in configuration");
+        return Ok(());
     }
 
     // Determine the source for path auto-generation
@@ -95,6 +100,25 @@ fn update_config(
         .next()
         .unwrap_or("repo")
         .replace(".git", "");
+
+    // Check editable lock conflict before creating dependency
+    let mut editable = editable;
+    let repo_id = if !remote.is_empty() {
+        remote.to_string()
+    } else {
+        local.to_string()
+    };
+    let branch_name = branch.as_deref().unwrap_or("main").to_string();
+
+    if editable {
+        if let Ok(Some(conflict)) = check_editable_lock(&repo_id, &branch_name, &workspace_dir) {
+            println!(
+                "Warning: {} branch '{}' is already editable in workspace: {}. Downgrading to read-only mode.",
+                repo_id, branch_name, conflict.workspace_path
+            );
+            editable = false;
+        }
+    }
 
     // Create new dependency
     let dependency = Dependency {
@@ -124,6 +148,19 @@ fn update_config(
     // Save updated config
     let yaml_content = serde_yaml::to_string(&config)?;
     std::fs::write(&config_path, &yaml_content)?;
+
+    // Acquire editable lock after successful config write
+    if editable {
+        let store_path = get_store_path().unwrap_or_else(|_| PathBuf::from(""));
+        let repo_hash = object_pool::compute_repo_hash(&repo_id);
+        let worktree_path = store_path.join(format!(
+            "objects/{}-{}/worktrees/{}",
+            repo_name, repo_hash, &branch_name
+        ));
+        if let Err(e) = acquire_editable_lock(&repo_id, &branch_name, &workspace_dir, &worktree_path) {
+            tracing::warn!("Failed to acquire editable lock: {}", e);
+        }
+    }
 
     println!("\x1b[32m✓\x1b[0m Configuration updated: {}", config_path.display());
     println!("  Dependencies: {} total", config.dependencies.len());
@@ -289,6 +326,26 @@ fn remove_from_config(name: &str) -> Result<bool> {
     let mut config = parser::parse_yaml(&content)?;
 
     let original_len = config.dependencies.len();
+
+    // Find dependencies being removed to release their editable locks
+    let deps_to_remove: Vec<_> = config.dependencies.iter().filter(|dep| {
+        if is_remote_url(name) {
+            dep.remote == name
+        } else {
+            dep.local == name
+                || dep.remote.rsplit('/').next().unwrap_or("").trim_end_matches(".git") == name
+                || dep.local.rsplit('/').next().unwrap_or("") == name
+        }
+    }).collect();
+
+    // Release editable locks for removed dependencies
+    for dep in &deps_to_remove {
+        let dep_id = dep.dep_id().to_string();
+        let branch = dep.branch.as_deref().unwrap_or("main");
+        if let Err(e) = release_editable_lock(&dep_id, branch, &workspace_dir) {
+            tracing::warn!("Failed to release editable lock for {} branch '{}': {}", dep_id, branch, e);
+        }
+    }
 
     if is_remote_url(name) {
         // Match by remote URL

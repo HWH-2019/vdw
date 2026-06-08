@@ -2,6 +2,7 @@ use anyhow::Result;
 use std::path::{Path, PathBuf};
 
 use crate::config::parser;
+use crate::store::editable_locks::release_editable_lock;
 use crate::store::{get_store_path, init_store, object_pool};
 use crate::worktree::manager;
 
@@ -97,6 +98,12 @@ pub fn create(repo: String, branch: String) -> Result<()> {
 /// Delete a worktree for a specific repo and branch
 pub fn delete(repo: String, branch: String, force: bool) -> Result<()> {
     let store_path = ensure_store()?;
+
+    // Release editable lock before removing worktree
+    let workspace_path = std::env::current_dir()?;
+    if let Err(e) = release_editable_lock(&repo, &branch, &workspace_path) {
+        tracing::warn!("Failed to release editable lock for {} branch '{}': {}", repo, branch, e);
+    }
 
     // Find the bare repo in the store
     let bare_git_path = find_bare_repo_path(&store_path, &repo)?;

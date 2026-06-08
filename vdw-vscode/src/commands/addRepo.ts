@@ -4,6 +4,7 @@ import * as path from 'path';
 import * as yaml from 'js-yaml';
 import { VDWCliService } from '../services/vdwCliService';
 import { ConfigService } from '../services/configService';
+import { EditableLockService } from '../services/editableLockService';
 import { log, logError } from '../utils/logger';
 import { getLocalBranches, getRemoteBranches, BranchItem } from '../utils/git';
 
@@ -267,19 +268,31 @@ export async function handleAddRepo(
         }
 
         // Step 4: Editable mode selection (shared for both remote and local)
-        const editableChoice = await vscode.window.showQuickPick(
-            ['Yes - Editable (Git worktree)', 'No - Read-only (linked)'],
-            {
-                placeHolder: 'Should this repository be editable?',
-                title: 'Add Repository',
-            },
-        );
+        // Check for editable lock conflicts before showing the QuickPick
+        const lockService = new EditableLockService();
+        const repoIdentifier = repoUrl || localValue;
+        const conflictingLock = lockService.checkEditableLock(repoIdentifier, branch);
 
-        if (!editableChoice) {
-            log('User cancelled editable choice');
-            return false;
+        if (conflictingLock) {
+            vscode.window.showInformationMessage(
+                `This repository (branch: ${branch}) is already editable in workspace: ${conflictingLock.workspace_path}. Only read-only mode is available.`,
+            );
+            editable = false;
+        } else {
+            const editableChoice = await vscode.window.showQuickPick(
+                ['Yes - Editable (Git worktree)', 'No - Read-only (linked)'],
+                {
+                    placeHolder: 'Should this repository be editable?',
+                    title: 'Add Repository',
+                },
+            );
+
+            if (!editableChoice) {
+                log('User cancelled editable choice');
+                return false;
+            }
+            editable = editableChoice === 'Yes - Editable (Git worktree)';
         }
-        editable = editableChoice === 'Yes - Editable (Git worktree)';
 
         // Step 5: Scope pattern selection (shared for both remote and local)
         const includePattern = await vscode.window.showInputBox({
