@@ -108,11 +108,14 @@ vdw init --template fullstack
 ### 📥 Add a repository
 
 ```bash
-# Via HTTPS
+# Remote repo via SSH
+vdw repo add git@github.com:org/api-service.git --path services/api --branch develop
+
+# Remote repo via HTTPS
 vdw repo add https://github.com/org/ui-lib.git --path libs/ui-lib --branch main
 
-# Via SSH
-vdw repo add git@github.com:org/api-service.git --path services/api --branch develop
+# Local repo (editable — creates a git worktree)
+vdw repo add /path/to/local/repo --path packages/shared --branch main --editable
 
 # In editable mode (creates a git worktree so you can make changes)
 vdw repo add git@github.com:org/shared.git --path packages/shared --branch master --editable
@@ -162,9 +165,12 @@ vdw repo list
 ```
 
 ```
-NAME                           BRANCH       REFS       ALT      URL
-alsc.sales_aoi_service-3f8a1   master       1          no       git@gitlab.alibaba-inc...
-ui-lib-a1b2c3d4                main         2          yes      https://github.com/org...
+REPO                                     BRANCH       EDIT     PATH
+--------------------------------------------------------------------------------
+git@gitlab.alibaba-inc.com:eleme-do…     main         yes      ./packages/alsc.sales_aoi_service
+ui-lib-a1b2c3d4                          develop      no       ./libs/ui-lib
+
+Total: 2 repository(ies)
 ```
 
 ### 🩺 Doctor (diagnose issues)
@@ -214,7 +220,8 @@ workspace:
   version: "1.0"
 
 dependencies:
-  - repo: "https://github.com/org/ui-lib.git"
+  # Remote repository (Git URL)
+  - remote: "https://github.com/org/ui-lib.git"
     path: libs/ui-lib
     branch: main
     scope:
@@ -225,14 +232,17 @@ dependencies:
         - "**/*.test.ts"
         - "**/node_modules/**"
 
-  - repo: "git@github.com:org/protos.git"
+  # Remote repository (SSH)
+  - remote: "git@github.com:org/protos.git"
     path: packages/protos
     tag: v2.0.0
     scope:
       include:
         - "**/*.proto"
 
-  - repo: "git@github.com:org/api-service.git"
+  # Local repository (path on disk)
+  - remote: ''
+    local: /path/to/local/api-service
     path: services/api
     branch: develop
     editable: true
@@ -245,7 +255,9 @@ dependencies:
 
 | Field | Required | Description |
 |-------|----------|-------------|
-| `repo` | ✅ | Git URL (https://, git@, or local path) |
+| `remote` | ✅ | Git URL (`https://`, `git@`, or empty for local repos) |
+| `local` | ✅ (if no remote) | Local repository path on disk |
+| `origin` | ❌ | Original source path (preserved when `local` is overwritten with worktree path) |
 | `path` | ✅ | Where to link in your workspace |
 | `branch` / `tag` / `commit` | ✅ (pick one) | Which version to track |
 | `scope.include` | ✅ | Glob patterns for files to expose |
@@ -290,6 +302,7 @@ dependencies:
 2. **`vdw link`** → walks each repo's files, matches scope filters, creates hardlinks/symlinks in your workspace
 3. **`vdw unlink`** → removes all links (but keeps the store intact)
 4. **Editable mode** → creates a git worktree from the bare repo so you can commit/push changes
+5. **Local repos** → when origin is a local path, VDW also fetches remote-tracking branches (not just local branches)
 
 ### Link strategies (auto-selected)
 

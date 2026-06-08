@@ -5,6 +5,7 @@ import * as yaml from 'js-yaml';
 import { VDWCliService } from '../services/vdwCliService';
 import { ConfigService } from '../services/configService';
 import { log, logError } from '../utils/logger';
+import { getLocalBranches, getRemoteBranches, BranchItem } from '../utils/git';
 
 /**
  * Handle adding a repository through interactive wizard
@@ -40,6 +41,8 @@ export async function handleAddRepo(
         let localValue: string = '';
         let localPath: string = '';
         let branch: string = 'main';
+        let remoteBranches: BranchItem[] = [];
+        let localBranches: BranchItem[] = [];
         let editable: boolean = false;
 
         if (repoType === 'remote') {
@@ -65,6 +68,12 @@ export async function handleAddRepo(
             repoUrl = urlInput;
             remoteValue = urlInput;
             localValue = '';
+
+            // Fetch remote branches with progress
+            remoteBranches = await vscode.window.withProgress(
+                { location: vscode.ProgressLocation.Notification, title: 'Fetching branches...' },
+                () => getRemoteBranches(urlInput)
+            );
 
             // Auto-suggest workspace link path from repo name
             const repoName = repoUrl.split('/').pop()?.replace('.git', '') || 'repo';
@@ -108,13 +117,11 @@ export async function handleAddRepo(
             remoteValue = '';
             localValue = selectedPath;
 
-            // Get current branch
-            try {
-                const { execSync } = require('child_process');
-                branch = execSync(`git -C "${selectedPath}" branch --show-current`).toString().trim() || 'main';
-            } catch (error) {
-                logError('Failed to get current branch', error);
-            }
+            // Fetch local branches with progress
+            localBranches = await vscode.window.withProgress(
+                { location: vscode.ProgressLocation.Notification, title: 'Fetching branches...' },
+                () => getLocalBranches(selectedPath)
+            );
 
             // Ask for workspace link path
             const repoName = path.basename(selectedPath);
@@ -140,24 +147,124 @@ export async function handleAddRepo(
             localPath = pathInput;
         }
 
-        // Step 3: Branch selection (shared, with different defaults)
-        const branchInput = await vscode.window.showInputBox({
-            prompt: 'Enter branch name for the repository' + (repoType === 'local' ? ' (leave empty to use detected branch)' : ''),
-            placeHolder: 'main, master, develop, etc.',
-            value: branch,
-            validateInput: (value) => {
-                if (!value || value.trim() === '') {
-                    return 'Branch name is required';
-                }
-                return null;
-            },
-        });
+        // Step 3: Branch selection (shared, with interactive QuickPick)
+        const branchItems = repoType === 'remote' ? remoteBranches : localBranches;
 
-        if (!branchInput) {
-            log('User cancelled branch input');
-            return false;
+        if (branchItems.length === 0) {
+            // Fallback to manual input when branch list is unavailable
+            log('Branch list unavailable, falling back to manual input');
+            const branchInput = await vscode.window.showInputBox({
+                prompt: 'Unable to fetch branch list, please enter manually',
+                placeHolder: 'main, master, develop, etc.',
+                value: branch,
+                validateInput: (value) => {
+                    if (!value || value.trim() === '') {
+                        return 'Branch name is required';
+                    }
+                    return null;
+                },
+            });
+
+            if (!branchInput) {
+                log('User cancelled branch input');
+                return false;
+            }
+            branch = branchInput.trim();
+        } else {
+            // Interactive QuickPick branch selector
+            const quickPick = vscode.window.createQuickPick<BranchItem>();
+            quickPick.placeholder = 'Select or type a branch name';
+            quickPick.matchOnDescription = true;
+            quickPick.matchOnDetail = true;
+            quickPick.items = branchItems;
+
+            const selectedBranch = await new Promise<string | undefined>((resolve) => {
+                quickPick.onDidAccept(() => {
+                    const active = quickPick.activeItems[0];
+                    if (active) {
+                        resolve(active.label);
+                    } else if (quickPick.value.trim()) {
+                        resolve(quickPick.value.trim());
+                    } else {
+                        resolve(undefined);
+                    }
+                    quickPick.hide();
+                });
+                quickPick.onDidHide(() => {
+                    resolve(undefined);
+                });
+                quickPick.show();
+            });
+            quickPick.dispose();
+
+            if (!selectedBranch) {
+                log('User cancelled branch selection');
+                return false;
+            }
+
+            // Check if the selected branch exists in the original list
+            const existsInList = branchItems.some(item => item.label === selectedBranch);
+            if (!existsInList) {
+                // Confirm creation of a new branch
+                const confirm = await vscode.window.showWarningMessage(
+                    `Branch '${selectedBranch}' does not exist in the repository. A new branch will be created. Continue?`,
+                    { modal: true },
+                    'Yes, Create New Branch'
+                );
+                if (confirm !== 'Yes, Create New Branch') {
+                    // User declined — re-show the QuickPick
+                    let reSelectResult: string | undefined;
+                    while (reSelectResult === undefined) {
+                        const rePick = vscode.window.createQuickPick<BranchItem>();
+                        rePick.placeholder = 'Select or type a branch name';
+                        rePick.matchOnDescription = true;
+                        rePick.matchOnDetail = true;
+                        rePick.items = branchItems;
+
+                        reSelectResult = await new Promise<string | undefined>((resolve) => {
+                            rePick.onDidAccept(() => {
+                                const active = rePick.activeItems[0];
+                                if (active) {
+                                    resolve(active.label);
+                                } else if (rePick.value.trim()) {
+                                    resolve(rePick.value.trim());
+                                } else {
+                                    resolve(undefined);
+                                }
+                                rePick.hide();
+                            });
+                            rePick.onDidHide(() => {
+                                resolve(undefined);
+                            });
+                            rePick.show();
+                        });
+                        rePick.dispose();
+
+                        if (!reSelectResult) {
+                            log('User cancelled branch selection');
+                            return false;
+                        }
+
+                        const reExists = branchItems.some(item => item.label === reSelectResult);
+                        if (!reExists) {
+                            const reConfirm = await vscode.window.showWarningMessage(
+                                `Branch '${reSelectResult}' does not exist in the repository. A new branch will be created. Continue?`,
+                                { modal: true },
+                                'Yes, Create New Branch'
+                            );
+                            if (reConfirm !== 'Yes, Create New Branch') {
+                                reSelectResult = undefined; // loop back to QuickPick
+                            }
+                        }
+                    }
+                    branch = reSelectResult;
+                } else {
+                    branch = selectedBranch;
+                }
+            } else {
+                branch = selectedBranch;
+            }
         }
-        branch = branchInput.trim();
 
         // Step 4: Editable mode selection (shared for both remote and local)
         const editableChoice = await vscode.window.showQuickPick(

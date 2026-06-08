@@ -70,6 +70,13 @@ pub fn execute(repo_filter: Option<&str>) -> Result<()> {
 
         // b. Determine source directory
         let source_dir = if dep.editable {
+            let branch = dep
+                .branch
+                .as_deref()
+                .or(dep.tag.as_deref())
+                .or(dep.commit.as_deref())
+                .unwrap_or("main");
+
             // Check if dep.local is already a VDW-managed worktree path (inside the store).
             // Only reuse it if it's managed — original source paths must be replaced
             // with worktrees so dep.local consistently points to a managed location.
@@ -85,19 +92,27 @@ pub fn execute(repo_filter: Option<&str>) -> Result<()> {
                 None
             };
 
+            // If dep.local is empty, also scan the store for existing worktrees
+            // at the conventional path {repo_dir}/worktrees/{branch}/.
+            // This handles re-link after unlink (where dep.local was cleared).
+            let existing_worktree = if existing_worktree.is_none() {
+                let conventional_wt = repo_dir.join("worktrees").join(branch);
+                if conventional_wt.exists() && conventional_wt.join(".git").exists() {
+                    println!("  Found existing worktree in store: {}", conventional_wt.display());
+                    Some(conventional_wt)
+                } else {
+                    None
+                }
+            } else {
+                existing_worktree
+            };
+
             if let Some(wt_path) = existing_worktree {
                 println!("  Using existing worktree: {}", wt_path.display());
                 editable_count += 1;
                 wt_path
             } else {
                 // Create worktree for editable deps
-                let branch = dep
-                    .branch
-                    .as_deref()
-                    .or(dep.tag.as_deref())
-                    .or(dep.commit.as_deref())
-                    .unwrap_or("main");
-
                 let worktree_base = repo_dir.join("worktrees");
                 let wt_path =
                     worktree_manager::create_worktree(&bare_git_path, branch, &worktree_base)?;

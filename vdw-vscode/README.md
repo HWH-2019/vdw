@@ -10,7 +10,7 @@
 | Feature | Description |
 |---------|-------------|
 | 📂 **Dependency Tree View** | See all your repos at a glance — linked vs unlinked, editable vs read-only |
-| ➕ **Add Repo Wizard** | Interactive dialog to add remote or local repos with scope configuration |
+| ➕ **Add Repo Wizard** | Interactive dialog to add remote or local repos with branch selection and scope configuration |
 | 🔗 **One-Click Link / Unlink** | Link or unlink individual repos directly from the tree |
 | 🔄 **Relink All** | Unlink all + re-link with updated `.vdwrc` config in one command |
 | 🩺 **Status Bar** | Real-time dependency count and file context size |
@@ -88,7 +88,7 @@ All commands are accessible via the **Command Palette** (`Cmd+Shift+P` / `Ctrl+S
 |---------|-----------|-------------|
 | `VDW: Add Repository` | ➕ | Interactive wizard to add a remote or local repo |
 | `VDW: Initialize Workspace` | — | Create a `.vdwrc` in the current folder |
-| `VDW: Relink allRepo` | 🔄 | Unlink all + re-link with updated config |
+| `VDW: Relink All` | 🔄 | Unlink all + re-link with updated config |
 | `VDW: Validate Configuration` | — | Check `.vdwrc` for errors |
 | `VDW: Refresh Context` | 🔃 | Rebuild the file context and update stats |
 | `Link Repository` | ⛓️ (inline) | Link a specific unlinked repo |
@@ -126,7 +126,8 @@ workspace:
   version: "1.0"
 
 dependencies:
-  - repo: "https://github.com/org/ui-lib.git"
+  # Remote repository (Git URL)
+  - remote: "https://github.com/org/ui-lib.git"
     path: libs/ui-lib
     branch: main
     scope:
@@ -135,6 +136,16 @@ dependencies:
       exclude:
         - "**/*.test.ts"
     editable: false
+
+  # Local repository (path on disk)
+  - remote: ''
+    local: /path/to/local/repo
+    path: packages/my-lib
+    branch: feature/dev
+    editable: true
+    scope:
+      include:
+        - "src/**/*.ts"
 ```
 
 Each dependency appears as a tree item with its link status, scope filters, and version info.
@@ -230,11 +241,11 @@ The `scripts/` folder is excluded from the VSIX via `.vscodeignore`.
 ```
 vdw-vscode/
 ├── src/
-│   ├── commands/          # Command handlers (link, unlink, add, etc.)
-│   ├── providers/         # TreeView, FileProvider, StatusBar
-│   ├── services/          # CLI, Config, Context, AutoOpen
+│   ├── commands/          # Command handlers (addRepo, index)
+│   ├── providers/         # workspaceTreeView, fileProvider, statusBar
+│   ├── services/          # vdwCliService, configService, contextService, autoOpenService
 │   ├── types/             # TypeScript interfaces
-│   ├── utils/             # Logger
+│   ├── utils/             # git (branch listing), logger
 │   └── extension.ts       # Entry point & activation
 ├── resources/icons/       # SVG + PNG icons
 ├── scripts/               # Icon generation utility

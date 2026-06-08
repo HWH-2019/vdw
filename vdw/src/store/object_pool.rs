@@ -30,9 +30,24 @@ pub fn clone_to_store(
     let repo_dir = store_path.join(format!("objects/{}-{}", repo_name, repo_hash));
     let bare_git_path = repo_dir.join("bare.git");
 
-    // If already exists, just return the path
+    // If already exists, ensure the requested branch is fetched, then return
     if bare_git_path.exists() {
         tracing::info!("Repository already exists in store: {}", repo_url);
+
+        // If a specific branch is requested and not yet fetched, fetch it
+        if let Some(b) = branch {
+            let remote_ref = bare_git_path.join("refs/remotes/origin").join(b);
+            if !remote_ref.exists() {
+                tracing::info!("Branch '{}' not yet fetched for existing store entry, fetching...", b);
+                let repo = git2::Repository::open_bare(&bare_git_path)?;
+                if let Err(e) = fetch_with_timeout(&repo, branch, 90) {
+                    tracing::warn!("Failed to fetch branch '{}' for existing store: {}", b, e);
+                }
+            }
+        }
+
+        // Fix HEAD for repos cloned with older versions (git2 defaults to master)
+        fix_bare_repo_head(&bare_git_path, branch);
         return Ok(repo_dir);
     }
 
@@ -96,6 +111,12 @@ pub fn clone_to_store(
     };
     metadata.save(&repo_dir)?;
 
+    // Fix HEAD: git2::Repository::init_bare() defaults HEAD to refs/heads/master,
+    // but the repo may use a different default branch (e.g. main).
+    // After fetch, update HEAD to point to the fetched branch so that
+    // `git worktree add` and other operations work correctly.
+    fix_bare_repo_head(&bare_git_path, branch);
+
     tracing::info!("Initialized store entry for: {}", repo_url);
     Ok(repo_dir)
 }
@@ -128,6 +149,60 @@ fn get_remote_head(repo: &git2::Repository, branch: Option<&str>) -> Option<Stri
     None
 }
 
+/// Fix the bare repo's HEAD to point to the correct branch.
+/// git2::Repository::init_bare() defaults HEAD to refs/heads/master,
+/// but the repo may use a different default branch (e.g. main).
+/// This causes `git worktree add` to fail with "invalid reference: HEAD".
+fn fix_bare_repo_head(bare_git_path: &Path, branch: Option<&str>) {
+    let head_path = bare_git_path.join("HEAD");
+
+    // Determine the correct branch to point HEAD at
+    let target_branch = if let Some(b) = branch {
+        // Only use this branch if its ref actually exists
+        let remote_ref = bare_git_path.join("refs/remotes/origin").join(b);
+        let local_ref = bare_git_path.join("refs/heads").join(b);
+        if !remote_ref.exists() && !local_ref.exists() {
+            tracing::warn!(
+                "Branch '{}' not found in bare repo refs, skipping HEAD update",
+                b
+            );
+            return;
+        }
+        b.to_string()
+    } else {
+        // Auto-detect: check which remote tracking refs exist
+        let refs_dir = bare_git_path.join("refs").join("remotes").join("origin");
+        if refs_dir.join("main").exists() {
+            "main".to_string()
+        } else if refs_dir.join("master").exists() {
+            "master".to_string()
+        } else {
+            // Can't detect, leave HEAD as-is
+            return;
+        }
+    };
+
+    // Write HEAD to point to the correct branch
+    let head_content = format!("ref: refs/heads/{}\n", target_branch);
+    if let Err(e) = std::fs::write(&head_path, head_content) {
+        tracing::warn!("Failed to fix bare repo HEAD: {}", e);
+    } else {
+        tracing::info!("Fixed bare repo HEAD to refs/heads/{}", target_branch);
+    }
+
+    // Also ensure the local branch ref exists (copy from remote tracking ref)
+    let remote_ref = bare_git_path.join("refs/remotes/origin").join(&target_branch);
+    let local_ref = bare_git_path.join("refs/heads").join(&target_branch);
+    if remote_ref.exists() && !local_ref.exists() {
+        if let Some(parent) = local_ref.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        if let Err(e) = std::fs::copy(&remote_ref, &local_ref) {
+            tracing::warn!("Failed to create local branch ref from remote: {}", e);
+        }
+    }
+}
+
 /// Calculate the total size of a directory recursively
 fn calculate_dir_size(path: &Path) -> u64 {
     fn walk(dir: &Path, total: &mut u64) {
@@ -155,6 +230,13 @@ fn calculate_dir_size(path: &Path) -> u64 {
 /// This avoids libgit2/libssh2 transport compatibility issues with certain Git servers.
 fn fetch_remote(repo: &git2::Repository, branch: Option<&str>) -> Result<()> {
     let bare_git_path = repo.path().to_path_buf();
+
+    // Check if origin is a local path (not a URL)
+    let origin_url = get_origin_url(repo);
+    let is_local_origin = origin_url
+        .as_deref()
+        .map(|u| u.starts_with('/') || u.starts_with('.') || u.starts_with('~'))
+        .unwrap_or(false);
 
     let mut cmd = std::process::Command::new("git");
     cmd.args(["fetch", "origin"]);
@@ -195,15 +277,76 @@ fn fetch_remote(repo: &git2::Repository, branch: Option<&str>) -> Result<()> {
     if output.status.success() {
         tracing::info!("git fetch completed successfully");
         eprintln!("[GIT FETCH] SUCCESS");
+
+        // For local origins, also fetch remote tracking branches (refs/remotes/origin/*).
+        // A local repo's remote tracking branches are NOT fetched by default,
+        // but they may be the only source of branches the user wants.
+        if is_local_origin {
+            fetch_local_origin_remote_refs(&bare_git_path, branch);
+        }
+
         Ok(())
     } else {
         let stderr = String::from_utf8_lossy(&output.stderr);
         tracing::error!("git fetch failed: {}", stderr.trim());
         eprintln!("[GIT FETCH] FAILED: {}", stderr.trim());
+
+        // If fetching a specific branch failed with "couldn't find remote ref",
+        // the branch may only exist as a remote tracking branch in the source repo.
+        // Fall back to fetching all branches.
+        if branch.is_some() && stderr.contains("couldn't find remote ref") {
+            tracing::info!("Branch not found as refs/heads, falling back to fetch all branches");
+            eprintln!("[GIT FETCH] Retrying with all branches...");
+            return fetch_remote(repo, None);
+        }
+
         Err(anyhow::anyhow!(
             "git fetch failed: {}",
             stderr.trim()
         ))
+    }
+}
+
+/// Get the origin remote URL from a repository
+fn get_origin_url(repo: &git2::Repository) -> Option<String> {
+    repo.find_remote("origin")
+        .ok()
+        .and_then(|r| r.url().map(String::from))
+}
+
+/// For local origins, also fetch refs/remotes/origin/* from the source repo.
+/// This ensures branches that only exist as remote tracking branches in the source
+/// are also available in our bare repo.
+fn fetch_local_origin_remote_refs(bare_git_path: &Path, branch: Option<&str>) {
+    let mut cmd = std::process::Command::new("git");
+    cmd.args(["fetch", "origin"]);
+
+    if let Some(b) = branch {
+        // Try fetching the specific branch from the source's remote tracking refs
+        cmd.arg(format!("+refs/remotes/origin/{}:refs/remotes/origin/{}", b, b));
+    } else {
+        // Fetch all remote tracking branches from the source
+        cmd.arg("+refs/remotes/origin/*:refs/remotes/origin/*");
+    }
+
+    cmd.env(
+        "GIT_SSH_COMMAND",
+        "ssh -o BatchMode=yes -o ConnectTimeout=15 -o StrictHostKeyChecking=accept-new",
+    );
+    cmd.current_dir(bare_git_path);
+
+    tracing::info!("Fetching remote tracking branches from local origin");
+    match cmd.output() {
+        Ok(output) if output.status.success() => {
+            tracing::info!("Fetched remote tracking branches from local origin");
+        }
+        Ok(output) => {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            tracing::debug!("Fetch remote tracking branches skipped: {}", stderr.trim());
+        }
+        Err(e) => {
+            tracing::debug!("Fetch remote tracking branches failed (non-fatal): {}", e);
+        }
     }
 }
 
