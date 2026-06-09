@@ -12,6 +12,28 @@ use crate::worktree::manager as worktree_manager;
 pub fn execute(repo_filter: Option<&str>) -> Result<()> {
     let cwd = std::env::current_dir()?;
 
+    // 0. On Windows, check symlink privilege and guide user if missing
+    #[cfg(windows)]
+    {
+        if !crate::link::platform::try_enable_symlink_privilege() {
+            let dev_mode = crate::link::platform::is_developer_mode_enabled();
+            if !dev_mode {
+                eprintln!(
+                    "⚠️  Windows symlink/junction creation requires elevated privileges.\n\
+                       Enable Developer Mode (no admin needed) or run as Administrator:\n\
+                       \n\
+                       Option 1: Settings → Privacy & security → For developers → Developer Mode\n\
+                       Option 2: Run this terminal as Administrator\n"
+                );
+            } else {
+                eprintln!(
+                    "⚠️  Developer Mode is enabled but symlink privilege could not be acquired.\n\
+                       Try running this terminal as Administrator.\n"
+                );
+            }
+        }
+    }
+
     // 1. Load and validate config
     let mut config = parser::load_config(&cwd)?;
     env_resolver::resolve_env_vars(&mut config)?;

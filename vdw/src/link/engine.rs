@@ -63,34 +63,53 @@ pub fn create_dependency_links(
 }
 
 /// Create a single link using the given strategy.
-/// Returns the ACTUAL LinkType used (may differ from strategy if hardlink fell back to symlink).
+/// Returns the ACTUAL LinkType used (may differ from strategy if fallback was triggered).
 fn create_single_link(
     source: &Path,
     target: &Path,
     strategy: platform::LinkStrategy,
 ) -> Result<LinkType> {
-    match strategy {
+    let result = match strategy {
         platform::LinkStrategy::HardLink => {
-            match hardlink::create_hardlink(source, target) {
-                Ok(()) => Ok(LinkType::HardLink),
-                Err(e) => {
-                    // Hardlink failed — fall back to symlink and log the real error
-                    tracing::warn!(
-                        "Hardlink failed for {:?} -> {:?} ({}), falling back to symlink",
-                        source, target, e
-                    );
-                    symlink::create_symlink(source, target)?;
-                    Ok(LinkType::Symlink)
-                }
-            }
+            hardlink::create_hardlink(source, target).map(|_| LinkType::HardLink)
         }
         platform::LinkStrategy::Symlink => {
-            symlink::create_symlink(source, target)?;
-            Ok(LinkType::Symlink)
+            symlink::create_symlink(source, target).map(|_| LinkType::Symlink)
         }
         platform::LinkStrategy::Junction => {
-            junction::create_junction(source, target)?;
-            Ok(LinkType::Junction)
+            junction::create_junction(source, target).map(|_| LinkType::Junction)
+        }
+    };
+
+    match result {
+        Ok(link_type) => Ok(link_type),
+        Err(e) => {
+            // On Windows, if symlink/junction fails due to missing privilege (error 1314),
+            // check if privilege elevation is possible and retry.
+            #[cfg(windows)]
+            {
+                let is_privilege_error = e
+                    .downcast_ref::<std::io::Error>()
+                    .map(|ioe| ioe.raw_os_error() == Some(1314))
+                    .unwrap_or(false);
+
+                if is_privilege_error && platform::try_enable_symlink_privilege() {
+                    // Retry after privilege adjustment
+                    return match strategy {
+                        platform::LinkStrategy::Symlink => {
+                            symlink::create_symlink(source, target)?;
+                            Ok(LinkType::Symlink)
+                        }
+                        platform::LinkStrategy::Junction => {
+                            junction::create_junction(source, target)?;
+                            Ok(LinkType::Junction)
+                        }
+                        platform::LinkStrategy::HardLink => Err(e),
+                    };
+                }
+            }
+
+            Err(e)
         }
     }
 }

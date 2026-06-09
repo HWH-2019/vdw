@@ -114,6 +114,7 @@ mod tests {
         assert_eq!(LinkType::HardLink, LinkType::HardLink);
         assert_ne!(LinkType::HardLink, LinkType::Symlink);
         assert_ne!(LinkType::Symlink, LinkType::Junction);
+        assert_ne!(LinkType::Symlink, LinkType::Copy);
     }
 
     #[test]
