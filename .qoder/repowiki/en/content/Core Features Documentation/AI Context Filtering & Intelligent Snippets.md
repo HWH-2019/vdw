@@ -12,17 +12,19 @@
 - [vdw/src/lib.rs](file://vdw/src/lib.rs)
 - [vdw/Cargo.toml](file://vdw/Cargo.toml)
 - [ai_workspace/VDW虚拟工作空间_需求文档_v1.0.md](file://ai_workspace/VDW虚拟工作空间_需求文档_v1.0.md)
+- [README.md](file://README.md)
+- [vdw/README.md](file://vdw/README.md)
+- [vdw-vscode/src/services/vdwCliService.ts](file://vdw-vscode/src/services/vdwCliService.ts)
 </cite>
 
 ## Update Summary
 **Changes Made**
-- Updated to reflect the complete implementation of AI Context Filtering & Intelligent Snippets system
-- Documented the comprehensive filtering system with filter.rs, glob_matcher.rs, and file_list.rs
-- Added CLI integration coverage for context.rs commands (preview and stats)
-- Updated architecture diagrams to show the actual Rust implementation
-- Enhanced performance characteristics and benchmarking information
-- Added comprehensive testing coverage documentation
-- Updated troubleshooting guide with practical diagnostic commands
+- Added comprehensive documentation for AI Agent Skill integration with Qoder skill
+- Documented the scenario-chain model for automated workspace setup
+- Added CLI command orchestration capabilities for AI coding agents
+- Updated system architecture to include AI agent skill layer
+- Enhanced integration guidance for Copilot and custom LLMs
+- Added Qoder skill deployment and configuration documentation
 
 ## Table of Contents
 1. [Introduction](#introduction)
@@ -30,12 +32,13 @@
 3. [Core Components](#core-components)
 4. [Glob Pattern Matching Algorithm](#glob-pattern-matching-algorithm)
 5. [File List Generation & Caching](#file-list-generation--caching)
-6. [CLI Integration](#cli-integration)
-7. [Performance Characteristics](#performance-characteristics)
-8. [Configuration Management](#configuration-management)
-9. [Testing & Validation](#testing--validation)
-10. [Troubleshooting Guide](#troubleshooting-guide)
-11. [Future Enhancements](#future-enhancements)
+6. [AI Agent Skill Integration](#ai-agent-skill-integration)
+7. [CLI Integration](#cli-integration)
+8. [Performance Characteristics](#performance-characteristics)
+9. [Configuration Management](#configuration-management)
+10. [Testing & Validation](#testing--validation)
+11. [Troubleshooting Guide](#troubleshooting-guide)
+12. [Future Enhancements](#future-enhancements)
 
 ## Introduction
 This document explains the AI context filtering and intelligent snippet management feature implemented in the Virtual Dev Workspace (VDW) system. The implementation provides scope-based filtering mechanisms, glob pattern matching for include/exclude rules, and virtual file list generation for AI agents. The system is built using Rust and provides both command-line and programmatic interfaces for context management.
@@ -51,6 +54,11 @@ The AI context filtering system is organized into several interconnected modules
 
 ```mermaid
 graph TB
+subgraph "AI Agent Layer"
+QODER["Qoder Skill<br/>Scenario-Chain Orchestration"]
+COPILOT["Copilot Integration<br/>Agent-Aware Filtering"]
+CUSTOM["Custom LLM Integration<br/>Context Injection"]
+end
 subgraph "Context Module"
 CF["context/filter.rs<br/>File Filtering Engine"]
 CG["context/glob_matcher.rs<br/>Pattern Matching Engine"]
@@ -64,17 +72,28 @@ subgraph "CLI Interface"
 CC["commands/context.rs<br/>Context Commands"]
 MAIN["main.rs<br/>Command Router"]
 end
+subgraph "VS Code Extension"
+VSCODE["vdwCliService.ts<br/>CLI Command Execution"]
+TREE["Workspace Tree View<br/>Visual Context Management"]
+STATUS["Status Bar<br/>Context Statistics"]
+end
 subgraph "Dependencies"
 WALKDIR["walkdir crate<br/>Filesystem traversal"]
 GLOB["glob crate<br/>Pattern matching"]
 PARKING["parking_lot crate<br/>Concurrent caching"]
 END
+QODER --> CF
+COPILOT --> CF
+CUSTOM --> CF
 CF --> CG
 CL --> CF
 CL --> TC
 CC --> CL
 CC --> CF
 MAIN --> CC
+VSCODE --> CC
+TREE --> VSCODE
+STATUS --> VSCODE
 CG --> GLOB
 CL --> PARKING
 CF --> WALKDIR
@@ -86,10 +105,12 @@ CF --> WALKDIR
 - [vdw/src/context/glob_matcher.rs: 1-246:1-246](file://vdw/src/context/glob_matcher.rs#L1-L246)
 - [vdw/src/context/file_list.rs: 1-306:1-306](file://vdw/src/context/file_list.rs#L1-L306)
 - [vdw/src/types/config.rs: 39-46:39-46](file://vdw/src/types/config.rs#L39-L46)
+- [vdw-vscode/src/services/vdwCliService.ts: 66-106:66-106](file://vdw-vscode/src/services/vdwCliService.ts#L66-L106)
 
 **Section sources**
 - [vdw/src/context/mod.rs: 1-4:1-4](file://vdw/src/context/mod.rs#L1-L4)
 - [vdw/src/main.rs: 107-138:107-138](file://vdw/src/main.rs#L107-L138)
+- [README.md: 192-201:192-201](file://README.md#L192-L201)
 
 ## Core Components
 
@@ -221,6 +242,64 @@ The system provides detailed statistics for monitoring and debugging:
 **Section sources**
 - [vdw/src/context/file_list.rs: 10-25:10-25](file://vdw/src/context/file_list.rs#L10-L25)
 - [vdw/src/context/file_list.rs: 107-105:107-105](file://vdw/src/context/file_list.rs#L107-L105)
+
+## AI Agent Skill Integration
+
+The VDW system now includes comprehensive AI Agent Skill integration through the Qoder skill, enabling AI coding agents to automatically set up workspaces with scenario-chain model and CLI command orchestration.
+
+### Qoder Skill Architecture
+The Qoder skill provides a scenario-chain model that intelligently orchestrates CLI commands based on the current workspace state:
+
+```mermaid
+flowchart TD
+USER["User Requirement Analysis"] --> SCENARIO["Scenario Detection"]
+SCENARIO --> REQUIREMENTS["Requirements Extraction"]
+REQUIREMENTS --> STATE["Workspace State Assessment"]
+STATE --> DECISION["Decision Matrix"]
+DECISION --> COMMANDS["Command Sequence Generation"]
+COMMANDS --> EXECUTION["CLI Command Execution"]
+EXECUTION --> VALIDATION["Validation & Feedback"]
+VALIDATION --> SCENARIO2["Next Scenario?"]
+SCENARIO2 --> |Yes| SCENARIO
+SCENARIO2 --> |No| COMPLETE["Setup Complete"]
+```
+
+**Key Capabilities**:
+- **Requirements Analysis**: Automatically analyzes user requirements to determine workspace setup needs
+- **State Assessment**: Evaluates current workspace configuration to avoid redundant operations
+- **Command Orchestration**: Generates optimal sequence of CLI commands based on detected scenarios
+- **Confirmation Workflow**: Requests user confirmation before executing potentially destructive operations
+
+### Scenario-Chain Model
+The scenario-chain model follows a structured approach to workspace setup:
+
+**Primary Scenarios**:
+1. **Fresh Workspace Setup**: Initialize `.vdwrc` and configure initial dependencies
+2. **Repository Addition**: Add new repositories with appropriate flags (--editable or read-only)
+3. **Dependency Linking**: Establish proper linking strategies based on filesystem constraints
+4. **IDE Integration**: Offer IDE launch options with configured context
+
+**Decision Logic**:
+- **Editable Repositories**: Use `--editable` flag for active development
+- **Read-Only Repositories**: Use read-only mode for stable dependencies
+- **Platform Optimization**: Auto-select appropriate linking strategies (HardLink → Symlink)
+
+### CLI Command Orchestration
+The Qoder skill orchestrates complex CLI workflows through intelligent command sequencing:
+
+**Command Sequencing Examples**:
+- **Initialization Flow**: `vdw init` → `vdw repo add` → `vdw link` → IDE launch
+- **Incremental Setup**: Detect missing components and add them progressively
+- **Conflict Resolution**: Handle overlapping dependencies and conflicting configurations
+
+**Integration Points**:
+- **Requirements Gathering**: Analyze project structure to determine dependencies
+- **Configuration Generation**: Create appropriate `.vdwrc` based on detected patterns
+- **Validation**: Verify setup completion and report any issues
+
+**Section sources**
+- [README.md: 192-201:192-201](file://README.md#L192-L201)
+- [vdw/README.md: 188-196:188-196](file://vdw/README.md#L188-L196)
 
 ## CLI Integration
 
@@ -390,6 +469,12 @@ The system includes comprehensive testing for all major components:
 - Check file permissions for accessed directories
 - Review error messages for specific failure points
 
+**AI Agent Skill Issues**:
+- Verify Qoder skill installation and configuration
+- Check scenario-chain model compatibility
+- Ensure CLI commands are executable and in PATH
+- Validate workspace state before skill execution
+
 ### Diagnostic Commands
 **Context Preview**:
 ```bash
@@ -425,6 +510,11 @@ Displays file counts, sizes, and dependency summaries
 - Context-aware pattern weighting
 - Machine learning for pattern optimization
 
+**Enhanced AI Agent Capabilities**:
+- Multi-agent coordination for complex workspace setups
+- Predictive context generation based on development patterns
+- Dynamic scope adjustment based on AI agent feedback
+
 ### Performance Optimizations
 **Parallel Processing**:
 - Multi-threaded file scanning for large repositories
@@ -439,3 +529,4 @@ Displays file counts, sizes, and dependency summaries
 **Section sources**
 - [ai_workspace/VDW虚拟工作空间_需求文档_v1.0.md: 49](file://ai_workspace/VDW虚拟工作空间_需求文档_v1.0.md#L49)
 - [vdw/src/context/glob_matcher.rs: 14-40:14-40](file://vdw/src/context/glob_matcher.rs#L14-L40)
+- [README.md: 192-201:192-201](file://README.md#L192-L201)

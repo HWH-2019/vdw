@@ -19,12 +19,8 @@ install-quick: build
 	@cp target/release/$(BINARY_NAME) $(INSTALL_DIR)/$(BINARY_NAME)
 	@# Clear EDR quarantine (causes SIGKILL on some macOS setups)
 	@xattr -d com.alibaba.security.edr.antivirus.cloudquery $(INSTALL_DIR)/$(BINARY_NAME) 2>/dev/null || true
-	@# Also update local copy for VS Code plugin compatibility
-	@cp target/release/$(BINARY_NAME) ./$(BINARY_NAME)
-	@xattr -d com.alibaba.security.edr.antivirus.cloudquery ./$(BINARY_NAME) 2>/dev/null || true
 	@echo ""
 	@echo "  $$(cd $(INSTALL_DIR) && pwd)/$(BINARY_NAME)"
-	@echo "  $$(pwd)/$(BINARY_NAME) (VS Code plugin)"
 	@echo ""
 	$$(cd $(INSTALL_DIR) && pwd)/$(BINARY_NAME) --version
 	@echo ""

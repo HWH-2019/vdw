@@ -169,12 +169,6 @@ install_from_source() {
         xattr -d com.apple.quarantine "${install_root}/${BINARY_NAME}" 2>/dev/null || true
     fi
 
-    # Also update the local copy for VS Code plugin compatibility
-    if [ -n "${build_dir:-}" ] && [ -d "${build_dir}/../vdw-vscode" ]; then
-        cp "${install_root}/${BINARY_NAME}" "${build_dir}/${BINARY_NAME}" 2>/dev/null || true
-        ok "Updated local binary for VS Code plugin"
-    fi
-
     return 0
 }
 

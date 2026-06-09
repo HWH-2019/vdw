@@ -49,24 +49,61 @@ jobs:
       - name: Build release
         run: cargo build --release --target ${{ matrix.target }}
 
+      - name: Extract version
+        run: |
+          VERSION=$(grep '^version' vdw/Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
+          echo "version=$VERSION" >> $GITHUB_ENV
+
       - name: Package binary
         shell: bash
         run: |
-          cd vdw
-          BINARY="target/${{ matrix.target }}/release/vdw${{ matrix.suffix }}"
-          ARCHIVE="vdw-${{ matrix.target }}${{ matrix.suffix }}"
-          cp "$BINARY" "$ARCHIVE"
-          echo "artifact=$ARCHIVE" >> $GITHUB_ENV
+          case "${{ matrix.target }}" in
+            aarch64-apple-darwin)     OS=darwin; ARCH=arm64 ;;
+            x86_64-apple-darwin)      OS=darwin; ARCH=x86_64 ;;
+            x86_64-unknown-linux-gnu) OS=linux; ARCH=x86_64 ;;
+            aarch64-unknown-linux-gnu) OS=linux; ARCH=arm64 ;;
+            x86_64-pc-windows-msvc)   OS=win32; ARCH=x86_64 ;;
+          esac
+          ARCHIVE="vdw_${OS}_${ARCH}_${{ env.version }}"
+          if [ "$OS" = "win32" ]; then
+            cp target/${{ matrix.target }}/release/vdw.exe "${ARCHIVE}.exe"
+            zip "${ARCHIVE}.zip" "${ARCHIVE}.exe"
+            echo "artifact=${ARCHIVE}.zip" >> $GITHUB_ENV
+          else
+            cp target/${{ matrix.target }}/release/vdw "${ARCHIVE}"
+            tar -czf "${ARCHIVE}.tar.gz" "${ARCHIVE}"
+            echo "artifact=${ARCHIVE}.tar.gz" >> $GITHUB_ENV
+          fi
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: vdw-${{ matrix.target }}
-          path: vdw/vdw-${{ matrix.target }}${{ matrix.suffix }}
+          path: vdw/${{ env.artifact }}
+
+  build-vsix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+      - run: npm ci
+        working-directory: vdw-vscode
+      - run: npm run package
+        working-directory: vdw-vscode
+      - name: Rename with version
+        run: |
+          VERSION=$(node -e "console.log(require('./vdw-vscode/package.json').version)")
+          mv vdw-vscode/vdw-vscode-*.vsix "vdw_vscode_${VERSION}.vsix"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vdw-vscode-vsix
+          path: vdw_vscode_*.vsix
 
   release:
     name: Create Release
-    needs: build
+    needs: [build, build-vsix]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -76,7 +113,7 @@ jobs:
 
       - name: Generate checksums
         run: |
-          find . -name 'vdw-*' -type f | while read f; do
+          find . -name 'vdw_*' -type f | while read f; do
             sha256sum "$f" >> checksums.txt
           done
 
@@ -85,6 +122,7 @@ jobs:
         with:
           files: |
             vdw-*/
+            vdw-vscode-vsix/
             checksums.txt
           generate_release_notes: true
           draft: false

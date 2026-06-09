@@ -1,6 +1,0 @@
-{
-  "vdw.cliPath": "/Users/tbsg/Desktop/codes/agent-vdm/vdw/vdw",
-  "terminal.integrated.env.osx": {
-    "PATH": "/Users/tbsg/Desktop/codes/agent-vdm/vdw:${env:PATH}"
-  }
-}

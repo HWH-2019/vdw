@@ -20,6 +20,7 @@
 - [vdw/src/context/filter.rs](file://vdw/src/context/filter.rs)
 - [vdw/src/context/glob_matcher.rs](file://vdw/src/context/glob_matcher.rs)
 - [vdw/src/worktree/manager.rs](file://vdw/src/worktree/manager.rs)
+- [vdw/src/link/platform.rs](file://vdw/src/link/platform.rs)
 - [vdw-vscode/src/commands/index.ts](file://vdw-vscode/src/commands/index.ts)
 - [vdw-vscode/src/commands/addRepo.ts](file://vdw-vscode/src/commands/addRepo.ts)
 - [vdw-vscode/src/providers/workspaceTreeView.ts](file://vdw-vscode/src/providers/workspaceTreeView.ts)
@@ -32,16 +33,17 @@
 - [ai_workspace/VDW插件功能增强_需求文档_v1.0.md](file://ai_workspace/VDW插件功能增强_需求文档_v1.0.md)
 - [ai_workspace/VDW配置重构_需求文档_v1.0.md](file://ai_workspace/VDW配置重构_需求文档_v1.0.md)
 - [vdw-test/README.md](file://vdw-test/README.md)
+- [.github/workflows/release.yml](file://.github/workflows/release.yml)
+- [vdw/install.sh](file://vdw/install.sh)
 </cite>
 
 ## Update Summary
 **Changes Made**
-- Enhanced documentation to cover all four main components as outlined in the new README.md structure
-- Updated feature documentation to reflect comprehensive coverage of Rust CLI, VS Code Extension, test workspace, and AI workspace documentation
-- Added detailed documentation for the new configuration structure with remote/local separation
-- Expanded VS Code plugin documentation with enhanced features and improved user experience
-- Updated AI workspace documentation with comprehensive technical specifications
-- Enhanced troubleshooting guide with new diagnostic commands and error handling
+- Enhanced platform support documentation to reflect M4 chip architecture support for macOS arm64
+- Updated Linux platform support to include aarch64 architecture alongside x86_64
+- Revised Windows platform status indicators to reflect current compatibility status
+- Updated installation script to support new platform targets
+- Enhanced cross-compilation workflow to include M4 and aarch64 targets
 
 ## Table of Contents
 1. [Introduction](#introduction)
@@ -120,6 +122,24 @@ The architecture ensures loose coupling between components while maintaining cle
 
 ## Core Components
 
+### Enhanced Platform Support Matrix
+
+**Updated** Enhanced platform support matrix now includes M4 chip architecture support and expanded Linux/aarch64 compatibility.
+
+| Platform | Architectures | Link Strategy | Status |
+|----------|---------------|---------------|---------|
+| 🍎 macOS | arm64 (M4), x86_64 | HardLink → Symlink | ✅ Fully Supported |
+| 🐧 Linux | x86_64, aarch64 | HardLink → Symlink | ⏳ Experimental |
+| 🪟 Windows | x86_64 (Git Bash / WSL) | Junction → Symlink | ⏳ Experimental |
+
+**Enhanced Platform Detection Logic:**
+The platform detection system now includes comprehensive support for Apple Silicon (M4) processors and ARM-based Linux systems. The system automatically selects optimal linking strategies based on hardware architecture and filesystem capabilities.
+
+**Section sources**
+- [vdw/src/link/platform.rs:12-30](file://vdw/src/link/platform.rs#L12-L30)
+- [README.md:207-209](file://README.md#L207-L209)
+- [vdw/README.md:336-337](file://vdw/README.md#L336-L337)
+
 ### Enhanced Feature Matrix Overview
 
 | Component | Feature | Priority | Description | Key Technologies |
@@ -181,6 +201,7 @@ FileSystem[File System APIs]
 GitInterface[Git Interface]
 NetworkLayer[Network Layer]
 ExtensionAPI[VS Code Extension API]
+PlatformDetection[Platform Detection]
 end
 CLI --> Commands
 VSCodeExt --> UI
@@ -203,6 +224,8 @@ StateMgr --> StatePersistence
 StatePersistence --> StateLoader
 AutoOpenService --> ExtensionAPI
 TerminalService --> ExtensionAPI
+PlatformDetection --> FileSystem
+PlatformDetection --> GitInterface
 ```
 
 **Diagram sources**
@@ -456,9 +479,14 @@ GenerateView --> Complete([Operation Complete])
 
 #### Enhanced Platform-Specific Strategies
 
+**Updated** Enhanced platform support now includes M4 chip architecture and aarch64 Linux support:
+
 | Platform | Preferred Solution | Fallback Solution | Requirements |
 |----------|-------------------|-------------------|--------------|
-| macOS/Linux | Hard Link | Symlink | Same filesystem partition |
+| macOS (Intel/x86_64) | Hard Link | Symlink | Same filesystem partition |
+| macOS (Apple Silicon/M4) | Hard Link | Symlink | Same filesystem partition |
+| Linux (x86_64) | Hard Link | Symlink | Same filesystem partition |
+| Linux (ARM/aarch64) | Hard Link | Symlink | Same filesystem partition |
 | Windows | Junction Point | Symlink | Developer mode/admin privileges |
 | Cross-Partition | Symlink | Reflink (CoW) | Filesystem support |
 
@@ -1083,7 +1111,7 @@ ai_workspace/
 
 **Section sources**
 - [ai_workspace/VDW虚拟工作空间_需求文档_v1.0.md](file://ai_workspace/VDW虚拟工作空间_需求文档_v1.0.md)
-- [ai_workspace/VDW插건功能增强_需求文档_v1.0.md](file://ai_workspace/VDW插件功能增强_需求文档_v1.0.md)
+- [ai_workspace/VDW插件功能增强_需求文档_v1.0.md](file://ai_workspace/VDW插件功能增强_需求文档_v1.0.md)
 - [ai_workspace/VDW配置重构_需求文档_v1.0.md](file://ai_workspace/VDW配置重构_需求文档_v1.0.md)
 
 ## Dependency Analysis
@@ -1258,7 +1286,7 @@ The VDW system is designed with aggressive performance targets to ensure smooth 
 **Issue: Disk Space Not Reduced**
 - **Symptoms**: VDW store consumes expected amount of space
 - **Causes**: New repository clones bypassing reference mechanism
-- **Solutions**:
+- **Solutions:**
   - Verify Git alternates configuration
   - Check store integrity with `vdw store repair`
   - Review network connectivity for object sharing
@@ -1318,6 +1346,15 @@ The VDW system is designed with aggressive performance targets to ensure smooth 
   - Verify worktree path validity in `.vdwrc`
   - Check Git repository integrity
 
+**Issue: Platform-Specific Linking Issues**
+- **Symptoms**: Link creation fails on specific platforms or architectures
+- **Causes**: Unsupported file systems, insufficient permissions, architecture-specific limitations
+- **Solutions**:
+  - Verify platform support for M4 (arm64) and aarch64 architectures
+  - Check filesystem capabilities for hard link support
+  - Ensure proper permissions for cross-partition operations
+  - Use symlink fallback for unsupported scenarios
+
 ### Enhanced Diagnostic Commands
 
 **Enhanced System Health Checks:**
@@ -1368,7 +1405,8 @@ The enhanced four-component architecture provides a solid foundation for both im
 - **Enhanced VS Code Integration**: Per-repository unlinking, terminal integration, and auto-open features
 - **Backend Improvements**: Timeout handling for network operations and enhanced error reporting
 - **Selective Repository Operations**: Granular control over individual repository linking/unlinking
-- **Expanded Configuration Options**: Comprehensive scope-based filtering and validation
+- **Expanded Platform Support**: M4 chip architecture (arm64) and aarch64 Linux compatibility
+- **Enhanced Configuration Options**: Comprehensive scope-based filtering and validation
 - **Enhanced Configuration Structure**: Clear remote/local separation with backward compatibility
 - **Simplified State Management**: Worktree paths directly managed in configuration
 - **Comprehensive Test Environment**: Well-structured test workspace with fixtures
@@ -1382,6 +1420,7 @@ The enhanced four-component architecture provides a solid foundation for both im
 - **Granular workspace management** enabling selective repository operations
 - **Robust error handling** with comprehensive troubleshooting guidance
 - **Enhanced user experience** through improved VS Code integration
+- **Expanded platform compatibility** supporting modern architectures
 - **Comprehensive testing coverage** through dedicated test workspace
 - **Complete technical documentation** for all features and components
 

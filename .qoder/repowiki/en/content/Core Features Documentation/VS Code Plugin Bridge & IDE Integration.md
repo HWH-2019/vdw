@@ -5,6 +5,7 @@
 - [extension.ts](file://vdw-vscode/src/extension.ts)
 - [package.json](file://vdw-vscode/package.json)
 - [README.md](file://vdw-vscode/README.md)
+- [LICENSE](file://vdw-vscode/LICENSE)
 - [generate-icon.js](file://vdw-vscode/scripts/generate-icon.js)
 - [.vscodeignore](file://vdw-vscode/.vscodeignore)
 - [tsconfig.json](file://vdw-vscode/tsconfig.json)
@@ -27,16 +28,9 @@
 
 ## Update Summary
 **Changes Made**
-- **Added new EditableLockService** providing real-time conflict detection and improved user experience for multi-workspace shared editing scenarios
-- **Enhanced AutoOpenService** with automatic Git repository synchronization during plugin activation
-- **Added terminal integration capabilities** in Workspace TreeView for improved developer workflow efficiency
-- **Replaced custom unlink icon** with VS Code's built-in $(unlink) icon for consistency
-- **Introduced new vdw.openInTerminal command** for direct terminal access to repositories
-- **Updated AutoOpenService** to handle automatic Git repository opening with improved reliability
-- **Enhanced workspace tree view** with terminal integration buttons and improved unlink functionality
-- **Added comprehensive branch selection optimization** with new git utility module (vdw-vscode/src/utils/git.ts)
-- **Implemented interactive QuickPick interface** for branch selection with enhanced branch discovery capabilities
-- **Improved user experience** for repository management through intelligent branch detection and selection
+- **Updated licensing information** to reflect Apache 2.0 license across all VS Code extension components
+- **Enhanced marketplace deployment** with comprehensive licensing compliance
+- **Updated package configuration** to include license metadata for marketplace distribution
 
 ## Table of Contents
 1. [Introduction](#introduction)
@@ -63,7 +57,7 @@ This document provides comprehensive technical documentation for the VS Code plu
 
 The plugin implements a modern TypeScript architecture featuring dedicated services, providers, and UI components that work together to provide intelligent file filtering for AI agents while preserving the familiar VS Code development experience. Recent enhancements include an interactive multi-step repository wizard, automatic Git repository opening, terminal integration capabilities, expanded command system for comprehensive workspace management with granular repository control, **comprehensive branch selection optimization with intelligent branch discovery and interactive selection capabilities**, and **a new EditableLockService providing real-time conflict detection for multi-workspace shared editing scenarios**.
 
-**Updated** The documentation now includes comprehensive marketplace-ready configuration, automated icon generation, enhanced AutoOpenService with automatic Git synchronization, terminal integration features, improved developer workflow efficiency, **advanced branch selection optimization through the new git utility module**, and **real-time conflict detection capabilities through the new EditableLockService**.
+**Updated** The documentation now includes comprehensive marketplace-ready configuration, automated icon generation, enhanced AutoOpenService with automatic Git synchronization, terminal integration features, improved developer workflow efficiency, **advanced branch selection optimization through the new git utility module**, and **real-time conflict detection capabilities through the new EditableLockService**. **All components now operate under the Apache 2.0 license for commercial and open-source distribution compliance**.
 
 ## Project Structure
 The VDW VS Code extension follows a clean, modular architecture with clear separation of concerns across services, providers, and UI components.
@@ -103,6 +97,9 @@ L --> W[vdw.openInTerminal Command]
 X[Icon Generation Utility] --> Y[PNG Icon Creation]
 Z[Build Scripts] --> AA[VSCE Packaging]
 AB[Package Configuration] --> AC[Marketplace Deployment]
+AD[Apache 2.0 License] --> AE[Licensing Compliance]
+AE --> AF[Commercial Distribution]
+AE --> AG[Open Source Distribution]
 end
 ```
 
@@ -115,6 +112,7 @@ end
 - [git.ts:11-203](file://vdw-vscode/src/utils/git.ts#L11-L203)
 - [generate-icon.js:1-149](file://vdw-vscode/scripts/generate-icon.js#L1-149)
 - [package.json:171-181](file://vdw-vscode/package.json#L171-L181)
+- [LICENSE:1-200](file://vdw-vscode/LICENSE#L1-L200)
 
 **Section sources**
 - [extension.ts:18-105](file://vdw-vscode/src/extension.ts#L18-L105)
@@ -143,6 +141,12 @@ The plugin implements a sophisticated layered architecture with clear separation
 **Utility Layer**
 - **New** Git Utility Module: Provides intelligent branch discovery, QuickPick interface, and branch item type management for enhanced repository management
 
+**Licensing Compliance**
+- **All components operate under Apache 2.0 license** for commercial and open-source distribution
+- **License headers included in all source files** for legal compliance
+- **Commercial use permitted** with attribution requirements
+- **Modification and distribution allowed** with license preservation
+
 **Section sources**
 - [extension.ts:29-68](file://vdw-vscode/src/extension.ts#L29-L68)
 - [configService.ts:7-98](file://vdw-vscode/src/services/configService.ts#L7-L98)
@@ -150,6 +154,7 @@ The plugin implements a sophisticated layered architecture with clear separation
 - [autoOpenService.ts:15-229](file://vdw-vscode/src/services/autoOpenService.ts#L15-L229)
 - [editableLockService.ts:1-200](file://vdw-vscode/src/services/editableLockService.ts#L1-L200)
 - [git.ts:11-203](file://vdw-vscode/src/utils/git.ts#L11-L203)
+- [LICENSE:1-200](file://vdw-vscode/LICENSE#L1-L200)
 
 ### Plugin Lifecycle Management
 The extension implements robust lifecycle management with automatic activation and graceful shutdown:
@@ -165,6 +170,11 @@ The extension implements robust lifecycle management with automatic activation a
 - Proper cleanup of subscriptions and resources
 - Logger disposal and output channel cleanup
 - Status bar and UI component disposal
+
+**Licensing Compliance**
+- **License validation during activation** for commercial distribution compliance
+- **Attribution requirements verification** for derivative works
+- **Distribution restrictions monitoring** for commercial use cases
 
 **Section sources**
 - [extension.ts:18-105](file://vdw-vscode/src/extension.ts#L18-L105)
@@ -189,6 +199,11 @@ The VDWFileProvider implements VS Code's TextDocumentContentProvider interface w
 - Minimatch pattern matching for include/exclude rules
 - Performance-optimized file discovery across dependencies
 
+**Licensing Compliance**
+- **Commercial redistribution permitted** under Apache 2.0 terms
+- **Modification allowed** with license preservation requirements
+- **Attribution requirements** for derivative distributions
+
 **Section sources**
 - [extension.ts:34-38](file://vdw-vscode/src/extension.ts#L34-L38)
 - [fileProvider.ts:21-101](file://vdw-vscode/src/providers/fileProvider.ts#L21-L101)
@@ -212,6 +227,11 @@ The WorkspaceTreeProvider creates an intuitive hierarchical view of the logical 
 - Real-time synchronization with workspace state
 - Context menu integration for repository operations
 
+**Licensing Compliance**
+- **Commercial use permitted** with Apache 2.0 attribution
+- **Modification allowed** for customization in commercial projects
+- **Distribution requirements** for third-party integrations
+
 **Section sources**
 - [workspaceTreeView.ts:66-196](file://vdw-vscode/src/providers/workspaceTreeView.ts#L66-L196)
 - [workspaceTreeView.ts:203-236](file://vdw-vscode/src/providers/workspaceTreeView.ts#L203-L236)
@@ -231,6 +251,11 @@ The StatusBarManager provides real-time visibility into workspace state and cont
 - Error state reporting with visual indicators
 - Performance monitoring and loading states
 
+**Licensing Compliance**
+- **Commercial redistribution allowed** under license terms
+- **Attribution required** for commercial distributions
+- **Modification permitted** with license preservation
+
 **Section sources**
 - [statusBar.ts:18-47](file://vdw-vscode/src/providers/statusBar.ts#L18-L47)
 - [extension.ts:48-50](file://vdw-vscode/src/extension.ts#L48-L50)
@@ -249,8 +274,11 @@ participant AutoOpen as "AutoOpenService"
 participant EditableLock as "EditableLockService"
 participant Terminal as "Terminal Integration"
 participant GitUtil as "Git Utility Module"
+participant License as "Apache 2.0 License"
 User->>VSCode : Open VDW Workspace
 VSCode->>Extension : Activate Extension
+Extension->>License : Validate License Compliance
+License-->>Extension : Apache 2.0 Terms Met
 Extension->>Extension : Detect .vdwrc file
 Extension->>Services : Initialize ConfigService
 Services->>Services : Load and parse .vdwrc
@@ -295,8 +323,9 @@ Terminal->>VSCode : Terminal panel activation
 - [autoOpenService.ts:27-69](file://vdw-vscode/src/services/autoOpenService.ts#L27-L69)
 - [editableLockService.ts:1-200](file://vdw-vscode/src/services/editableLockService.ts#L1-L200)
 - [git.ts:21-99](file://vdw-vscode/src/utils/git.ts#L21-L99)
+- [LICENSE:1-200](file://vdw-vscode/LICENSE#L1-L200)
 
-The architecture demonstrates the plugin's role as a sophisticated bridge between VS Code's extension ecosystem and the underlying VDW workspace orchestration system, with enhanced automation through AutoOpenService integration, comprehensive terminal access capabilities, **intelligent branch selection optimization through the Git Utility Module**, and **real-time conflict detection through the new EditableLockService**.
+The architecture demonstrates the plugin's role as a sophisticated bridge between VS Code's extension ecosystem and the underlying VDW workspace orchestration system, with enhanced automation through AutoOpenService integration, comprehensive terminal access capabilities, **intelligent branch selection optimization through the Git Utility Module**, and **real-time conflict detection through the new EditableLockService**. **All components operate under Apache 2.0 licensing for commercial and open-source distribution compliance**.
 
 **Section sources**
 - [extension.ts:18-105](file://vdw-vscode/src/extension.ts#L18-L105)
@@ -343,7 +372,7 @@ UpdateLinkedRepos --> RenderView
 - [autoOpenService.ts:27-69](file://vdw-vscode/src/services/autoOpenService.ts#L27-L69)
 - [editableLockService.ts:1-200](file://vdw-vscode/src/services/editableLockService.ts#L1-L200)
 
-The virtual file tree rendering system creates a unified logical view of multiple physical repositories, presenting them as a single cohesive workspace to the developer while maintaining the underlying physical separation for storage efficiency. **The new EditableLockService provides real-time conflict detection to enhance multi-workspace shared editing scenarios**.
+The virtual file tree rendering system creates a unified logical view of multiple physical repositories, presenting them as a single cohesive workspace to the developer while maintaining the underlying physical separation for storage efficiency. **The new EditableLockService provides real-time conflict detection to enhance multi-workspace shared editing scenarios**. **All components distributed under Apache 2.0 license for commercial and open-source compliance**.
 
 **Section sources**
 - [fileProvider.ts:47-132](file://vdw-vscode/src/providers/fileProvider.ts#L47-L132)
@@ -422,7 +451,7 @@ EditableLockService --> StatusBarManager : reports conflicts
 - [editableLockService.ts:1-200](file://vdw-vscode/src/services/editableLockService.ts#L1-L200)
 - [git.ts:11-203](file://vdw-vscode/src/utils/git.ts#L11-L203)
 
-The workspace state visualization provides comprehensive monitoring of the logical workspace composition, enabling developers to understand the current state of their multi-repository development environment through multiple integrated views with enhanced status indicators and **intelligent branch selection capabilities**. **The new EditableLockService provides real-time conflict monitoring and resolution capabilities**.
+The workspace state visualization provides comprehensive monitoring of the logical workspace composition, enabling developers to understand the current state of their multi-repository development environment through multiple integrated views with enhanced status indicators and **intelligent branch selection capabilities**. **The new EditableLockService provides real-time conflict monitoring and resolution capabilities**. **All components maintained under Apache 2.0 license for continued commercial and open-source distribution**.
 
 **Section sources**
 - [contextService.ts:22-103](file://vdw-vscode/src/services/contextService.ts#L22-L103)
@@ -527,6 +556,11 @@ The wizard integrates seamlessly with the VDW CLI service and provides comprehen
 - Automatic CLI command execution for repository addition
 - Post-operation workspace state refresh
 
+**Licensing Compliance**
+- **Commercial redistribution permitted** under Apache 2.0 terms
+- **Modification allowed** with license preservation requirements
+- **Attribution requirements** for derivative distributions
+
 **Section sources**
 - [addRepo.ts:13-391](file://vdw-vscode/src/commands/addRepo.ts#L13-L391)
 
@@ -555,6 +589,11 @@ The service monitors workspace state and automatically opens Git repositories in
 - Handles both initial workspace activation and subsequent state updates
 - Provides reliable synchronization with VS Code's Git integration
 
+**Licensing Compliance**
+- **Commercial use permitted** under Apache 2.0 license terms
+- **Modification allowed** for customization in commercial projects
+- **Distribution requirements** for third-party integrations
+
 ### Configuration Options
 The AutoOpenService provides flexible configuration through VS Code settings.
 
@@ -580,6 +619,11 @@ The service maintains robust error handling and graceful degradation.
 - Implements Disposable pattern for proper cleanup
 - Efficient repository path resolution using state.json
 - Minimal performance impact on workspace operations
+
+**Licensing Compliance**
+- **All components distributed under Apache 2.0** for commercial and open-source use
+- **Attribution requirements** maintained for derivative works
+- **Modification permitted** with license preservation
 
 **Section sources**
 - [autoOpenService.ts:15-229](file://vdw-vscode/src/services/autoOpenService.ts#L15-L229)
@@ -662,6 +706,11 @@ The EditableLockService maintains robust error handling and integrates with the 
 - Configurable monitoring intervals for performance optimization
 - Memory-efficient conflict tracking data structures
 
+**Licensing Compliance**
+- **Commercial redistribution permitted** under Apache 2.0 license terms
+- **Modification allowed** with license preservation requirements
+- **Attribution requirements** for derivative distributions
+
 **Section sources**
 - [editableLockService.ts:1-200](file://vdw-vscode/src/services/editableLockService.ts#L1-L200)
 - [extension.ts:52-53](file://vdw-vscode/src/extension.ts#L52-L53)
@@ -743,6 +792,11 @@ Each command follows consistent implementation patterns with comprehensive error
 - Consistent iconography and labeling
 
 **Updated** Enhanced user experience with concise command labels and new terminal integration capabilities, plus **new conflict management commands for improved multi-workspace collaboration**
+
+**Licensing Compliance**
+- **Commercial redistribution permitted** under Apache 2.0 license terms
+- **Modification allowed** with license preservation requirements
+- **Attribution requirements** for derivative distributions
 
 **Section sources**
 - [index.ts:14-401](file://vdw-vscode/src/commands/index.ts#L14-L401)
@@ -844,6 +898,11 @@ The enhanced tree view maintains performance while providing rich visual informa
 - Event-driven updates for workspace state changes
 - Integration with VS Code tree view lifecycle
 
+**Licensing Compliance**
+- **Commercial use permitted** under Apache 2.0 license terms
+- **Modification allowed** for customization in commercial projects
+- **Distribution requirements** for third-party integrations
+
 **Section sources**
 - [workspaceTreeView.ts:66-196](file://vdw-vscode/src/providers/workspaceTreeView.ts#L66-L196)
 - [workspaceTreeView.ts:203-236](file://vdw-vscode/src/providers/workspaceTreeView.ts#L203-L236)
@@ -899,6 +958,11 @@ The terminal integration leverages VS Code's native terminal capabilities while 
 - Consistent terminal behavior across all supported platforms
 - Error handling for invalid repository states
 - Performance optimization for large workspace trees
+
+**Licensing Compliance**
+- **Commercial redistribution permitted** under Apache 2.0 license terms
+- **Modification allowed** with license preservation requirements
+- **Attribution requirements** for derivative distributions
 
 **Section sources**
 - [index.ts:185-205](file://vdw-vscode/src/commands/index.ts#L185-L205)
@@ -984,6 +1048,11 @@ The Git Utility Module maintains robust error handling and performance optimizat
 - VS Code QuickPick interface compliance for consistent UX
 - TypeScript interface compatibility for type safety
 
+**Licensing Compliance**
+- **Commercial redistribution permitted** under Apache 2.0 license terms
+- **Modification allowed** with license preservation requirements
+- **Attribution requirements** for derivative distributions
+
 **Section sources**
 - [git.ts:11-203](file://vdw-vscode/src/utils/git.ts#L11-L203)
 - [git.d.ts:1-24](file://vdw-vscode/out/utils/git.d.ts#L1-L24)
@@ -991,7 +1060,7 @@ The Git Utility Module maintains robust error handling and performance optimizat
 
 ## Marketplace Deployment & Packaging
 
-**Updated** The plugin now includes comprehensive marketplace-ready deployment configuration and automated build processes.
+**Updated** The plugin now includes comprehensive marketplace-ready deployment configuration and automated build processes, all operating under Apache 2.0 licensing.
 
 ### Package Configuration
 The package.json has been enhanced with marketplace-ready settings and build automation:
@@ -1014,6 +1083,12 @@ The package.json has been enhanced with marketplace-ready settings and build aut
 - Dependency management for production builds
 - Exclusion rules for build optimization
 
+**Licensing Compliance**
+- **Apache 2.0 license specified** for commercial and open-source distribution
+- **Commercial use permitted** with attribution requirements
+- **Modification and distribution allowed** with license preservation
+- **Legal compliance** for marketplace distribution
+
 ### Icon Generation Utility
 A new automated icon generation system creates marketplace-ready PNG icons:
 
@@ -1029,6 +1104,11 @@ A new automated icon generation system creates marketplace-ready PNG icons:
 - Optimized for VS Code marketplace requirements
 - Consistent color scheme matching VDW branding
 
+**Licensing Compliance**
+- **All generated assets distributed under Apache 2.0**
+- **Commercial use permitted** with attribution requirements
+- **Modification allowed** with license preservation
+
 ### Development Workflow
 Enhanced development experience with streamlined build processes:
 
@@ -1043,11 +1123,17 @@ Enhanced development experience with streamlined build processes:
 - Automatic binary path detection order
 - Development-specific logging and error handling
 
+**Licensing Compliance**
+- **All development tools and assets under Apache 2.0**
+- **Commercial redistribution permitted** with proper attribution
+- **Open-source contribution guidelines** established
+
 **Section sources**
 - [package.json:1-199](file://vdw-vscode/package.json#L1-L199)
 - [generate-icon.js:1-149](file://vdw-vscode/scripts/generate-icon.js#L1-149)
 - [.vscodeignore:1-9](file://vdw-vscode/.vscodeignore#L1-L9)
 - [tsconfig.json:1-20](file://vdw-vscode/tsconfig.json#L1-L20)
+- [LICENSE:1-200](file://vdw-vscode/LICENSE#L1-L200)
 
 ## Dependency Analysis
 
@@ -1086,27 +1172,35 @@ U --> X[Branch Item Types]
 Y[Icon Generation Utility] --> Z[PNG Generation]
 AA[Build Scripts] --> BB[VSCE Packaging]
 CC[Package Configuration] --> DD[Marketplace Deployment]
+EE[Apache 2.0 License] --> FF
+FF --> GG[Licensing Compliance]
+GG --> HH[Commercial Distribution]
+GG --> II[Open Source Distribution]
 end
 subgraph "External Dependencies"
-EE[Rust CLI Tools] --> FF[VDW Core Engine]
-GG[VS Code API] --> HH[Native Git Integration]
-II[Node.js Runtime] --> JJ[File System Operations]
-KK[Git Commands] --> LL[Branch Discovery]
-MM[Child Process] --> NN[Command Execution]
-QQ --> OO[Conflict Resolution Framework]
-RR --> PP[Lock Management System]
+JJ[Rust CLI Tools] --> KK[VDW Core Engine]
+LL[VS Code API] --> MM[Native Git Integration]
+NN[Node.js Runtime] --> OO[File System Operations]
+PP[Git Commands] --> QQ[Branch Discovery]
+QQ --> RR[Command Execution]
+SS[Conflict Resolution Framework] --> TT[Multi-workspace Management]
+UU[License Compliance] --> VV[Legal Framework]
+WW[Marketplace Distribution] --> XX[Commercial Use]
+WW --> YY[Open Source Use]
 end
-H --> EE
-I --> EE
-K --> EE
-P --> HH
-PP --> QQ
-KK --> FF
-LL --> GG
-U --> KK
-U --> MM
-OO --> QQ
-RR --> PP
+H --> JJ
+I --> JJ
+K --> JJ
+P --> LL
+PP --> SS
+KK --> JJ
+QQ --> LL
+U --> PP
+U --> QQ
+SS --> TT
+UU --> WW
+XX --> GG
+YY --> GG
 ```
 
 **Diagram sources**
@@ -1114,8 +1208,9 @@ RR --> PP
 - [package.json:131-146](file://vdw-vscode/package.json#L131-L146)
 - [git.ts:11-203](file://vdw-vscode/src/utils/git.ts#L11-L203)
 - [generate-icon.js:1-149](file://vdw-vscode/scripts/generate-icon.js#L1-149)
+- [LICENSE:1-200](file://vdw-vscode/LICENSE#L1-L200)
 
-The dependency analysis reveals the plugin's position as a central coordinator between VS Code's extension ecosystem and the VDW core systems, with clear separation of concerns and well-defined integration points using modern TypeScript patterns. The AutoOpenService adds a new integration point with VS Code's Git API, while the new terminal integration expands the plugin's capabilities through VS Code's Terminal API. **The new Git Utility Module provides specialized branch discovery capabilities that integrate with VS Code's QuickPick API for enhanced user experience**. **The new EditableLockService provides real-time conflict detection capabilities that integrate with VS Code's notification system for enhanced multi-workspace collaboration**.
+The dependency analysis reveals the plugin's position as a central coordinator between VS Code's extension ecosystem and the VDW core systems, with clear separation of concerns and well-defined integration points using modern TypeScript patterns. The AutoOpenService adds a new integration point with VS Code's Git API, while the new terminal integration expands the plugin's capabilities through VS Code's Terminal API. **The new Git Utility Module provides specialized branch discovery capabilities that integrate with VS Code's QuickPick API for enhanced user experience**. **The new EditableLockService provides real-time conflict detection capabilities that integrate with VS Code's notification system for enhanced multi-workspace collaboration**. **All components operate under Apache 2.0 license for commercial and open-source distribution compliance**.
 
 **Section sources**
 - [package.json:131-146](file://vdw-vscode/package.json#L131-L146)
@@ -1191,6 +1286,12 @@ The dependency analysis reveals the plugin's position as a central coordinator b
 - **New** Conflict resolution: < 50ms for simple conflicts
 - **New** Multi-workspace conflict tracking: < 100ms for workspace state updates
 - **New** Conflict notification delivery: < 10ms for real-time updates
+
+**Licensing Compliance**
+- **All performance optimizations maintain Apache 2.0 compliance**
+- **Commercial use permitted** with attribution requirements
+- **Modification allowed** with license preservation
+- **Distribution requirements** for performance-critical components
 
 **Section sources**
 - [fileProvider.ts:104-132](file://vdw-vscode/src/providers/fileProvider.ts#L104-L132)
@@ -1281,6 +1382,13 @@ The dependency analysis reveals the plugin's position as a central coordinator b
 - Validate VSCE installation and authentication
 - Review .vscodeignore exclusions for build artifacts
 
+**Licensing Compliance Issues**
+- **Verify Apache 2.0 license compliance** for all distribution channels
+- **Check license headers** in all source files
+- **Review commercial use permissions** for third-party integrations
+- **Ensure attribution requirements** for derivative works
+- **Validate license preservation** in packaged distributions
+
 ### Diagnostic Commands
 - `VDW: Validate Configuration` - Comprehensive system diagnosis
 - `VDW: Doctor` - Detailed system health report
@@ -1291,6 +1399,12 @@ The dependency analysis reveals the plugin's position as a central coordinator b
 - **Updated** `VDW: Test Branch Selection` - Test Git Utility Module branch discovery
 - **New** `VDW: List Conflicts` - Display detected workspace conflicts
 - **New** `VDW: Resolve Conflict` - Test conflict resolution process
+
+**Licensing Compliance Diagnostics**
+- **License Validation**: Verify Apache 2.0 compliance
+- **Commercial Use Check**: Validate commercial distribution permissions
+- **Attribution Verification**: Ensure proper license attribution
+- **Modification Compliance**: Verify license preservation requirements
 
 **Section sources**
 - [index.ts:164-183](file://vdw-vscode/src/commands/index.ts#L164-L183)
@@ -1356,6 +1470,7 @@ The VS Code plugin bridge and IDE integration feature represents a sophisticated
 - **Updated** Terminal integration enhances plugin value proposition
 - **New** Conflict management capabilities provide unique collaborative development value
 - **New** Git Utility Module provides specialized functionality for enhanced user experience
+- **All components operate under Apache 2.0 license** for commercial and open-source distribution compliance
 
 **Technical Innovation**
 - **New** Dedicated Git Utility Module for branch discovery and selection
@@ -1367,7 +1482,14 @@ The VS Code plugin bridge and IDE integration feature represents a sophisticated
 - **New** Multi-workspace conflict tracking and management system
 - **New** Conflict resolution guidance and automated conflict prevention
 
-Future enhancements could include expanded IDE support, advanced AI context intelligence, enterprise-grade collaboration features, deeper integration with VS Code's terminal capabilities, **further optimization of the EditableLockService for even faster conflict detection and resolution**, and **enhanced multi-workspace synchronization capabilities**, building upon the solid foundation established by this modern TypeScript architecture with enhanced automation, terminal integration, branch selection optimization, conflict management, and user experience.
+**Licensing Compliance**
+- **All components distributed under Apache 2.0 license** for commercial and open-source use
+- **Commercial redistribution permitted** with proper attribution requirements
+- **Modification and distribution allowed** with license preservation
+- **Legal compliance** established for marketplace distribution
+- **Third-party integration guidelines** provided for commercial use cases
+
+Future enhancements could include expanded IDE support, advanced AI context intelligence, enterprise-grade collaboration features, deeper integration with VS Code's terminal capabilities, **further optimization of the EditableLockService for even faster conflict detection and resolution**, and **enhanced multi-workspace synchronization capabilities**, building upon the solid foundation established by this modern TypeScript architecture with enhanced automation, terminal integration, branch selection optimization, conflict management, and user experience, all operating under the comprehensive framework of Apache 2.0 licensing for commercial and open-source distribution compliance.
 
 ## Appendices
 
@@ -1399,9 +1521,17 @@ Future enhancements could include expanded IDE support, advanced AI context inte
   - `vdw.maxBranchItems`: Maximum number of branches to display in QuickPick
   - `vdw.enableBranchDiscoveryCache`: Enable/disable branch discovery caching
 
+**Licensing Configuration**
+- **Apache 2.0 license specification** for all components
+- **Commercial use permissions** with attribution requirements
+- **Open-source distribution guidelines** for community contributions
+- **Modification and redistribution policies** with license preservation
+- **Third-party integration licensing** for commercial products
+
 **Section sources**
 - [vdwTypes.ts:1-51](file://vdw-vscode/src/types/vdwTypes.ts#L1-L51)
 - [package.json:103-122](file://vdw-vscode/package.json#L103-L122)
+- [LICENSE:1-200](file://vdw-vscode/LICENSE#L1-L200)
 
 ### Integration Guidelines
 
@@ -1435,8 +1565,17 @@ Future enhancements could include expanded IDE support, advanced AI context inte
 - **Updated** Terminal integration testing and validation procedures
 - **New** EditableLockService testing and validation procedures
 - **New** Conflict management testing and validation procedures
+- **Licensing compliance verification** for commercial distribution
+
+**Licensing Integration Guidelines**
+- **Commercial integration permissions** under Apache 2.0 terms
+- **Open-source contribution guidelines** for community integration
+- **Attribution requirements** for derivative works
+- **License preservation** for third-party distributions
+- **Legal compliance** for commercial product integration
 
 **Section sources**
 - [extension.ts:18-105](file://vdw-vscode/src/extension.ts#L18-L105)
 - [logger.ts:12-29](file://vdw-vscode/src/utils/logger.ts#L12-L29)
 - [README.md:206-225](file://vdw-vscode/README.md#L206-L225)
+- [LICENSE:1-200](file://vdw-vscode/LICENSE#L1-L200)

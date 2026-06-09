@@ -49,7 +49,7 @@ agent-vdm/
 | [VDW 技术设计文档 v1.0](ai_workspace/VDW虚拟工作空间_技术设计文档_v1.0.md) | Technical architecture & design |
 | [VDW 配置重构需求文档 v1.0](ai_workspace/VDW配置重构_需求文档_v1.0.md) | Config schema refactoring (remote/local separation) |
 | [VDW 插件功能增强 v1.0](ai_workspace/VDW插件功能增强_需求文档_v1.0.md) | VS Code plugin feature enhancements |
-| [VDW 分支选择优化 v1.0](ai_workspace/VDW分支选择优化_需求文档_v1.0.md) | Branch selection UX optimization |
+| [VDW 打包与分发 v1.0](ai_workspace/VDW打包与分发_需求文档_v1.0.md) | Unified packaging naming, macOS .dmg installer, scripts/ directory |
 
 ---
 
