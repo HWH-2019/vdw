@@ -1,6 +1,15 @@
 use std::path::Path;
 use anyhow::Result;
 
+/// Normalize path separators to Windows backslash for cmd.exe compatibility.
+/// Rust's Path on Windows preserves forward slashes if the path was constructed
+/// from strings with `/` (e.g., from YAML config or Git Bash env vars).
+/// cmd.exe's `mklink` does NOT understand forward slashes and treats `/xxx` as a switch.
+#[cfg(windows)]
+fn normalize_path_for_cmd(path: &Path) -> String {
+    path.to_string_lossy().replace('/', "\\")
+}
+
 /// Create a junction point (Windows only)
 #[cfg(windows)]
 pub fn create_junction(source: &Path, target: &Path) -> Result<()> {
@@ -11,13 +20,15 @@ pub fn create_junction(source: &Path, target: &Path) -> Result<()> {
     if let Some(parent) = target.parent() {
         std::fs::create_dir_all(parent)?;
     }
+    let target_str = normalize_path_for_cmd(target);
+    let source_str = normalize_path_for_cmd(source);
     let output = Command::new("cmd")
         .args(&[
             "/C",
             "mklink",
             "/J",
-            &target.to_string_lossy(),
-            &source.to_string_lossy(),
+            &target_str,
+            &source_str,
         ])
         .output()?;
     if !output.status.success() {

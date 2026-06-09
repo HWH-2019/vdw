@@ -63,10 +63,20 @@ pub fn determine_strategy(source_dir: &Path, target_dir: &Path) -> LinkStrategy 
 }
 
 /// Select the best link strategy for a specific file.
-/// Uses the pre-determined base strategy; only overrides for directories.
+/// Uses the pre-determined base strategy; overrides based on file/dir and platform.
+///
+/// Rules:
+/// - Directories always use Symlink (hardlinks don't work on dirs)
+/// - On Windows, when base strategy is Junction, files must use Symlink
+///   (Junction points only support directories, not individual files)
 pub fn select_strategy_for_file(source: &Path, base_strategy: LinkStrategy) -> LinkStrategy {
     // Directories always use symlinks (hardlinks don't work on dirs)
     if source.is_dir() {
+        return LinkStrategy::Symlink;
+    }
+    // Windows: Junction only works on directories, not files
+    #[cfg(target_os = "windows")]
+    if base_strategy == LinkStrategy::Junction {
         return LinkStrategy::Symlink;
     }
     base_strategy
