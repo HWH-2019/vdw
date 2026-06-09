@@ -193,6 +193,8 @@ pub fn try_enable_symlink_privilege() -> bool {
 /// enabling symlink creation without admin rights.
 #[cfg(windows)]
 pub fn is_developer_mode_enabled() -> bool {
+    use std::ffi::OsStr;
+    use std::os::windows::ffi::OsStrExt;
     use std::ptr;
 
     extern "system" {
