@@ -134,8 +134,8 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            vdw-*/
-            vdw-vscode-vsix/
+            vdw-*/**
+            vdw-vscode-vsix/**
             checksums.txt
           generate_release_notes: true
           draft: false
