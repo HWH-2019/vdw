@@ -5,7 +5,7 @@
 
 [![Rust](https://img.shields.io/badge/Rust-🦀-orange?style=flat-square)](https://www.rust-lang.org)
 [![VS Code](https://img.shields.io/badge/VS%20Code-Extension-blue?style=flat-square)](https://code.visualstudio.com)
-[![License](https://img.shields.io/badge/license-MIT-blue?style=flat-square)](LICENSE)
+[![License](https://img.shields.io/badge/license-Apache%202.0-blue?style=flat-square)](LICENSE)
 
 ---
 
@@ -16,7 +16,7 @@ Modern development doesn't live in a single repo. VDW solves this by giving you:
 1. 🗄️ A **content-addressable store** on your machine that deduplicates repos
 2. 🔗 **Smart linking** — expose only the files you want via hardlinks / symlinks
 3. 🤖 **AI context filtering** — generate a clean file list for LLM-based coding assistants
-4. 📝 **Editable workspaces** — use git worktrees to modify dependencies in place
+4. 📝 **Editable dependencies** — repos added with `--editable` use git worktrees so you can modify code with full git support
 
 Think of it as **`npm link` but for any language**, combined with **AI-aware file scoping**.
 
@@ -189,15 +189,25 @@ The VS Code extension provides a visual GUI over the CLI:
 
 See [vdw-vscode/README.md](vdw-vscode/README.md) for full documentation.
 
+### 🤖 AI Agent Skill
+
+VDW also ships with a **Qoder skill** ([vdw-cli](.qoder/skills/vdw-cli/SKILL.md)) that lets AI coding agents automatically set up workspaces:
+
+- 🏁 Initialize `.vdwrc` after requirements analysis
+- 📥 Add repos with `--editable` or read-only mode
+- 🔗 Link dependencies and offer IDE launch
+
+The skill follows a scenario-chain model — it asks for confirmation, then picks the right sequence of CLI commands based on your situation.
+
 ---
 
 ## 💻 Platform Support
 
 | OS | Architectures | Link Strategy | Status |
 |----|--------------|---------------|--------|
-| 🍎 macOS | arm64 (M1/M2/M3), x86_64 | HardLink → Symlink | ✅ |
-| 🐧 Linux | x86_64, aarch64 | HardLink → Symlink | ✅ |
-| 🪟 Windows | x86_64 (Git Bash / WSL) | Junction → Symlink | ✅ |
+| 🍎 macOS | arm64 (M4), x86_64 | HardLink → Symlink | ✅ |
+| 🐧 Linux | x86_64, aarch64 | HardLink → Symlink | ⏳ |
+| 🪟 Windows | x86_64 (Git Bash / WSL) | Junction → Symlink | ⏳ |
 
 ---
 
@@ -221,4 +231,4 @@ npm run package
 
 ## 📄 License
 
-MIT
+Apache 2.0

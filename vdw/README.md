@@ -4,7 +4,7 @@
 > Seamlessly stitch multiple repositories into one development workspace, then serve the context to your AI coding assistant.
 
 [![Rust](https://img.shields.io/badge/Rust-🦀-orange?style=flat-square)](https://www.rust-lang.org)
-[![License](https://img.shields.io/badge/license-MIT-blue?style=flat-square)](LICENSE)
+[![License](https://img.shields.io/badge/license-Apache%202.0-blue?style=flat-square)](LICENSE)
 
 ---
 
@@ -24,7 +24,7 @@ You need them all in one place during development. But cloning them manually, ke
 1. 🗄️ A **content-addressable store** on your machine that deduplicates repos
 2. 🔗 **Smart linking** — expose only the files you want via hardlinks / symlinks
 3. 🤖 **AI context filtering** — generate a clean file list for LLM-based coding assistants
-4. 📝 **Editable workspaces** — use git worktrees to modify dependencies in place
+4. 📝 **Editable dependencies** — repos added with `--editable` use git worktrees so you can modify code with full git support
 
 Think of it as **`npm link` but for any language**, combined with **AI-aware file scoping**.
 
@@ -117,7 +117,7 @@ vdw repo add https://github.com/org/ui-lib.git --path libs/ui-lib --branch main
 # Local repo (editable — creates a git worktree)
 vdw repo add /path/to/local/repo --path packages/shared --branch main --editable
 
-# In editable mode (creates a git worktree so you can make changes)
+# Remote repo (editable — creates a git worktree so you can make changes)
 vdw repo add git@github.com:org/shared.git --path packages/shared --branch master --editable
 ```
 
@@ -334,9 +334,9 @@ The extension auto-detects the `vdw` binary — first in the repo directory (`./
 
 | OS | Architectures | Link Strategy | Status |
 |----|--------------|---------------|--------|
-| 🍎 macOS | arm64 (M1/M2/M3), x86_64 | HardLink → Symlink | ✅ |
-| 🐧 Linux | x86_64, aarch64 | HardLink → Symlink | ✅ |
-| 🪟 Windows | x86_64 (Git Bash / WSL) | Junction → Symlink | ✅ |
+| 🍎 macOS | arm64 (M4), x86_64 | HardLink → Symlink | ✅ |
+| 🐧 Linux | x86_64, aarch64 | HardLink → Symlink | ⏳ |
+| 🪟 Windows | x86_64 (Git Bash / WSL) | Junction → Symlink | ⏳ |
 
 > **macOS note**: If you encounter `SIGKILL` (exit code 137) with the release binary, clear the EDR quarantine:
 > ```bash
@@ -385,4 +385,4 @@ vdw/
 
 ## 📄 License
 
-MIT
+Apache 2.0

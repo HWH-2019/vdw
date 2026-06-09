@@ -257,4 +257,4 @@ vdw-vscode/
 
 ## 📄 License
 
-MIT
+Apache 2.0
