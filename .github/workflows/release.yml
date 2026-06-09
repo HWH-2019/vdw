@@ -8,6 +8,9 @@ on:
 permissions:
   contents: write
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   build:
     name: Build ${{ matrix.target }}
@@ -47,9 +50,13 @@ jobs:
           sudo apt-get install -y gcc-aarch64-linux-gnu
 
       - name: Build release
+        working-directory: vdw
+        env:
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
         run: cargo build --release --target ${{ matrix.target }}
 
       - name: Extract version
+        shell: bash
         run: |
           VERSION=$(grep '^version' vdw/Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
           echo "version=$VERSION" >> $GITHUB_ENV
@@ -66,11 +73,11 @@ jobs:
           esac
           ARCHIVE="vdw_${OS}_${ARCH}_${{ env.version }}"
           if [ "$OS" = "win32" ]; then
-            cp target/${{ matrix.target }}/release/vdw.exe "${ARCHIVE}.exe"
-            zip "${ARCHIVE}.zip" "${ARCHIVE}.exe"
-            echo "artifact=${ARCHIVE}.zip" >> $GITHUB_ENV
+            cp vdw/target/${{ matrix.target }}/release/vdw.exe "${ARCHIVE}.exe"
+            tar -czf "${ARCHIVE}.tar.gz" "${ARCHIVE}.exe"
+            echo "artifact=${ARCHIVE}.tar.gz" >> $GITHUB_ENV
           else
-            cp target/${{ matrix.target }}/release/vdw "${ARCHIVE}"
+            cp vdw/target/${{ matrix.target }}/release/vdw "${ARCHIVE}"
             tar -czf "${ARCHIVE}.tar.gz" "${ARCHIVE}"
             echo "artifact=${ARCHIVE}.tar.gz" >> $GITHUB_ENV
           fi
@@ -79,7 +86,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: vdw-${{ matrix.target }}
-          path: vdw/${{ env.artifact }}
+          path: ${{ env.artifact }}
 
   build-vsix:
     runs-on: ubuntu-latest
@@ -87,9 +94,15 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: '18'
-      - run: npm ci
+          node-version: '24'
+      - run: npm ci --verbose
         working-directory: vdw-vscode
+      - name: Upload npm debug log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: npm-debug-logs
+          path: /home/runner/.npm/_logs/*.log
       - run: npm run package
         working-directory: vdw-vscode
       - name: Rename with version

@@ -1,2 +1,4 @@
 vdw-test*/**
 dist/
+.qoder/repowiki/**
+.qoder/rules/**
