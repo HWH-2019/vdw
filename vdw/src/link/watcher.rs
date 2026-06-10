@@ -7,6 +7,9 @@ use notify::{Config, Event, EventKind, RecommendedWatcher, RecursiveMode, Watche
 
 use crate::types::workspace::{LinkEntry, LinkType, WorkspaceState};
 
+/// Debounce window in milliseconds for file system events
+const DEBOUNCE_MS: u64 = 200;
+
 /// A tracked HardLink entry with its inode metadata
 #[derive(Debug, Clone)]
 struct TrackedLink {
@@ -77,7 +80,6 @@ pub fn start_watch(workspace_root: &Path) -> Result<()> {
 
     // Debounce: track last event time per file
     let mut debounce_map: HashMap<PathBuf, Instant> = HashMap::new();
-    const DEBOUNCE_MS: u64 = 200;
 
     // Event loop — blocks until watcher is disconnected (process termination)
     loop {

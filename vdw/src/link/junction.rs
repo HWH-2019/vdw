@@ -17,6 +17,7 @@ fn normalize_path_for_cmd(path: &Path) -> String {
 /// Create a junction point (Windows only)
 #[cfg(windows)]
 #[deprecated(note = "Use HardLink instead")]
+#[allow(deprecated)]
 pub fn create_junction(source: &Path, target: &Path) -> Result<()> {
     use std::process::Command;
     if target.exists() {

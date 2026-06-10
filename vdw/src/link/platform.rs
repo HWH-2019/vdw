@@ -222,7 +222,7 @@ pub fn is_developer_mode_enabled() -> bool {
 
     unsafe {
         let sub_key: Vec<u16> =
-            std::ffi::OsStr::new(r"SOFTWARE\Microsoft\Windows\CurrentVersion\AppModelUnlock")
+            OsStr::new(r"SOFTWARE\Microsoft\Windows\CurrentVersion\AppModelUnlock")
                 .encode_wide()
                 .chain(std::iter::once(0))
                 .collect();

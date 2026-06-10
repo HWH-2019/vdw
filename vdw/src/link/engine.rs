@@ -2,7 +2,9 @@ use anyhow::Result;
 use std::path::Path;
 use walkdir::WalkDir;
 
-use crate::link::{hardlink, junction, platform, symlink};
+use crate::link::{hardlink, platform, symlink};
+#[allow(deprecated)]
+use crate::link::junction;
 use crate::types::config::Scope;
 use crate::types::workspace::{LinkEntry, LinkType};
 
@@ -181,6 +183,7 @@ fn create_single_link(
                             Ok(LinkType::Symlink)
                         }
                         platform::LinkStrategy::Junction => {
+                            #[allow(deprecated)]
                             junction::create_junction(source, target)?;
                             Ok(LinkType::Junction)
                         }
