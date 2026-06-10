@@ -1,10 +1,74 @@
-use std::path::Path;
 use anyhow::Result;
+use std::path::Path;
 use walkdir::WalkDir;
 
 use crate::link::{hardlink, junction, platform, symlink};
 use crate::types::config::Scope;
 use crate::types::workspace::{LinkEntry, LinkType};
+
+/// Get the file index (inode) and volume serial number for a file.
+/// On Windows: uses `GetFileInformationByHandle` to get `nFileIndexLow+High` and `dwVolumeSerialNumber`.
+/// On Unix: uses metadata's `ino()` and `dev()`.
+/// Returns `(inode, volume)` or `None` if not available.
+fn get_file_inode(path: &Path) -> Option<(u64, u64)> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        if let Ok(meta) = std::fs::metadata(path) {
+            return Some((meta.ino(), meta.dev()));
+        }
+    }
+    #[cfg(windows)]
+    {
+        use std::fs::File;
+        use std::os::windows::io::AsRawHandle;
+        // Use Win32 GetFileInformationByHandle via external function
+        #[repr(C)]
+        struct BY_HANDLE_FILE_INFORMATION {
+            file_attributes: u32,
+            creation_time: u64,
+            last_access_time: u64,
+            last_write_time: u64,
+            volume_serial_number: u32,
+            file_size_high: u32,
+            file_size_low: u32,
+            n_number_of_links: u32,
+            file_index_high: u32,
+            file_index_low: u32,
+        }
+
+        extern "system" {
+            fn GetFileInformationByHandle(
+                h_file: *mut std::ffi::c_void,
+                lp_file_information: *mut BY_HANDLE_FILE_INFORMATION,
+            ) -> i32;
+        }
+
+        if let Ok(file) = File::open(path) {
+            let handle = file.as_raw_handle();
+            let mut info = BY_HANDLE_FILE_INFORMATION {
+                file_attributes: 0,
+                creation_time: 0,
+                last_access_time: 0,
+                last_write_time: 0,
+                volume_serial_number: 0,
+                file_size_high: 0,
+                file_size_low: 0,
+                n_number_of_links: 0,
+                file_index_high: 0,
+                file_index_low: 0,
+            };
+            unsafe {
+                if GetFileInformationByHandle(handle as *mut std::ffi::c_void, &mut info) != 0 {
+                    let inode = ((info.file_index_high as u64) << 32) | info.file_index_low as u64;
+                    let volume = info.volume_serial_number as u64;
+                    return Some((inode, volume));
+                }
+            }
+        }
+    }
+    None
+}
 
 /// Create links for a single dependency from source_dir to target_dir
 /// Only links files that match the scope
@@ -28,10 +92,7 @@ pub fn create_dependency_links(
     let base_strategy = platform::determine_strategy(source_dir, target_dir);
 
     // Walk the source directory and link files matching scope
-    for entry in WalkDir::new(source_dir)
-        .into_iter()
-        .filter_map(|e| e.ok())
-    {
+    for entry in WalkDir::new(source_dir).into_iter().filter_map(|e| e.ok()) {
         if !entry.file_type().is_file() {
             continue;
         }
@@ -51,11 +112,28 @@ pub fn create_dependency_links(
         let strategy = platform::select_strategy_for_file(&source_path, base_strategy);
         let actual_link_type = create_single_link(&source_path, &target_path, strategy)?;
 
+        // Capture inode metadata for HardLink (used for broken link detection)
+        let (source_inode, source_volume) = if actual_link_type == LinkType::HardLink {
+            get_file_inode(&source_path).unwrap_or((0, 0))
+        } else {
+            (0, 0)
+        };
+
         entries.push(LinkEntry {
             source: source_path,
             target: target_path,
             link_type: actual_link_type,
             dependency_repo: dep_repo.to_string(),
+            source_inode: if source_inode != 0 {
+                Some(source_inode)
+            } else {
+                None
+            },
+            source_volume: if source_volume != 0 {
+                Some(source_volume)
+            } else {
+                None
+            },
         });
     }
 
@@ -76,7 +154,9 @@ fn create_single_link(
         platform::LinkStrategy::Symlink => {
             symlink::create_symlink(source, target).map(|_| LinkType::Symlink)
         }
-        platform::LinkStrategy::Junction => {
+        platform::LinkStrategy::Junction =>
+        {
+            #[allow(deprecated)]
             junction::create_junction(source, target).map(|_| LinkType::Junction)
         }
     };
@@ -120,7 +200,11 @@ pub fn remove_links(entries: &[LinkEntry]) -> Result<()> {
         match entry.link_type {
             LinkType::HardLink => hardlink::remove_hardlink(&entry.target)?,
             LinkType::Symlink => symlink::remove_symlink(&entry.target)?,
-            LinkType::Junction => junction::remove_junction(&entry.target)?,
+            LinkType::Junction =>
+            {
+                #[allow(deprecated)]
+                junction::remove_junction(&entry.target)?
+            }
         }
     }
 
@@ -136,10 +220,7 @@ pub fn cleanup_empty_dirs(path: &Path, stop_at: &Path) -> Result<()> {
         } else {
             break;
         }
-        current = current
-            .parent()
-            .unwrap_or(stop_at)
-            .to_path_buf();
+        current = current.parent().unwrap_or(stop_at).to_path_buf();
     }
     Ok(())
 }
@@ -328,13 +409,8 @@ mod tests {
             exclude: vec![],
         };
 
-        let entries = create_dependency_links(
-            source_dir.path(),
-            target_dir.path(),
-            &scope,
-            "test",
-        )
-        .expect("Failed to create dependency links");
+        let entries = create_dependency_links(source_dir.path(), target_dir.path(), &scope, "test")
+            .expect("Failed to create dependency links");
 
         // Empty include means nothing matches
         assert!(entries.is_empty());
@@ -352,13 +428,8 @@ mod tests {
             exclude: vec![],
         };
 
-        let entries = create_dependency_links(
-            source_dir.path(),
-            target_dir.path(),
-            &scope,
-            "test",
-        )
-        .expect("Failed to create dependency links");
+        let entries = create_dependency_links(source_dir.path(), target_dir.path(), &scope, "test")
+            .expect("Failed to create dependency links");
 
         // On macOS/Linux with same partition, should use HardLink
         #[cfg(any(target_os = "macos", target_os = "linux"))]

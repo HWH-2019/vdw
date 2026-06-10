@@ -1,5 +1,5 @@
-use std::path::Path;
 use anyhow::Result;
+use std::path::Path;
 
 /// Create a symlink from source to target
 /// If target already exists (as symlink or regular file), it will be removed first (idempotent).
@@ -95,7 +95,11 @@ mod tests {
 
         // Second link on same target should succeed (idempotent)
         let result = create_symlink(&source, &target);
-        assert!(result.is_ok(), "Second link should succeed (idempotent): {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "Second link should succeed (idempotent): {:?}",
+            result.err()
+        );
         assert!(target.exists());
 
         let content = std::fs::read_to_string(&target).expect("Failed to read target");

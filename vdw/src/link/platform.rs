@@ -20,7 +20,7 @@ cfg_if! {
         pub const FALLBACK_STRATEGY: LinkStrategy = LinkStrategy::Symlink;
     } else if #[cfg(target_os = "windows")] {
         pub const PLATFORM: &str = "windows";
-        pub const DEFAULT_STRATEGY: LinkStrategy = LinkStrategy::Junction;
+        pub const DEFAULT_STRATEGY: LinkStrategy = LinkStrategy::HardLink;
         pub const FALLBACK_STRATEGY: LinkStrategy = LinkStrategy::Symlink;
     } else {
         pub const PLATFORM: &str = "unknown";
@@ -75,6 +75,8 @@ pub fn select_strategy_for_file(source: &Path, base_strategy: LinkStrategy) -> L
         return LinkStrategy::Symlink;
     }
     // Windows: Junction only works on directories, not files
+    // NOTE: Junction is deprecated since v0.6.0 (HardLink is now the default).
+    // This code path is kept for backward compatibility only.
     #[cfg(target_os = "windows")]
     if base_strategy == LinkStrategy::Junction {
         return LinkStrategy::Symlink;
@@ -123,11 +125,8 @@ pub fn try_enable_symlink_privilege() -> bool {
             desired_access: u32,
             token_handle: *mut *mut std::ffi::c_void,
         ) -> i32;
-        fn LookupPrivilegeValueW(
-            system_name: *const u16,
-            name: *const u16,
-            luid: *mut LUID,
-        ) -> i32;
+        fn LookupPrivilegeValueW(system_name: *const u16, name: *const u16, luid: *mut LUID)
+            -> i32;
         fn AdjustTokenPrivileges(
             token_handle: *mut std::ffi::c_void,
             disable_all_privileges: i32,
@@ -222,12 +221,11 @@ pub fn is_developer_mode_enabled() -> bool {
     const ERROR_SUCCESS: i32 = 0;
 
     unsafe {
-        let sub_key: Vec<u16> = std::ffi::OsStr::new(
-            r"SOFTWARE\Microsoft\Windows\CurrentVersion\AppModelUnlock",
-        )
-        .encode_wide()
-        .chain(std::iter::once(0))
-        .collect();
+        let sub_key: Vec<u16> =
+            std::ffi::OsStr::new(r"SOFTWARE\Microsoft\Windows\CurrentVersion\AppModelUnlock")
+                .encode_wide()
+                .chain(std::iter::once(0))
+                .collect();
 
         let value_name: Vec<u16> = std::ffi::OsStr::new("AllowDevelopmentWithoutDevLicense")
             .encode_wide()
@@ -279,7 +277,7 @@ mod tests {
         #[cfg(any(target_os = "macos", target_os = "linux"))]
         assert_eq!(DEFAULT_STRATEGY, LinkStrategy::HardLink);
         #[cfg(target_os = "windows")]
-        assert_eq!(DEFAULT_STRATEGY, LinkStrategy::Junction);
+        assert_eq!(DEFAULT_STRATEGY, LinkStrategy::HardLink);
     }
 
     #[test]
@@ -311,7 +309,7 @@ mod tests {
         #[cfg(any(target_os = "macos", target_os = "linux"))]
         assert_eq!(strategy, LinkStrategy::HardLink);
         #[cfg(target_os = "windows")]
-        assert_eq!(strategy, LinkStrategy::Junction);
+        assert_eq!(strategy, LinkStrategy::HardLink);
     }
 
     #[test]
@@ -321,8 +319,14 @@ mod tests {
         std::fs::write(&file_path, "hello").expect("Failed to write test file");
 
         // For files, select_strategy_for_file returns the base strategy as-is
-        assert_eq!(select_strategy_for_file(&file_path, LinkStrategy::HardLink), LinkStrategy::HardLink);
-        assert_eq!(select_strategy_for_file(&file_path, LinkStrategy::Symlink), LinkStrategy::Symlink);
+        assert_eq!(
+            select_strategy_for_file(&file_path, LinkStrategy::HardLink),
+            LinkStrategy::HardLink
+        );
+        assert_eq!(
+            select_strategy_for_file(&file_path, LinkStrategy::Symlink),
+            LinkStrategy::Symlink
+        );
     }
 
     #[test]

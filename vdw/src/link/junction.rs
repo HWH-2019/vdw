@@ -1,5 +1,9 @@
-use std::path::Path;
+#![deprecated(
+    note = "Junction is no longer the default since v0.6.0. Windows now uses HardLink. This module will be removed in v0.7.0."
+)]
+
 use anyhow::Result;
+use std::path::Path;
 
 /// Normalize path separators to Windows backslash for cmd.exe compatibility.
 /// Rust's Path on Windows preserves forward slashes if the path was constructed
@@ -12,10 +16,14 @@ fn normalize_path_for_cmd(path: &Path) -> String {
 
 /// Create a junction point (Windows only)
 #[cfg(windows)]
+#[deprecated(note = "Use HardLink instead")]
 pub fn create_junction(source: &Path, target: &Path) -> Result<()> {
     use std::process::Command;
     if target.exists() {
-        return Err(anyhow::anyhow!("Target already exists: {}", target.display()));
+        return Err(anyhow::anyhow!(
+            "Target already exists: {}",
+            target.display()
+        ));
     }
     if let Some(parent) = target.parent() {
         std::fs::create_dir_all(parent)?;
@@ -23,13 +31,7 @@ pub fn create_junction(source: &Path, target: &Path) -> Result<()> {
     let target_str = normalize_path_for_cmd(target);
     let source_str = normalize_path_for_cmd(source);
     let output = Command::new("cmd")
-        .args(&[
-            "/C",
-            "mklink",
-            "/J",
-            &target_str,
-            &source_str,
-        ])
+        .args(&["/C", "mklink", "/J", &target_str, &source_str])
         .output()?;
     if !output.status.success() {
         return Err(anyhow::anyhow!(

@@ -9,7 +9,7 @@ use crate::store::{manager as store_manager, object_pool};
 use crate::types::workspace::WorkspaceState;
 use crate::worktree::manager as worktree_manager;
 
-pub fn execute(repo_filter: Option<&str>) -> Result<()> {
+pub fn execute(repo_filter: Option<&str>, watch: bool) -> Result<()> {
     let cwd = std::env::current_dir()?;
 
     // 0. On Windows, check symlink privilege and guide user if missing
@@ -76,7 +76,7 @@ pub fn execute(repo_filter: Option<&str>) -> Result<()> {
                 continue;
             }
         }
-        
+
         let dep_id = dep.dep_id().to_string();
         println!("Processing: {} ...", dep_id);
 
@@ -121,7 +121,10 @@ pub fn execute(repo_filter: Option<&str>) -> Result<()> {
             let existing_worktree = if existing_worktree.is_none() {
                 let conventional_wt = repo_dir.join("worktrees").join(branch);
                 if conventional_wt.exists() && conventional_wt.join(".git").exists() {
-                    println!("  Found existing worktree in store: {}", conventional_wt.display());
+                    println!(
+                        "  Found existing worktree in store: {}",
+                        conventional_wt.display()
+                    );
                     Some(conventional_wt)
                 } else {
                     None
@@ -133,7 +136,12 @@ pub fn execute(repo_filter: Option<&str>) -> Result<()> {
             if let Some(wt_path) = existing_worktree {
                 println!("  Using existing worktree: {}", wt_path.display());
                 if let Err(e) = acquire_editable_lock(&dep_id, branch, &cwd, &wt_path) {
-                    tracing::warn!("Failed to acquire editable lock for {} branch '{}': {}", dep_id, branch, e);
+                    tracing::warn!(
+                        "Failed to acquire editable lock for {} branch '{}': {}",
+                        dep_id,
+                        branch,
+                        e
+                    );
                 }
                 editable_count += 1;
                 wt_path
@@ -150,7 +158,12 @@ pub fn execute(repo_filter: Option<&str>) -> Result<()> {
                 }
                 dep.local = wt_path.to_string_lossy().to_string();
                 if let Err(e) = acquire_editable_lock(&dep_id, branch, &cwd, &wt_path) {
-                    tracing::warn!("Failed to acquire editable lock for {} branch '{}': {}", dep_id, branch, e);
+                    tracing::warn!(
+                        "Failed to acquire editable lock for {} branch '{}': {}",
+                        dep_id,
+                        branch,
+                        e
+                    );
                 }
 
                 editable_count += 1;
@@ -190,6 +203,22 @@ pub fn execute(repo_filter: Option<&str>) -> Result<()> {
         editable_count, readonly_count
     );
 
+    // 7. Show tips on Windows
+    #[cfg(windows)]
+    {
+        println!();
+        println!("💡 提示: 使用 `vdw link --watch` 实时监控 HardLink 断链");
+        println!("   检测断链: vdw doctor --check-links");
+        println!("   修复: vdw link --repo <url>");
+        println!("   建议: 关闭 VS Code 原子保存 \"files.atomicSave\": false");
+    }
+
+    // 8. Start watch mode if requested
+    if watch {
+        println!("\n🔍 Starting watch mode for broken link detection...");
+        crate::link::watcher::start_watch(&cwd)?;
+    }
+
     Ok(())
 }
 
@@ -220,7 +249,11 @@ fn checkout_from_bare(
     let repo = match git2::Repository::open_bare(bare_git_path) {
         Ok(r) => r,
         Err(e) => {
-            tracing::warn!("Cannot open bare repo at {}: {}", bare_git_path.display(), e);
+            tracing::warn!(
+                "Cannot open bare repo at {}: {}",
+                bare_git_path.display(),
+                e
+            );
             return Ok(());
         }
     };
@@ -234,11 +267,7 @@ fn checkout_from_bare(
         }
         Err(e) => {
             // If we can't find the branch, it might not have been fetched
-            tracing::warn!(
-                "Cannot find branch/commit '{}' in bare repo: {}",
-                branch,
-                e
-            );
+            tracing::warn!("Cannot find branch/commit '{}' in bare repo: {}", branch, e);
         }
     }
 
@@ -365,7 +394,9 @@ pub fn unlink(repo_filter: Option<&str>) -> Result<()> {
 
     // Filter links by repo if specified
     let links_to_remove: Vec<_> = if let Some(repo) = repo_filter {
-        state.links.iter()
+        state
+            .links
+            .iter()
             .filter(|l| l.dependency_repo == repo)
             .cloned()
             .collect()
@@ -409,7 +440,9 @@ pub fn unlink(repo_filter: Option<&str>) -> Result<()> {
         vec![repo.to_string()]
     } else {
         // Full unlink: clear local for all editable deps that have a managed worktree
-        config.dependencies.iter()
+        config
+            .dependencies
+            .iter()
             .filter(|d| d.editable && (!d.remote.is_empty() || !d.origin.is_empty()))
             .map(|d| d.dep_id().to_string())
             .collect()
@@ -423,7 +456,12 @@ pub fn unlink(repo_filter: Option<&str>) -> Result<()> {
         if dep_ids_to_clear.contains(&dep_id) && dep.editable {
             let branch = dep.branch.as_deref().unwrap_or("main");
             if let Err(e) = release_editable_lock(&dep_id, branch, &cwd) {
-                tracing::warn!("Failed to release editable lock for {} branch '{}': {}", dep_id, branch, e);
+                tracing::warn!(
+                    "Failed to release editable lock for {} branch '{}': {}",
+                    dep_id,
+                    branch,
+                    e
+                );
             }
             dep.local = String::new();
         }
@@ -485,7 +523,8 @@ mod tests {
         state.save().expect("Failed to save state");
 
         // Simulate unlink: load state, remove links, clean up
-        let loaded_state = WorkspaceState::load(workspace_dir.path()).expect("Failed to load state");
+        let loaded_state =
+            WorkspaceState::load(workspace_dir.path()).expect("Failed to load state");
         assert_eq!(loaded_state.links.len(), 2, "Should have 2 links in state");
 
         engine::remove_links(&loaded_state.links).expect("Failed to remove links");
@@ -526,10 +565,7 @@ mod tests {
         let workspace_dir = tempfile::tempdir().expect("Failed to create workspace temp dir");
 
         let state = WorkspaceState::load(workspace_dir.path()).expect("Failed to load state");
-        assert!(
-            state.links.is_empty(),
-            "New workspace should have no links"
-        );
+        assert!(state.links.is_empty(), "New workspace should have no links");
     }
 
     /// Test unlink with mixed link types
@@ -540,16 +576,10 @@ mod tests {
 
         // Create multiple source files
         fs::create_dir_all(source_dir.path().join("src")).expect("Failed to create src dir");
-        fs::write(
-            source_dir.path().join("src/main.rs"),
-            "fn main() {}",
-        )
-        .expect("Failed to write main.rs");
-        fs::write(
-            source_dir.path().join("README.md"),
-            "# Test",
-        )
-        .expect("Failed to write README.md");
+        fs::write(source_dir.path().join("src/main.rs"), "fn main() {}")
+            .expect("Failed to write main.rs");
+        fs::write(source_dir.path().join("README.md"), "# Test")
+            .expect("Failed to write README.md");
 
         let target_dir = workspace_dir.path().join("libs/repo");
 
@@ -567,10 +597,7 @@ mod tests {
         )
         .expect("Failed to create links");
 
-        assert!(
-            entries.len() >= 2,
-            "Should have at least 2 linked files"
-        );
+        assert!(entries.len() >= 2, "Should have at least 2 linked files");
 
         // Save state
         let mut state = WorkspaceState::new(workspace_dir.path().to_path_buf());
@@ -578,7 +605,8 @@ mod tests {
         state.save().expect("Failed to save state");
 
         // Remove all links
-        let loaded_state = WorkspaceState::load(workspace_dir.path()).expect("Failed to load state");
+        let loaded_state =
+            WorkspaceState::load(workspace_dir.path()).expect("Failed to load state");
         engine::remove_links(&loaded_state.links).expect("Failed to remove links");
 
         // Verify all targets are removed
@@ -599,8 +627,7 @@ mod tests {
         fs::create_dir_all(&checkout_dir).expect("Failed to create checkout dir");
 
         // Put a file in checkout to make it non-empty
-        fs::write(checkout_dir.join("existing.txt"), "content")
-            .expect("Failed to write file");
+        fs::write(checkout_dir.join("existing.txt"), "content").expect("Failed to write file");
 
         // Create a minimal dep config
         let dep = crate::types::config::Dependency {
@@ -619,7 +646,10 @@ mod tests {
         // Should skip (no bare.git exists, but that's ok because it skips before opening)
         let bare_git_path = dir.path().join("bare.git");
         let result = checkout_from_bare(&bare_git_path, &checkout_dir, &dep);
-        assert!(result.is_ok(), "Should succeed when checkout already exists");
+        assert!(
+            result.is_ok(),
+            "Should succeed when checkout already exists"
+        );
 
         // Existing file should still be there
         assert!(
