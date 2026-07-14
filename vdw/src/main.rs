@@ -5,7 +5,11 @@ use vdw::utils::logging;
 
 /// Virtual Dev Workspace - Cross-repo development middleware
 #[derive(Parser)]
-#[command(name = "vdw", version, about = "Virtual Dev Workspace - Cross-repo development middleware")]
+#[command(
+    name = "vdw",
+    version,
+    about = "Virtual Dev Workspace - Cross-repo development middleware"
+)]
 struct Cli {
     /// Enable verbose logging
     #[arg(short, long, global = true)]
@@ -28,6 +32,9 @@ enum Commands {
         /// Only link the specified repository URL
         #[arg(long)]
         repo: Option<String>,
+        /// Watch for broken HardLinks after linking
+        #[arg(long)]
+        watch: bool,
     },
     /// Remove links from the workspace
     Unlink {
@@ -51,7 +58,11 @@ enum Commands {
         command: ContextCommands,
     },
     /// Run diagnostics on the workspace
-    Doctor,
+    Doctor {
+        /// Check HardLink integrity by comparing inode metadata
+        #[arg(long)]
+        check_links: bool,
+    },
     /// Validate workspace configuration
     Validate,
 }
@@ -115,7 +126,7 @@ enum ContextCommands {
 fn run_command(cli: Cli) -> anyhow::Result<()> {
     match cli.command {
         Commands::Init { template } => commands::init::execute(template),
-        Commands::Link { repo } => commands::link::execute(repo.as_deref()),
+        Commands::Link { repo, watch } => commands::link::execute(repo.as_deref(), watch),
         Commands::Unlink { repo } => commands::link::unlink(repo.as_deref()),
         Commands::Repo { command } => match command {
             RepoCommands::Add {
@@ -129,18 +140,18 @@ fn run_command(cli: Cli) -> anyhow::Result<()> {
         },
         Commands::Worktree { command } => match command {
             WorktreeCommands::List => commands::worktree::list(),
-            WorktreeCommands::Create { repo, branch } => {
-                commands::worktree::create(repo, branch)
-            }
-            WorktreeCommands::Delete { repo, branch, force } => {
-                commands::worktree::delete(repo, branch, force)
-            }
+            WorktreeCommands::Create { repo, branch } => commands::worktree::create(repo, branch),
+            WorktreeCommands::Delete {
+                repo,
+                branch,
+                force,
+            } => commands::worktree::delete(repo, branch, force),
         },
         Commands::Context { command } => match command {
             ContextCommands::Preview => commands::context::preview(),
             ContextCommands::Stats => commands::context::stats(),
         },
-        Commands::Doctor => commands::doctor::execute(),
+        Commands::Doctor { check_links } => commands::doctor::execute(check_links),
         Commands::Validate => commands::doctor::validate(),
     }
 }
@@ -158,9 +169,13 @@ fn main() {
         // Provide suggestions for common errors
         let err_str = e.to_string();
         if err_str.contains("not found") || err_str.contains("no such file") {
-            eprintln!("\n\x1b[33mSuggestion:\x1b[0m Run `vdw init` to initialize a workspace first.");
+            eprintln!(
+                "\n\x1b[33mSuggestion:\x1b[0m Run `vdw init` to initialize a workspace first."
+            );
         } else if err_str.contains("already exists") {
-            eprintln!("\n\x1b[33mSuggestion:\x1b[0m Use `vdw doctor` to check the workspace state.");
+            eprintln!(
+                "\n\x1b[33mSuggestion:\x1b[0m Use `vdw doctor` to check the workspace state."
+            );
         }
 
         std::process::exit(1);

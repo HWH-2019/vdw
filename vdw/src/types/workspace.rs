@@ -21,6 +21,11 @@ pub struct LinkEntry {
     pub link_type: LinkType,
     /// Which dependency this belongs to
     pub dependency_repo: String,
+
+    /// 源文件的 inode/文件索引（用于 HardLink 断链检测）
+    pub source_inode: Option<u64>,
+    /// 源文件所在卷的序列号（Windows）或设备号（Unix）
+    pub source_volume: Option<u64>,
 }
 
 /// Type of filesystem link
@@ -83,6 +88,8 @@ mod tests {
             target: PathBuf::from("/workspace/libs/repo/src/main.rs"),
             link_type: LinkType::HardLink,
             dependency_repo: "https://github.com/example/repo.git".to_string(),
+            source_inode: Some(12345),
+            source_volume: Some(67890),
         });
 
         state.save().expect("Failed to save state");
@@ -90,13 +97,21 @@ mod tests {
         let loaded = WorkspaceState::load(&root).expect("Failed to load state");
         assert_eq!(loaded.workspace_root, root);
         assert_eq!(loaded.links.len(), 1);
-        assert_eq!(loaded.links[0].source, PathBuf::from("/store/repo/src/main.rs"));
-        assert_eq!(loaded.links[0].target, PathBuf::from("/workspace/libs/repo/src/main.rs"));
+        assert_eq!(
+            loaded.links[0].source,
+            PathBuf::from("/store/repo/src/main.rs")
+        );
+        assert_eq!(
+            loaded.links[0].target,
+            PathBuf::from("/workspace/libs/repo/src/main.rs")
+        );
         assert_eq!(loaded.links[0].link_type, LinkType::HardLink);
         assert_eq!(
             loaded.links[0].dependency_repo,
             "https://github.com/example/repo.git"
         );
+        assert_eq!(loaded.links[0].source_inode, Some(12345));
+        assert_eq!(loaded.links[0].source_volume, Some(67890));
     }
 
     #[test]
@@ -114,6 +129,7 @@ mod tests {
         assert_eq!(LinkType::HardLink, LinkType::HardLink);
         assert_ne!(LinkType::HardLink, LinkType::Symlink);
         assert_ne!(LinkType::Symlink, LinkType::Junction);
+        assert_ne!(LinkType::Symlink, LinkType::Copy);
     }
 
     #[test]
@@ -135,6 +151,8 @@ mod tests {
             target: PathBuf::from("/workspace/libs/repo/src/main.rs"),
             link_type: LinkType::Symlink,
             dependency_repo: "https://github.com/example/repo.git".to_string(),
+            source_inode: None,
+            source_volume: None,
         };
 
         let json = serde_json::to_string(&entry).expect("Failed to serialize");

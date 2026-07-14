@@ -1,5 +1,5 @@
-use std::path::Path;
 use anyhow::Result;
+use std::path::Path;
 
 /// Create a hard link from source to target
 /// If target already exists, it will be removed first (idempotent).
@@ -70,7 +70,11 @@ mod tests {
 
         // Second link on same target should succeed (idempotent)
         let result = create_hardlink(&source, &target);
-        assert!(result.is_ok(), "Second link should succeed (idempotent): {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "Second link should succeed (idempotent): {:?}",
+            result.err()
+        );
         assert!(target.exists());
 
         // Verify it's still the same content

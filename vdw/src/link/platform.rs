@@ -20,7 +20,7 @@ cfg_if! {
         pub const FALLBACK_STRATEGY: LinkStrategy = LinkStrategy::Symlink;
     } else if #[cfg(target_os = "windows")] {
         pub const PLATFORM: &str = "windows";
-        pub const DEFAULT_STRATEGY: LinkStrategy = LinkStrategy::Junction;
+        pub const DEFAULT_STRATEGY: LinkStrategy = LinkStrategy::HardLink;
         pub const FALLBACK_STRATEGY: LinkStrategy = LinkStrategy::Symlink;
     } else {
         pub const PLATFORM: &str = "unknown";
@@ -63,13 +63,199 @@ pub fn determine_strategy(source_dir: &Path, target_dir: &Path) -> LinkStrategy 
 }
 
 /// Select the best link strategy for a specific file.
-/// Uses the pre-determined base strategy; only overrides for directories.
+/// Uses the pre-determined base strategy; overrides based on file/dir and platform.
+///
+/// Rules:
+/// - Directories always use Symlink (hardlinks don't work on dirs)
+/// - On Windows, when base strategy is Junction, files must use Symlink
+///   (Junction points only support directories, not individual files)
 pub fn select_strategy_for_file(source: &Path, base_strategy: LinkStrategy) -> LinkStrategy {
     // Directories always use symlinks (hardlinks don't work on dirs)
     if source.is_dir() {
         return LinkStrategy::Symlink;
     }
+    // Windows: Junction only works on directories, not files
+    // NOTE: Junction is deprecated since v0.6.0 (HardLink is now the default).
+    // This code path is kept for backward compatibility only.
+    #[cfg(target_os = "windows")]
+    if base_strategy == LinkStrategy::Junction {
+        return LinkStrategy::Symlink;
+    }
     base_strategy
+}
+
+/// Try to enable the SeCreateSymbolicLinkPrivilege for the current process.
+/// This works when running as Administrator (the privilege exists in the token
+/// but is disabled by default). Returns true if the privilege was successfully enabled.
+///
+/// If the privilege is not available in the token at all (not admin, no Developer Mode),
+/// returns false and the caller should fall through to a user-facing error.
+#[cfg(windows)]
+pub fn try_enable_symlink_privilege() -> bool {
+    use std::ffi::OsStr;
+    use std::os::windows::ffi::OsStrExt;
+    use std::ptr;
+
+    const TOKEN_QUERY: u32 = 0x0008;
+    const TOKEN_ADJUST_PRIVILEGES: u32 = 0x0020;
+    const SE_PRIVILEGE_ENABLED: u32 = 0x00000002;
+
+    #[repr(C)]
+    struct LUID {
+        low_part: u32,
+        high_part: i32,
+    }
+
+    #[repr(C)]
+    struct LUID_AND_ATTRIBUTES {
+        luid: LUID,
+        attributes: u32,
+    }
+
+    #[repr(C)]
+    struct TOKEN_PRIVILEGES {
+        privilege_count: u32,
+        privileges: [LUID_AND_ATTRIBUTES; 1],
+    }
+
+    extern "system" {
+        fn GetCurrentProcess() -> *mut std::ffi::c_void;
+        fn OpenProcessToken(
+            process_handle: *mut std::ffi::c_void,
+            desired_access: u32,
+            token_handle: *mut *mut std::ffi::c_void,
+        ) -> i32;
+        fn LookupPrivilegeValueW(system_name: *const u16, name: *const u16, luid: *mut LUID)
+            -> i32;
+        fn AdjustTokenPrivileges(
+            token_handle: *mut std::ffi::c_void,
+            disable_all_privileges: i32,
+            new_state: *const TOKEN_PRIVILEGES,
+            buffer_length: u32,
+            previous_state: *mut TOKEN_PRIVILEGES,
+            return_length: *mut u32,
+        ) -> i32;
+        fn CloseHandle(handle: *mut std::ffi::c_void) -> i32;
+    }
+
+    unsafe {
+        let process = GetCurrentProcess();
+        let mut token: *mut std::ffi::c_void = ptr::null_mut();
+
+        if OpenProcessToken(process, TOKEN_QUERY | TOKEN_ADJUST_PRIVILEGES, &mut token) == 0 {
+            return false;
+        }
+
+        // "SeCreateSymbolicLinkPrivilege" as wide string
+        let privilege_name: Vec<u16> = OsStr::new("SeCreateSymbolicLinkPrivilege")
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect();
+
+        let mut luid = LUID {
+            low_part: 0,
+            high_part: 0,
+        };
+
+        if LookupPrivilegeValueW(ptr::null(), privilege_name.as_ptr(), &mut luid) == 0 {
+            CloseHandle(token);
+            return false;
+        }
+
+        let tp = TOKEN_PRIVILEGES {
+            privilege_count: 1,
+            privileges: [LUID_AND_ATTRIBUTES {
+                luid,
+                attributes: SE_PRIVILEGE_ENABLED,
+            }],
+        };
+
+        let result = AdjustTokenPrivileges(
+            token,
+            0, // don't disable all, just modify specified
+            &tp,
+            std::mem::size_of::<TOKEN_PRIVILEGES>() as u32,
+            ptr::null_mut(),
+            ptr::null_mut(),
+        );
+
+        CloseHandle(token);
+
+        // AdjustTokenPrivileges returns nonzero even on failure in some cases;
+        // must check GetLastError() == ERROR_SUCCESS via its return
+        result != 0
+    }
+}
+
+/// Check if Windows Developer Mode is enabled by reading the registry.
+/// Developer Mode grants SeCreateSymbolicLinkPrivilege to all processes,
+/// enabling symlink creation without admin rights.
+#[cfg(windows)]
+pub fn is_developer_mode_enabled() -> bool {
+    use std::ffi::OsStr;
+    use std::os::windows::ffi::OsStrExt;
+    use std::ptr;
+
+    extern "system" {
+        fn RegOpenKeyExW(
+            key: isize,
+            sub_key: *const u16,
+            options: u32,
+            desired_access: u32,
+            result: *mut isize,
+        ) -> i32;
+        fn RegQueryValueExW(
+            key: isize,
+            value_name: *const u16,
+            reserved: *mut u32,
+            type_: *mut u32,
+            data: *mut u8,
+            data_size: *mut u32,
+        ) -> i32;
+        fn RegCloseKey(key: isize) -> i32;
+    }
+
+    const HKEY_LOCAL_MACHINE: isize = 0x80000002usize as isize;
+    const KEY_READ: u32 = 0x20019;
+    const REG_DWORD: u32 = 4;
+    const ERROR_SUCCESS: i32 = 0;
+
+    unsafe {
+        let sub_key: Vec<u16> =
+            OsStr::new(r"SOFTWARE\Microsoft\Windows\CurrentVersion\AppModelUnlock")
+                .encode_wide()
+                .chain(std::iter::once(0))
+                .collect();
+
+        let value_name: Vec<u16> = std::ffi::OsStr::new("AllowDevelopmentWithoutDevLicense")
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect();
+
+        let mut key: isize = 0;
+        if RegOpenKeyExW(HKEY_LOCAL_MACHINE, sub_key.as_ptr(), 0, KEY_READ, &mut key)
+            != ERROR_SUCCESS
+        {
+            return false;
+        }
+
+        let mut data: u32 = 0;
+        let mut data_size: u32 = std::mem::size_of::<u32>() as u32;
+        let mut type_: u32 = 0;
+
+        let result = RegQueryValueExW(
+            key,
+            value_name.as_ptr(),
+            ptr::null_mut(),
+            &mut type_,
+            &mut data as *mut u32 as *mut u8,
+            &mut data_size,
+        );
+
+        RegCloseKey(key);
+
+        result == ERROR_SUCCESS && type_ == REG_DWORD && data == 1
+    }
 }
 
 #[cfg(test)]
@@ -91,7 +277,7 @@ mod tests {
         #[cfg(any(target_os = "macos", target_os = "linux"))]
         assert_eq!(DEFAULT_STRATEGY, LinkStrategy::HardLink);
         #[cfg(target_os = "windows")]
-        assert_eq!(DEFAULT_STRATEGY, LinkStrategy::Junction);
+        assert_eq!(DEFAULT_STRATEGY, LinkStrategy::HardLink);
     }
 
     #[test]
@@ -123,7 +309,7 @@ mod tests {
         #[cfg(any(target_os = "macos", target_os = "linux"))]
         assert_eq!(strategy, LinkStrategy::HardLink);
         #[cfg(target_os = "windows")]
-        assert_eq!(strategy, LinkStrategy::Junction);
+        assert_eq!(strategy, LinkStrategy::HardLink);
     }
 
     #[test]
@@ -133,8 +319,14 @@ mod tests {
         std::fs::write(&file_path, "hello").expect("Failed to write test file");
 
         // For files, select_strategy_for_file returns the base strategy as-is
-        assert_eq!(select_strategy_for_file(&file_path, LinkStrategy::HardLink), LinkStrategy::HardLink);
-        assert_eq!(select_strategy_for_file(&file_path, LinkStrategy::Symlink), LinkStrategy::Symlink);
+        assert_eq!(
+            select_strategy_for_file(&file_path, LinkStrategy::HardLink),
+            LinkStrategy::HardLink
+        );
+        assert_eq!(
+            select_strategy_for_file(&file_path, LinkStrategy::Symlink),
+            LinkStrategy::Symlink
+        );
     }
 
     #[test]

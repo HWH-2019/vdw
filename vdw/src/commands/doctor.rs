@@ -1,10 +1,28 @@
 use anyhow::Result;
 
-use crate::config::{parser, validator, env_resolver};
+use crate::config::{env_resolver, parser, validator};
 use crate::store::manager as store_manager;
 use crate::types::workspace::WorkspaceState;
 
-pub fn execute() -> Result<()> {
+pub fn execute(check_links: bool) -> Result<()> {
+    if check_links {
+        let cwd = std::env::current_dir()?;
+        match crate::link::watcher::check_links(&cwd) {
+            Ok(0) => {
+                eprintln!("✅ 所有 HardLink 连接正常");
+                return Ok(());
+            }
+            Ok(count) => {
+                eprintln!("⚠️ 发现 {} 个断链文件", count);
+                return Ok(());
+            }
+            Err(e) => {
+                // Error already printed by check_links, just return
+                return Err(e);
+            }
+        }
+    }
+
     println!("Running workspace diagnostics...");
 
     let cwd = std::env::current_dir()?;
@@ -46,7 +64,10 @@ pub fn execute() -> Result<()> {
                     }
                 }
                 if broken > 0 {
-                    println!("⚠️  {} broken link(s) detected. Run 'vdw link' to repair.", broken);
+                    println!(
+                        "⚠️  {} broken link(s) detected. Run 'vdw link' to repair.",
+                        broken
+                    );
                 } else {
                     println!("✅ All {} links are valid.", state.links.len());
                 }
