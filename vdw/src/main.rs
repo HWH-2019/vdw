@@ -3,11 +3,19 @@ use clap::{Parser, Subcommand};
 use vdw::commands;
 use vdw::utils::logging;
 
+/// Version string shown by `--version` and in the debug banner.
+/// Debug builds are tagged with a `-debug` suffix so they are easy to tell apart
+/// from release builds at a glance.
+#[cfg(debug_assertions)]
+const VERSION: &str = concat!(env!("CARGO_PKG_VERSION"), "-debug");
+#[cfg(not(debug_assertions))]
+const VERSION: &str = env!("CARGO_PKG_VERSION");
+
 /// Virtual Dev Workspace - Cross-repo development middleware
 #[derive(Parser)]
 #[command(
     name = "vdw",
-    version,
+    version = VERSION,
     about = "Virtual Dev Workspace - Cross-repo development middleware"
 )]
 struct Cli {
@@ -170,6 +178,12 @@ fn run_command(cli: Cli) -> anyhow::Result<()> {
 }
 
 fn main() {
+    // Tag debug builds at runtime: print a banner to stderr so it is obvious a
+    // debug binary is running. Kept on stderr to avoid polluting command stdout
+    // (e.g. `repo status` JSON parsed by the VS Code extension).
+    #[cfg(debug_assertions)]
+    eprintln!("\x1b[33m[vdw {} — debug build]\x1b[0m", VERSION);
+
     let cli = Cli::parse();
 
     if let Err(e) = logging::init(cli.verbose) {

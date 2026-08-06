@@ -19,6 +19,14 @@ export class VDWCliService {
 
     /** Get the configured CLI binary path */
     private getCliPath(): string {
+        // Debug override: explicit CLI path injected by the debugger (see .vscode/launch.json).
+        // Points to the debug binary deployed into the vdw-test directory.
+        const debugCliPath = process.env.VDW_CLI_PATH;
+        if (debugCliPath) {
+            log(`Debug mode: using injected CLI path ${debugCliPath}`);
+            return debugCliPath;
+        }
+
         const config = vscode.workspace.getConfiguration('vdw');
         const configuredPath = config.get<string>('cliPath', '');
 

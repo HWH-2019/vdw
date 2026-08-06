@@ -61,6 +61,28 @@
       }
     },
     {
+      "label": "vdw: deploy debug to test",
+      "dependsOn": ["vdw: build debug"],
+      "dependsOrder": "sequence",
+      "type": "shell",
+      "command": "mkdir -p \"${workspaceFolder}/vdw-test/.vscode\" && cp \"${workspaceFolder}/vdw/target/debug/vdw\" \"${workspaceFolder}/vdw-test/vdw\" && printf '{\\n  \"vdw.cliPath\": \"%s\"\\n}\\n' \"${workspaceFolder}/vdw-test/vdw\" > \"${workspaceFolder}/vdw-test/.vscode/settings.json\"",
+      "problemMatcher": [],
+      "group": "build",
+      "presentation": {
+        "reveal": "silent",
+        "panel": "shared"
+      }
+    },
+    {
+      "label": "vdw: debug prelaunch (deploy cli + watch ext)",
+      "dependsOn": [
+        "vdw: deploy debug to test",
+        "vdw-vscode: watch"
+      ],
+      "dependsOrder": "sequence",
+      "problemMatcher": []
+    },
+    {
       "label": "vdw: build release",
       "type": "shell",
       "command": "cargo",
