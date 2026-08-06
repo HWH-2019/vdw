@@ -130,6 +130,67 @@ pub fn create_commit_with_file(
     Ok(oid)
 }
 
+/// Result of checking a worktree for uncommitted changes
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct DirtyStatus {
+    pub modified: usize,
+    pub added: usize,
+    pub deleted: usize,
+    pub untracked: usize,
+}
+
+impl DirtyStatus {
+    pub fn is_dirty(&self) -> bool {
+        self.modified + self.added + self.deleted + self.untracked > 0
+    }
+    pub fn total(&self) -> usize {
+        self.modified + self.added + self.deleted + self.untracked
+    }
+}
+
+/// Check if a worktree path has uncommitted changes
+pub fn check_dirty(worktree_path: &Path) -> Result<DirtyStatus> {
+    let repo = Repository::open(worktree_path)?;
+    let statuses = repo.statuses(None)?;
+
+    let mut modified = 0;
+    let mut added = 0;
+    let mut deleted = 0;
+    let mut untracked = 0;
+
+    for entry in statuses.iter() {
+        let status = entry.status();
+        // Staged changes
+        if status.contains(git2::Status::INDEX_NEW) {
+            added += 1;
+        } else if status.contains(git2::Status::INDEX_MODIFIED)
+            || status.contains(git2::Status::INDEX_RENAMED)
+            || status.contains(git2::Status::INDEX_TYPECHANGE)
+        {
+            modified += 1;
+        } else if status.contains(git2::Status::INDEX_DELETED) {
+            deleted += 1;
+        }
+        // Working tree changes (only count if not already counted as staged)
+        else if status.contains(git2::Status::WT_MODIFIED)
+            || status.contains(git2::Status::WT_TYPECHANGE)
+        {
+            modified += 1;
+        } else if status.contains(git2::Status::WT_DELETED) {
+            deleted += 1;
+        } else if status.contains(git2::Status::WT_NEW) {
+            untracked += 1;
+        }
+    }
+
+    Ok(DirtyStatus {
+        modified,
+        added,
+        deleted,
+        untracked,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

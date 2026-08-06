@@ -43,3 +43,12 @@ export interface ValidationResult {
     workspace_name?: string;
     dependency_count?: number;
 }
+
+export interface RepoStatusResult {
+    repo: string;
+    branch: string;
+    editable: boolean;
+    dirty: boolean;
+    changes: { modified: number; added: number; deleted: number; untracked: number } | null;
+    worktree_path: string | null;
+}

@@ -42,6 +42,12 @@ enum Commands {
         #[arg(long)]
         repo: Option<String>,
     },
+    /// Rebuild all links as one transaction
+    Relink {
+        /// Allow relinking editable worktrees with uncommitted changes
+        #[arg(long)]
+        allow_dirty: bool,
+    },
     /// Manage repositories in the workspace
     Repo {
         #[command(subcommand)]
@@ -90,6 +96,11 @@ enum RepoCommands {
     },
     /// List all repositories in the workspace
     List,
+    /// Show repository dirty status (JSON output)
+    Status {
+        /// Name of the repository to check
+        name: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -128,6 +139,7 @@ fn run_command(cli: Cli) -> anyhow::Result<()> {
         Commands::Init { template } => commands::init::execute(template),
         Commands::Link { repo, watch } => commands::link::execute(repo.as_deref(), watch),
         Commands::Unlink { repo } => commands::link::unlink(repo.as_deref()),
+        Commands::Relink { allow_dirty } => commands::link::relink(allow_dirty),
         Commands::Repo { command } => match command {
             RepoCommands::Add {
                 url,
@@ -137,6 +149,7 @@ fn run_command(cli: Cli) -> anyhow::Result<()> {
             } => commands::repo::add(url, path, branch, editable),
             RepoCommands::Remove { name } => commands::repo::remove(name),
             RepoCommands::List => commands::repo::list(),
+            RepoCommands::Status { name } => commands::repo::status(name),
         },
         Commands::Worktree { command } => match command {
             WorktreeCommands::List => commands::worktree::list(),

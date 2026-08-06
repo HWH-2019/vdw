@@ -2,7 +2,7 @@
   "name": "vdw-vscode",
   "displayName": "VDW - Virtual Dev Workspace",
   "description": "Cross-repo dependency management and AI context filtering for multi-repository development",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "publisher": "vdw-team",
   "license": "Apache-2.0",
   "repository": {
@@ -38,8 +38,9 @@
     "theme": "dark"
   },
   "activationEvents": [
-    "workspaceContains:.vdwrc"
-  ],
+      "workspaceContains:.vdwrc",
+      "onStartupFinished"
+    ],
   "main": "./out/extension.js",
   "contributes": {
     "commands": [

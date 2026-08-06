@@ -1,10 +1,10 @@
-use anyhow::Result;
-use std::path::Path;
+use anyhow::{bail, Context, Result};
+use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 
-use crate::link::{hardlink, platform, symlink};
 #[allow(deprecated)]
 use crate::link::junction;
+use crate::link::{hardlink, platform, symlink};
 use crate::types::config::Scope;
 use crate::types::workspace::{LinkEntry, LinkType};
 
@@ -72,6 +72,142 @@ fn get_file_inode(path: &Path) -> Option<(u64, u64)> {
     None
 }
 
+fn target_exists(path: &Path) -> bool {
+    std::fs::symlink_metadata(path).is_ok()
+}
+
+fn canonical_link_target(target: &Path) -> Result<PathBuf> {
+    let raw_target = std::fs::read_link(target)?;
+    let resolved = if raw_target.is_absolute() {
+        raw_target
+    } else {
+        target
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .join(raw_target)
+    };
+    Ok(std::fs::canonicalize(resolved)?)
+}
+
+fn verify_link_for_removal(entry: &LinkEntry) -> Result<()> {
+    if !target_exists(&entry.target) {
+        return Ok(());
+    }
+
+    match entry.link_type {
+        LinkType::HardLink => {
+            let source_identity = get_file_inode(&entry.source).ok_or_else(|| {
+                anyhow::anyhow!(
+                    "source is missing or its file identity cannot be read: {}",
+                    entry.source.display()
+                )
+            })?;
+            let target_identity = get_file_inode(&entry.target).ok_or_else(|| {
+                anyhow::anyhow!(
+                    "target file identity cannot be read: {}",
+                    entry.target.display()
+                )
+            })?;
+
+            if source_identity != target_identity {
+                bail!(
+                    "target is no longer the hardlink recorded by VDW: {}",
+                    entry.target.display()
+                );
+            }
+
+            if let (Some(inode), Some(volume)) = (entry.source_inode, entry.source_volume) {
+                if source_identity != (inode, volume) {
+                    bail!(
+                        "hardlink identity changed since state.json was written: {}",
+                        entry.target.display()
+                    );
+                }
+            }
+        }
+        LinkType::Symlink => {
+            let metadata = std::fs::symlink_metadata(&entry.target)?;
+            if !metadata.file_type().is_symlink() {
+                bail!(
+                    "target is no longer a symlink owned by VDW: {}",
+                    entry.target.display()
+                );
+            }
+            let actual_source = canonical_link_target(&entry.target)?;
+            let expected_source = std::fs::canonicalize(&entry.source)?;
+            if actual_source != expected_source {
+                bail!(
+                    "symlink target changed since it was recorded by VDW: {}",
+                    entry.target.display()
+                );
+            }
+        }
+        LinkType::Junction => {
+            let actual_source = std::fs::canonicalize(&entry.target)?;
+            let expected_source = std::fs::canonicalize(&entry.source)?;
+            if actual_source != expected_source {
+                bail!(
+                    "junction target changed since it was recorded by VDW: {}",
+                    entry.target.display()
+                );
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn matching_existing_link_type(
+    source: &Path,
+    target: &Path,
+    strategy: platform::LinkStrategy,
+) -> Option<LinkType> {
+    match strategy {
+        platform::LinkStrategy::HardLink => {
+            (get_file_inode(source)? == get_file_inode(target)?).then_some(LinkType::HardLink)
+        }
+        platform::LinkStrategy::Symlink => {
+            let metadata = std::fs::symlink_metadata(target).ok()?;
+            if !metadata.file_type().is_symlink() {
+                return None;
+            }
+            let actual_source = canonical_link_target(target).ok()?;
+            let expected_source = std::fs::canonicalize(source).ok()?;
+            (actual_source == expected_source).then_some(LinkType::Symlink)
+        }
+        platform::LinkStrategy::Junction => {
+            let actual_source = std::fs::canonicalize(target).ok()?;
+            let expected_source = std::fs::canonicalize(source).ok()?;
+            (actual_source == expected_source).then_some(LinkType::Junction)
+        }
+    }
+}
+
+/// Fail closed before unlink/relink if a tracked target has become an
+/// independent file or points somewhere else. This protects files produced by
+/// editors that implement atomic save by replacing a hardlink with a new inode.
+pub fn verify_links_for_removal(entries: &[LinkEntry]) -> Result<()> {
+    let conflicts: Vec<String> = entries
+        .iter()
+        .filter_map(|entry| {
+            verify_link_for_removal(entry)
+                .err()
+                .map(|error| format!("{}: {}", entry.target.display(), error))
+        })
+        .collect();
+
+    if !conflicts.is_empty() {
+        bail!(
+            "Refusing to remove {} target(s) that are no longer owned by VDW:\n  - {}\n\
+             Preserve or reconcile these files, then run link again.",
+            conflicts.len(),
+            conflicts.join("\n  - ")
+        );
+    }
+
+    Ok(())
+}
+
 /// Create links for a single dependency from source_dir to target_dir
 /// Only links files that match the scope
 pub fn create_dependency_links(
@@ -112,7 +248,30 @@ pub fn create_dependency_links(
 
         // Select strategy for this specific file (usually base_strategy, but dirs get symlink)
         let strategy = platform::select_strategy_for_file(&source_path, base_strategy);
-        let actual_link_type = create_single_link(&source_path, &target_path, strategy)?;
+
+        let actual_link_type = if target_exists(&target_path) {
+            match matching_existing_link_type(&source_path, &target_path, strategy) {
+                Some(link_type) => link_type,
+                None => {
+                    let _ = remove_links(&entries);
+                    bail!(
+                        "Refusing to overwrite an untracked workspace file: {}",
+                        target_path.display()
+                    );
+                }
+            }
+        } else {
+            match create_single_link(&source_path, &target_path, strategy) {
+                Ok(link_type) => link_type,
+                Err(error) => {
+                    // Do not leave a half-linked dependency if a later file fails.
+                    let _ = remove_links(&entries);
+                    return Err(error).with_context(|| {
+                        format!("Failed to create workspace link {}", target_path.display())
+                    });
+                }
+            }
+        };
 
         // Capture inode metadata for HardLink (used for broken link detection)
         let (source_inode, source_volume) = if actual_link_type == LinkType::HardLink {
@@ -211,6 +370,33 @@ pub fn remove_links(entries: &[LinkEntry]) -> Result<()> {
         }
     }
 
+    Ok(())
+}
+
+/// Restore a previously verified set of links without overwriting any target
+/// that appeared after the operation started.
+pub fn restore_links(entries: &[LinkEntry]) -> Result<()> {
+    for entry in entries {
+        if target_exists(&entry.target) {
+            verify_link_for_removal(entry).with_context(|| {
+                format!(
+                    "Refusing to overwrite a file while rolling back: {}",
+                    entry.target.display()
+                )
+            })?;
+            continue;
+        }
+
+        match entry.link_type {
+            LinkType::HardLink => hardlink::create_hardlink(&entry.source, &entry.target)?,
+            LinkType::Symlink => symlink::create_symlink(&entry.source, &entry.target)?,
+            LinkType::Junction =>
+            {
+                #[allow(deprecated)]
+                junction::create_junction(&entry.source, &entry.target)?
+            }
+        }
+    }
     Ok(())
 }
 
@@ -337,6 +523,33 @@ mod tests {
     }
 
     #[test]
+    fn test_create_dependency_links_preserves_independent_existing_target() {
+        let source_dir = tempfile::tempdir().expect("Failed to create source temp dir");
+        let target_dir = tempfile::tempdir().expect("Failed to create target temp dir");
+        setup_source_dir(source_dir.path());
+        std::fs::create_dir_all(target_dir.path().join("src"))
+            .expect("Failed to create target src dir");
+        let protected_target = target_dir.path().join("src/main.rs");
+        std::fs::write(&protected_target, "independent workspace edit")
+            .expect("Failed to write independent target");
+        let scope = Scope {
+            include: vec!["src/**/*.rs".to_string()],
+            exclude: vec![],
+        };
+
+        let error = create_dependency_links(source_dir.path(), target_dir.path(), &scope, "repo")
+            .expect_err("Independent target must not be overwritten");
+
+        assert!(error.to_string().contains("Refusing to overwrite"));
+        assert_eq!(
+            std::fs::read_to_string(protected_target).expect("Protected target was removed"),
+            "independent workspace edit"
+        );
+        assert!(!target_dir.path().join("src/lib.rs").exists());
+        assert!(!target_dir.path().join("src/utils/mod.rs").exists());
+    }
+
+    #[test]
     fn test_remove_links() {
         let source_dir = tempfile::tempdir().expect("Failed to create source temp dir");
         let target_dir = tempfile::tempdir().expect("Failed to create target temp dir");
@@ -366,6 +579,90 @@ mod tests {
         assert!(!target_dir.path().join("src/main.rs").exists());
         assert!(!target_dir.path().join("src/lib.rs").exists());
         assert!(!target_dir.path().join("src/utils/mod.rs").exists());
+    }
+
+    #[test]
+    fn test_verify_valid_hardlink_for_removal() {
+        let dir = tempfile::tempdir().expect("Failed to create temp dir");
+        let source = dir.path().join("source.txt");
+        let target = dir.path().join("target.txt");
+        std::fs::write(&source, "managed").expect("Failed to write source");
+        std::fs::hard_link(&source, &target).expect("Failed to create hardlink");
+        let (inode, volume) = get_file_inode(&source).expect("Missing file identity");
+        let entry = LinkEntry {
+            source,
+            target,
+            link_type: LinkType::HardLink,
+            dependency_repo: "repo".to_string(),
+            source_inode: Some(inode),
+            source_volume: Some(volume),
+        };
+
+        verify_links_for_removal(&[entry]).expect("Valid hardlink must be removable");
+    }
+
+    #[test]
+    fn test_verify_rejects_atomic_save_replacement_without_deleting_it() {
+        let dir = tempfile::tempdir().expect("Failed to create temp dir");
+        let source = dir.path().join("source.txt");
+        let target = dir.path().join("target.txt");
+        std::fs::write(&source, "managed").expect("Failed to write source");
+        std::fs::hard_link(&source, &target).expect("Failed to create hardlink");
+        let (inode, volume) = get_file_inode(&source).expect("Missing file identity");
+
+        std::fs::remove_file(&target).expect("Failed to replace target");
+        std::fs::write(&target, "independent edit").expect("Failed to write replacement");
+        let entry = LinkEntry {
+            source,
+            target: target.clone(),
+            link_type: LinkType::HardLink,
+            dependency_repo: "repo".to_string(),
+            source_inode: Some(inode),
+            source_volume: Some(volume),
+        };
+
+        let error = verify_links_for_removal(&[entry]).expect_err("Replacement must be rejected");
+        assert!(error.to_string().contains("no longer owned by VDW"));
+        assert_eq!(
+            std::fs::read_to_string(target).expect("Replacement was deleted"),
+            "independent edit"
+        );
+    }
+
+    #[test]
+    fn test_verify_allows_already_missing_target() {
+        let dir = tempfile::tempdir().expect("Failed to create temp dir");
+        let entry = LinkEntry {
+            source: dir.path().join("source.txt"),
+            target: dir.path().join("missing.txt"),
+            link_type: LinkType::HardLink,
+            dependency_repo: "repo".to_string(),
+            source_inode: None,
+            source_volume: None,
+        };
+
+        verify_links_for_removal(&[entry]).expect("Missing target needs no deletion");
+    }
+
+    #[test]
+    fn test_restore_links_recreates_missing_hardlink() {
+        let dir = tempfile::tempdir().expect("Failed to create temp dir");
+        let source = dir.path().join("source.txt");
+        let target = dir.path().join("target.txt");
+        std::fs::write(&source, "managed").expect("Failed to write source");
+        let (inode, volume) = get_file_inode(&source).expect("Missing file identity");
+        let entry = LinkEntry {
+            source: source.clone(),
+            target: target.clone(),
+            link_type: LinkType::HardLink,
+            dependency_repo: "repo".to_string(),
+            source_inode: Some(inode),
+            source_volume: Some(volume),
+        };
+
+        restore_links(&[entry]).expect("Failed to restore hardlink");
+
+        assert_eq!(get_file_inode(&source), get_file_inode(&target));
     }
 
     #[test]

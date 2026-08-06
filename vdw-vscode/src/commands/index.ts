@@ -94,21 +94,6 @@ export function registerCommands(
                 const result = await cliService.unlink();
 
                 if (result.exitCode === 0) {
-                    // Refresh all editable Git repos so stale ones are dropped from Source Control
-                    const config = configService.getConfig();
-                    if (config) {
-                        const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-                        const candidates: string[] = [];
-                        for (const dep of config.dependencies.filter(d => d.editable)) {
-                            if (dep.local) candidates.push(dep.local);
-                            if (dep.origin) candidates.push(dep.origin);
-                            if (workspaceRoot) candidates.push(path.join(workspaceRoot, dep.path));
-                        }
-                        if (candidates.length > 0) {
-                            await autoOpenService?.refreshGitRepositories(...candidates);
-                        }
-                    }
-
                     vscode.window.showInformationMessage('Dependencies unlinked successfully!');
                     contextService.refresh();
                     fileProvider.refresh();
@@ -126,7 +111,7 @@ export function registerCommands(
         })
     );
 
-    // vdw.relink - Unlink then link with updated config
+    // vdw.relink - CLI-managed atomic relink
     context.subscriptions.push(
         vscode.commands.registerCommand('vdw.relink', async () => {
             try {
@@ -142,19 +127,10 @@ export function registerCommands(
                 }
                 
                 statusBar.showBusy('Relinking...');
-                log('Running vdw relink (unlink + link)...');
-                
-                // Step 1: Unlink
-                const unlinkResult = await cliService.unlink();
-                if (unlinkResult.exitCode !== 0) {
-                    vscode.window.showErrorMessage(`Unlink failed: ${unlinkResult.stderr || unlinkResult.stdout}`);
-                    statusBar.showError('Relink failed');
-                    return;
-                }
-                
-                // Step 2: Link
-                const linkResult = await cliService.link();
-                if (linkResult.exitCode === 0) {
+                log('Running transactional vdw relink...');
+
+                const relinkResult = await cliService.relink();
+                if (relinkResult.exitCode === 0) {
                     vscode.window.showInformationMessage('Dependencies relinked successfully with updated config!');
                     configService.reload();
                     contextService.refresh();
@@ -166,7 +142,7 @@ export function registerCommands(
                     // Auto-open Git repositories for editable dependencies
                     await autoOpenService?.openAllEditableRepositories();
                 } else {
-                    vscode.window.showErrorMessage(`Link failed: ${linkResult.stderr || linkResult.stdout}`);
+                    vscode.window.showErrorMessage(`Relink failed: ${relinkResult.stderr || relinkResult.stdout}`);
                     statusBar.showError('Relink failed');
                 }
             } catch (err) {
@@ -253,14 +229,6 @@ export function registerCommands(
                 const result = await cliService.unlinkRepo(repoIdentifier);
 
                 if (result.exitCode === 0) {
-                    // Refresh Git extension AFTER unlink so stale repos are dropped from Source Control
-                    if (dep.editable) {
-                        const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-                        const targetPath = workspaceRoot ? path.join(workspaceRoot, dep.path) : '';
-                        log(`Refreshing Git repositories after unlink: ${dep.local}`);
-                        await autoOpenService?.refreshGitRepositories(dep.local, targetPath, dep.origin);
-                    }
-
                     vscode.window.showInformationMessage(`Repository "${repoName}" unlinked successfully!`);
                     configService.reload();
                     contextService.refresh();
@@ -324,7 +292,7 @@ export function registerCommands(
     );
 
     // vdw.removeRepo - Remove a repository (from context menu)
-    // Flow: unlink → remove from .vdwrc (no CLI store operation)
+    // Flow: check dirty state → confirm → unlink → remove from .vdwrc (or keep files)
     context.subscriptions.push(
         vscode.commands.registerCommand('vdw.removeRepo', async (treeItem?: any) => {
             if (!treeItem || !treeItem.dependency) {
@@ -338,22 +306,37 @@ export function registerCommands(
                 ? dep.remote.split('/').pop()?.replace('.git', '') || dep.remote
                 : path.basename(dep.origin || dep.local);
 
-            const confirm = await vscode.window.showWarningMessage(
-                `Remove repository "${repoName}"?\n\nPath: ${dep.path}\n\nThis will unlink the repository and remove it from .vdwrc configuration.`,
-                { modal: true },
-                'Yes, Remove',
-                'Cancel'
-            );
+            // Helper: remove dependency from .vdwrc only (no unlink)
+            const removeFromVdwrcOnly = async (): Promise<boolean> => {
+                const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+                if (!workspaceFolder) {
+                    throw new Error('No workspace folder found');
+                }
+                const vdwrcPath = path.join(workspaceFolder.uri.fsPath, '.vdwrc');
+                if (!fs.existsSync(vdwrcPath)) {
+                    throw new Error('.vdwrc file not found');
+                }
+                const content = fs.readFileSync(vdwrcPath, 'utf-8');
+                const config = yaml.load(content) as any;
+                if (!config || !config.dependencies) {
+                    throw new Error('Invalid .vdwrc format');
+                }
+                const beforeCount = config.dependencies.length;
+                config.dependencies = config.dependencies.filter(
+                    (d: any) => !(dep.remote && d.remote === dep.remote) && !(dep.local && d.local === dep.local) && d.repo !== repoIdentifier && d.path !== dep.path
+                );
+                if (config.dependencies.length === beforeCount) {
+                    logError('Dependency not found in .vdwrc, nothing to remove', { remote: dep.remote, local: dep.local, path: dep.path });
+                } else {
+                    const yamlStr = yaml.dump(config, { indent: 2, lineWidth: 120, noRefs: true });
+                    fs.writeFileSync(vdwrcPath, yamlStr, 'utf-8');
+                    log(`Removed dependency from .vdwrc: ${repoName}`);
+                }
+                return true;
+            };
 
-            if (confirm !== 'Yes, Remove') {
-                return;
-            }
-
-            try {
-                statusBar.showBusy(`Removing ${repoName}...`);
-                log(`Removing repository: ${repoName} (${repoIdentifier})`);
-
-                // Step 1: Unlink the repository first
+            // Helper: full removal (unlink + remove from .vdwrc)
+            const fullRemoval = async (): Promise<void> => {
                 log('Step 1: Unlinking repository...');
                 const unlinkResult = await cliService.unlinkRepo(repoIdentifier);
                 if (unlinkResult.exitCode !== 0) {
@@ -361,44 +344,85 @@ export function registerCommands(
                     // Continue anyway — the dependency might already be unlinked
                 }
 
-                // Refresh Git extension AFTER unlink so stale repos are dropped from Source Control
-                if (dep.editable) {
-                    const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-                    const targetPath = workspaceRoot ? path.join(workspaceRoot, dep.path) : '';
-                    log(`Refreshing Git repositories after unlink: ${repoName}`);
-                    await autoOpenService?.refreshGitRepositories(dep.local, targetPath, dep.origin);
-                }
-
-                // Step 2: Remove dependency from .vdwrc directly
                 log('Step 2: Removing dependency from .vdwrc...');
-                const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
-                if (!workspaceFolder) {
-                    throw new Error('No workspace folder found');
+                await removeFromVdwrcOnly();
+            };
+
+            try {
+                // Check dirty state for editable repos
+                let isDirty = false;
+                let changesInfo = '';
+                if (dep.editable) {
+                    log(`Checking dirty state for: ${repoName}`);
+                    const statusPromise = cliService.checkRepoStatus(repoIdentifier);
+                    const timeoutPromise = new Promise<null>(resolve => setTimeout(() => resolve(null), 5000));
+                    const statusResult = await Promise.race([statusPromise, timeoutPromise]);
+
+                    if (statusResult && statusResult.dirty) {
+                        isDirty = true;
+                        const c = statusResult.changes;
+                        if (c) {
+                            const parts: string[] = [];
+                            if (c.modified) parts.push(`${c.modified} modified`);
+                            if (c.added) parts.push(`${c.added} added`);
+                            if (c.deleted) parts.push(`${c.deleted} deleted`);
+                            if (c.untracked) parts.push(`${c.untracked} untracked`);
+                            changesInfo = parts.join(', ');
+                        }
+                    }
                 }
 
-                const vdwrcPath = path.join(workspaceFolder.uri.fsPath, '.vdwrc');
-                if (!fs.existsSync(vdwrcPath)) {
-                    throw new Error('.vdwrc file not found');
-                }
+                if (isDirty) {
+                    // Dirty: show enhanced warning with 3 buttons
+                    const warningMsg = changesInfo
+                        ? `Repository "${repoName}" has uncommitted changes (${changesInfo}).\n\nPath: ${dep.path}\n\nRemoving will affect these files. What would you like to do?`
+                        : `Repository "${repoName}" has uncommitted changes.\n\nPath: ${dep.path}\n\nRemoving will affect these files. What would you like to do?`;
 
-                const content = fs.readFileSync(vdwrcPath, 'utf-8');
-                const config = yaml.load(content) as any;
-                if (!config || !config.dependencies) {
-                    throw new Error('Invalid .vdwrc format');
-                }
+                    const choice = await vscode.window.showWarningMessage(
+                        warningMsg,
+                        { modal: true },
+                        'Discard & Remove',
+                        'Keep Files',
+                        'Cancel'
+                    );
 
-                const beforeCount = config.dependencies.length;
-                config.dependencies = config.dependencies.filter(
-                    (d: any) => !(dep.remote && d.remote === dep.remote) && !(dep.local && d.local === dep.local) && d.repo !== repoIdentifier && d.path !== dep.path
-                );
-
-                if (config.dependencies.length === beforeCount) {
-                    logError('Dependency not found in .vdwrc, nothing to remove', { remote: dep.remote, local: dep.local, path: dep.path });
-                    // Still refresh UI
+                    if (choice === 'Discard & Remove') {
+                        statusBar.showBusy(`Removing ${repoName}...`);
+                        log(`Discard & Remove: full removal for ${repoName}`);
+                        await fullRemoval();
+                    } else if (choice === 'Keep Files') {
+                        // Keep worktree files: remove from .vdwrc only, skip unlink
+                        log(`Keep Files: removing from config only for ${repoName}`);
+                        statusBar.showBusy(`Updating config...`);
+                        await removeFromVdwrcOnly();
+                        vscode.window.showInformationMessage(`Repository "${repoName}" removed from .vdwrc (worktree files preserved).`);
+                        configService.reload();
+                        contextService.refresh();
+                        fileProvider.refresh();
+                        treeProvider.refresh();
+                        const fileCount2 = await contextService.getFileCount();
+                        statusBar.update(fileCount2);
+                        return;
+                    } else {
+                        // Cancel or dismissed
+                        return;
+                    }
                 } else {
-                    const yamlStr = yaml.dump(config, { indent: 2, lineWidth: 120, noRefs: true });
-                    fs.writeFileSync(vdwrcPath, yamlStr, 'utf-8');
-                    log(`Removed dependency from .vdwrc: ${repoName}`);
+                    // Clean or not editable or status check failed: standard confirmation
+                    const confirm = await vscode.window.showWarningMessage(
+                        `Remove repository "${repoName}"?\n\nPath: ${dep.path}\n\nThis will unlink the repository and remove it from .vdwrc configuration.`,
+                        { modal: true },
+                        'Yes, Remove',
+                        'Cancel'
+                    );
+
+                    if (confirm !== 'Yes, Remove') {
+                        return;
+                    }
+
+                    statusBar.showBusy(`Removing ${repoName}...`);
+                    log(`Removing repository: ${repoName} (${repoIdentifier})`);
+                    await fullRemoval();
                 }
 
                 // Refresh UI
@@ -445,22 +469,7 @@ export function registerCommands(
                 const fileCount = await contextService.getFileCount();
                 statusBar.update(fileCount);
 
-                // Refresh Git repositories for editable deps
-                const cfg = configService.getConfig();
-                if (cfg) {
-                    const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-                    const candidates: string[] = [];
-                    for (const dep of cfg.dependencies) {
-                        if (dep.editable) {
-                            if (dep.local) candidates.push(dep.local);
-                            if (dep.origin) candidates.push(dep.origin);
-                            if (workspaceRoot) candidates.push(path.join(workspaceRoot, dep.path));
-                        }
-                    }
-                    if (candidates.length > 0) {
-                        await autoOpenService?.refreshGitRepositories(...candidates);
-                    }
-                }
+                await autoOpenService?.openAllEditableRepositories();
 
                 vscode.window.showInformationMessage(`Context refreshed: ${fileCount} files in scope`);
             } catch (err) {

@@ -1,7 +1,6 @@
 import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
-import { Dependency } from '../types/vdwTypes';
 import { ConfigService } from './configService';
 import { log, logError } from '../utils/logger';
 
@@ -15,6 +14,7 @@ import { log, logError } from '../utils/logger';
 export class AutoOpenService implements vscode.Disposable {
     private configService: ConfigService;
     private _disposables: vscode.Disposable[] = [];
+    private gitOperationQueue: Promise<void> = Promise.resolve();
 
     constructor(configService: ConfigService) {
         this.configService = configService;
@@ -60,14 +60,33 @@ export class AutoOpenService implements vscode.Disposable {
     }
 
     /**
-     * Refresh specific Git repositories by path, so VS Code detects stale repos and drops them.
-     * Uses the Git extension API to find and refresh the repo, avoiding path-matching issues.
-     * Waits for the Git extension to be ready before attempting refresh.
-     *
-     * NOTE: repo.state is a NUMBER (RepositoryState enum: UNINITIALIZED=0, IDLE=1, ...)
-     *       repo.HEAD is a SEPARATE property on the Repository object (not on repo.state)
+     * Open and refresh every editable dependency's managed worktree.
+     * `origin` and the workspace projection are deliberately excluded: they are not
+     * the repository that owns the files edited through VDW hardlinks.
      */
-    async refreshGitRepositories(...candidatePaths: string[]): Promise<void> {
+    async openAllEditableRepositories(): Promise<void> {
+        if (!this.isAutoOpenEnabled()) return;
+
+        return this.enqueueGitOperation(async () => {
+            const config = this.configService.getConfig();
+            if (!config) return;
+
+            const managedWorktreePaths = config.dependencies
+                .filter(dep => dep.editable && dep.local)
+                .map(dep => dep.local);
+
+            await this.syncManagedRepositories(managedWorktreePaths);
+        });
+    }
+
+    /** Serialize Git API operations triggered by commands and .vdwrc watchers. */
+    private enqueueGitOperation(operation: () => Promise<void>): Promise<void> {
+        const queued = this.gitOperationQueue.then(operation, operation);
+        this.gitOperationQueue = queued.catch(() => undefined);
+        return queued;
+    }
+
+    private async syncManagedRepositories(managedWorktreePaths: string[]): Promise<void> {
         try {
             const ready = await this.waitForGitReady();
             if (!ready) {
@@ -82,114 +101,68 @@ export class AutoOpenService implements vscode.Disposable {
                 return;
             }
 
-            // Diagnostic: dump ALL repos known to the Git extension
-            log(`AutoOpen: Git extension has ${gitAPI.repositories.length} repos:`);
-            for (const r of gitAPI.repositories) {
-                log(`  - ${r.rootUri.fsPath} | state=${r.state} | HEAD.name=${r.HEAD?.name || '(none)'} | HEAD.commit=${r.HEAD?.commit?.slice(0, 7) || '(none)'}`);
-            }
-            log(`AutoOpen: Candidate paths: ${JSON.stringify(candidatePaths)}`);
-
             let refreshed = 0;
             const seen = new Set<string>();
 
-            for (const p of candidatePaths) {
-                if (!p || p.trim() === '') continue;
+            for (const worktreePath of managedWorktreePaths) {
+                if (!worktreePath || worktreePath.trim() === '') continue;
+                if (!this.isValidGitRepository(worktreePath)) continue;
 
-                let repo = gitAPI.getRepository(vscode.Uri.file(p));
+                const normalizedPath = this.normalizeRepositoryPath(worktreePath);
+                if (seen.has(normalizedPath)) continue;
+                seen.add(normalizedPath);
 
-                // Repo not registered with Git extension — try to open it.
-                // Skip VDW store paths to avoid exposing internal worktree dirs.
+                // getRepository(uri) may return a containing parent repository. Match
+                // rootUri exactly so a workspace repository can never stand in for a
+                // VDW-managed worktree.
+                let repo = this.findExactRepository(gitAPI, normalizedPath);
                 if (!repo) {
-                    if (p.includes(path.sep + '.vdw' + path.sep)) {
-                        log(`AutoOpen: Skipping VDW store path: ${p}`);
-                        continue;
-                    }
-                    log(`AutoOpen: Repo not found at ${p}, attempting git.openRepository`);
+                    log(`AutoOpen: Opening managed worktree: ${worktreePath}`);
                     try {
-                        await vscode.commands.executeCommand('git.openRepository', p);
-                        await new Promise(resolve => setTimeout(resolve, 500));
+                        if (typeof gitAPI.openRepository === 'function') {
+                            await gitAPI.openRepository(vscode.Uri.file(worktreePath));
+                        } else {
+                            await vscode.commands.executeCommand('git.openRepository', worktreePath);
+                        }
+                        await new Promise(resolve => setTimeout(resolve, this.getOpenDelay()));
                     } catch (err) {
-                        logError(`AutoOpen: Failed to open repository at ${p}`, err);
+                        logError(`AutoOpen: Failed to open managed worktree: ${worktreePath}`, err);
                         continue;
                     }
-                    repo = gitAPI.getRepository(vscode.Uri.file(p));
+                    repo = this.findExactRepository(gitAPI, normalizedPath);
                     if (!repo) {
-                        log(`AutoOpen: Still not found after openRepository: ${p}`);
+                        log(`AutoOpen: Git extension did not register the exact worktree root: ${worktreePath}`);
                         continue;
                     }
                 }
 
                 const repoPath = repo.rootUri.fsPath;
-                if (seen.has(repoPath)) continue;
-                seen.add(repoPath);
-
-                const headName = repo.HEAD?.name;
-                log(`AutoOpen: Matched repo: ${repoPath}, state=${repo.state}, HEAD.name=${headName || '(none)'}`);
-
-                // Already has branch info — no refresh needed
-                if (headName) {
-                    log(`AutoOpen: Skipping (already has branch "${headName}"): ${repoPath}`);
-                    continue;
-                }
-
-                // No branch info — call status() to trigger a refresh.
-                // git status -b output includes "## branchname..." which updates HEAD.name
-                log(`AutoOpen: Calling status() to refresh: ${repoPath}`);
+                log(`AutoOpen: Refreshing exact managed worktree: ${repoPath}`);
                 await repo.status();
-
-                const afterHead = repo.HEAD?.name;
-                log(`AutoOpen: After status(): HEAD.name=${afterHead || '(still none)'}`);
-                if (afterHead) {
-                    refreshed++;
-                }
+                refreshed++;
             }
 
-            if (seen.size === 0) {
-                log(`AutoOpen: No matching repository found for candidates`);
-            }
-            log(`AutoOpen: Refresh done — ${refreshed} refreshed, ${seen.size} unique repos found`);
+            log(`AutoOpen: Refresh done — ${refreshed}/${seen.size} managed worktrees refreshed`);
         } catch (err) {
-            logError('AutoOpen: Failed to refresh Git repositories', err);
+            logError('AutoOpen: Failed to synchronize managed Git worktrees', err);
         }
     }
 
-    /**
-     * 打开所有可编辑仓库的 Git 仓库注册
-     * 遍历依赖列表，对每个 editable 的依赖优先使用 dep.origin（用户原始仓库路径），
-     * 避免暴露 VDW store 内部路径（dep.local）到 Source Control。
-     */
-    async openAllEditableRepositories(): Promise<void> {
-        const config = this.configService.getConfig();
-        if (!config) return;
-        if (!this.isAutoOpenEnabled()) return;
+    private findExactRepository(gitAPI: any, normalizedPath: string): any | undefined {
+        return gitAPI.repositories.find((repo: any) =>
+            this.normalizeRepositoryPath(repo.rootUri.fsPath) === normalizedPath
+        );
+    }
 
-        const editableDeps = config.dependencies.filter(d => d.editable);
-        const delay = this.getOpenDelay();
-
-        for (const dep of editableDeps) {
-            // Prefer dep.origin (user's original repo) over dep.local (VDW store worktree)
-            const repoPath = dep.origin || dep.local;
-            if (!repoPath) {
-                log(`AutoOpen: ${dep.remote || dep.path} has no origin or local path set`);
-                continue;
-            }
-            // Never expose VDW store internal paths to Source Control
-            if (repoPath.includes(path.sep + '.vdw' + path.sep)) {
-                log(`AutoOpen: Skipping VDW store path: ${repoPath}`);
-                continue;
-            }
-            if (this.isValidGitRepository(repoPath)) {
-                try {
-                    await vscode.commands.executeCommand(
-                        'git.openRepository',
-                        repoPath
-                    );
-                } catch (err) {
-                    logError(`AutoOpen: Failed to open Git repository: ${repoPath}`, err);
-                }
-                await new Promise(resolve => setTimeout(resolve, delay));
-            }
+    private normalizeRepositoryPath(repoPath: string): string {
+        let normalized: string;
+        try {
+            normalized = fs.realpathSync.native(repoPath);
+        } catch {
+            normalized = path.resolve(repoPath);
         }
+        normalized = normalized.replace(/[\\/]+$/, '');
+        return process.platform === 'win32' ? normalized.toLowerCase() : normalized;
     }
 
     /**
@@ -248,7 +221,7 @@ export class AutoOpenService implements vscode.Disposable {
      * 验证标准 Git 仓库（.git 为目录）
      */
     private isValidStandardRepo(repoPath: string, gitDir: string): boolean {
-        return this.hasValidHeadRef(path.join(gitDir, 'HEAD'), (refPath: string) => path.join(gitDir, refPath));
+        return this.hasValidHeadRef(path.join(gitDir, 'HEAD'), gitDir);
     }
 
     /**
@@ -263,6 +236,9 @@ export class AutoOpenService implements vscode.Disposable {
                 return false;
             }
             bareRepoPath = content.replace(/^gitdir:\s*/, '').trim();
+            if (!path.isAbsolute(bareRepoPath)) {
+                bareRepoPath = path.resolve(path.dirname(gitFile), bareRepoPath);
+            }
         } catch (err) {
             logError(`AutoOpen: Failed to read .git file at: ${repoPath}`, err);
             return false;
@@ -279,15 +255,15 @@ export class AutoOpenService implements vscode.Disposable {
         // The bare repo root is two levels up: /path/to/bare.git/
         const bareGitDir = path.dirname(path.dirname(bareRepoPath));
         
-        return this.hasValidHeadRef(worktreeHeadPath, (refPath: string) => path.join(bareGitDir, refPath));
+        return this.hasValidHeadRef(worktreeHeadPath, bareGitDir);
     }
 
     /**
      * 读取 HEAD 并验证其指向的分支 ref 是否存在
      * @param headPath - HEAD 文件路径
-     * @param resolveRef - 函数：将 ref 路径（如 refs/heads/main）解析为绝对路径
+     * @param gitDir - 仓库 git 目录，用于解析 loose ref 和 packed-refs
      */
-    private hasValidHeadRef(headPath: string, resolveRef: (refPath: string) => string): boolean {
+    private hasValidHeadRef(headPath: string, gitDir: string): boolean {
         let headContent: string;
         try {
             headContent = fs.readFileSync(headPath, 'utf-8').trim();
@@ -304,9 +280,14 @@ export class AutoOpenService implements vscode.Disposable {
         // If HEAD points to a branch (ref: refs/heads/<name>), verify the ref exists
         if (headContent.startsWith('ref: ')) {
             const refPath = headContent.substring(5).trim();
-            const refFile = resolveRef(refPath);
-            if (!fs.existsSync(refFile)) {
-                log(`AutoOpen: Branch ref not found: ${refFile} (from HEAD: ${headContent})`);
+            const refFile = path.join(gitDir, refPath);
+            const packedRefsFile = path.join(gitDir, 'packed-refs');
+            const packedRefExists = fs.existsSync(packedRefsFile)
+                && fs.readFileSync(packedRefsFile, 'utf-8')
+                    .split(/\r?\n/)
+                    .some(line => line.endsWith(` ${refPath}`));
+            if (!fs.existsSync(refFile) && !packedRefExists) {
+                log(`AutoOpen: Branch ref not found in loose or packed refs: ${refPath}`);
                 return false;
             }
         }

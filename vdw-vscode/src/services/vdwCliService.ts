@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import { spawn } from 'child_process';
 import * as path from 'path';
-import { ValidationResult } from '../types/vdwTypes';
+import { ValidationResult, RepoStatusResult } from '../types/vdwTypes';
 import { log, logError } from '../utils/logger';
 
 export interface CommandResult {
@@ -105,6 +105,11 @@ export class VDWCliService {
         return this.executeCommand('unlink');
     }
 
+    /** Run transactional vdw relink */
+    async relink(): Promise<CommandResult> {
+        return this.executeCommand('relink');
+    }
+
     /** Run vdw unlink --repo for a specific repository */
     async unlinkRepo(repoUrl: string): Promise<CommandResult> {
         return this.executeCommand('unlink', ['--repo', repoUrl]);
@@ -166,6 +171,19 @@ export class VDWCliService {
     /** Run vdw repo remove for a specific repository */
     async removeRepo(repoUrl: string): Promise<CommandResult> {
         return this.executeCommand('repo', ['remove', repoUrl]);
+    }
+
+    /** Run vdw repo status for a specific repository */
+    async checkRepoStatus(repoName: string): Promise<RepoStatusResult | null> {
+        try {
+            const result = await this.executeCommand('repo', ['status', repoName]);
+            if (result.exitCode === 0) {
+                return JSON.parse(result.stdout);
+            }
+        } catch {
+            // Graceful degradation: CLI may not support repo status (old version)
+        }
+        return null;
     }
 
     /** Update workspace path */

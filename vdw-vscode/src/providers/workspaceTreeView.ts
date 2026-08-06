@@ -70,11 +70,19 @@ export class WorkspaceTreeProvider implements vscode.TreeDataProvider<WorkspaceT
     getChildren(element?: WorkspaceTreeItem): WorkspaceTreeItem[] {
         const config = this.configService.getConfig();
         if (!config) {
-            return [new WorkspaceTreeItem(
-                'No .vdwrc found',
+            const initItem = new WorkspaceTreeItem(
+                'Initialize VDW Workspace',
                 vscode.TreeItemCollapsibleState.None,
-                'info'
-            )];
+                'initGuide',
+                undefined,
+                'Click to set up your workspace'
+            );
+            initItem.iconPath = new vscode.ThemeIcon('play-circle');
+            initItem.command = {
+                command: 'vdw.init',
+                title: 'Initialize VDW Workspace',
+            };
+            return [initItem];
         }
 
         // Show welcome message when no dependencies

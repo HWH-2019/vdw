@@ -1,5 +1,4 @@
 import * as vscode from 'vscode';
-import * as path from 'path';
 import { VDWCliService } from './services/vdwCliService';
 import { ConfigService } from './services/configService';
 import { ContextService } from './services/contextService';
@@ -8,7 +7,7 @@ import { WorkspaceTreeProvider } from './providers/workspaceTreeView';
 import { StatusBarManager } from './providers/statusBar';
 import { registerCommands } from './commands/index';
 import { AutoOpenService } from './services/autoOpenService';
-import { log, dispose as disposeLogger } from './utils/logger';
+import { log, logError, dispose as disposeLogger } from './utils/logger';
 
 let fileProvider: VDWFileProvider | undefined;
 let treeProvider: WorkspaceTreeProvider | undefined;
@@ -31,6 +30,62 @@ export function activate(context: vscode.ExtensionContext) {
     const cliService = new VDWCliService(workspacePath);
     const configService = new ConfigService(workspacePath);
     configService.loadConfig();
+
+    const hasConfig = configService.getConfig() !== null;
+
+    if (!hasConfig) {
+        log('No .vdwrc found, showing initialization guide');
+
+        // Minimal init: TreeView with init guide + commands
+        treeProvider = new WorkspaceTreeProvider(configService, cliService);
+        const treeView = vscode.window.createTreeView('vdwWorkspace', {
+            treeDataProvider: treeProvider,
+            showCollapseAll: true,
+        });
+        context.subscriptions.push(treeView);
+
+        // Create a minimal StatusBar so vdw.init can use it
+        statusBar = new StatusBarManager(configService);
+        statusBar.update();
+
+        // Register only vdw.init so the init guide button works
+        context.subscriptions.push(
+            vscode.commands.registerCommand('vdw.init', async () => {
+                try {
+                    statusBar!.showBusy('Initializing...');
+                    const result = await cliService.init();
+                    if (result.exitCode === 0) {
+                        vscode.window.showInformationMessage('VDW workspace initialized successfully!');
+                        configService.reload();
+                        treeProvider!.refresh();
+                        statusBar!.update();
+                        const wsFolder = vscode.workspace.workspaceFolders?.[0];
+                        if (wsFolder) {
+                            const vdwrcUri = vscode.Uri.joinPath(wsFolder.uri, '.vdwrc');
+                            const doc = await vscode.workspace.openTextDocument(vdwrcUri);
+                            await vscode.window.showTextDocument(doc);
+                        }
+                    } else {
+                        vscode.window.showErrorMessage(`VDW init failed: ${result.stderr || result.stdout}`);
+                        statusBar!.showError('Init failed');
+                    }
+                } catch (err) {
+                    logError('Init command failed', err);
+                    vscode.window.showErrorMessage(`VDW init error: ${err}`);
+                    statusBar!.showError('Error');
+                }
+            })
+        );
+
+        // Watch for .vdwrc creation to trigger full reload
+        const initWatcher = vscode.workspace.createFileSystemWatcher('**/.vdwrc');
+        initWatcher.onDidCreate(() => {
+            log('.vdwrc created, reloading window...');
+            vscode.commands.executeCommand('workbench.action.reloadWindow');
+        });
+        context.subscriptions.push(initWatcher);
+        return;
+    }
 
     // 2. Initialize FileProvider
     fileProvider = new VDWFileProvider(configService, workspacePath);
@@ -77,42 +132,14 @@ export function activate(context: vscode.ExtensionContext) {
         fileProvider?.refresh();
         treeProvider?.refresh();
         statusBar?.update();
-        // Refresh Git repositories for editable deps
-        const cfg = configService.getConfig();
-        if (cfg) {
-            const candidatePaths: string[] = [];
-            for (const dep of cfg.dependencies) {
-                if (dep.editable) {
-                    if (dep.origin) candidatePaths.push(dep.origin);
-                    if (dep.local) candidatePaths.push(dep.local);
-                    candidatePaths.push(path.join(workspacePath, dep.path));
-                }
-            }
-            if (candidatePaths.length > 0) {
-                autoOpenService?.refreshGitRepositories(...candidatePaths);
-            }
-        }
+        void autoOpenService?.openAllEditableRepositories();
     });
     watcher.onDidCreate(() => {
         log('.vdwrc created, loading...');
         configService.reload();
         treeProvider?.refresh();
         statusBar?.update();
-        // Refresh Git repositories for editable deps
-        const cfg = configService.getConfig();
-        if (cfg) {
-            const candidatePaths: string[] = [];
-            for (const dep of cfg.dependencies) {
-                if (dep.editable) {
-                    if (dep.origin) candidatePaths.push(dep.origin);
-                    if (dep.local) candidatePaths.push(dep.local);
-                    candidatePaths.push(path.join(workspacePath, dep.path));
-                }
-            }
-            if (candidatePaths.length > 0) {
-                autoOpenService?.refreshGitRepositories(...candidatePaths);
-            }
-        }
+        void autoOpenService?.openAllEditableRepositories();
     });
     watcher.onDidDelete(() => {
         log('.vdwrc deleted');
@@ -127,26 +154,10 @@ export function activate(context: vscode.ExtensionContext) {
         statusBar?.update(count);
     });
 
-    // 10. Auto-open editable Git repositories on extension activation, then refresh
+    // 10. Auto-open and refresh exact VDW-managed worktrees on activation
     (async () => {
         await autoOpenService.openAllEditableRepositories();
         log('Auto-open Git repositories completed');
-
-        // Collect candidate paths for editable deps and refresh via refreshGitRepositories,
-        // which waits for each repo to reach IDLE state before calling status().
-        const config = configService.getConfig();
-        if (!config) return;
-        const candidatePaths: string[] = [];
-        for (const dep of config.dependencies) {
-            if (dep.editable) {
-                if (dep.origin) candidatePaths.push(dep.origin);
-                if (dep.local) candidatePaths.push(dep.local);
-                candidatePaths.push(path.join(workspacePath, dep.path));
-            }
-        }
-        if (candidatePaths.length > 0) {
-            await autoOpenService.refreshGitRepositories(...candidatePaths);
-        }
     })();
 
     log('VDW extension activated successfully');

@@ -240,8 +240,86 @@ fn resolve_repo_id(name: &str) -> Option<String> {
 /// Remove a repository from the workspace
 pub fn remove(name: String) -> Result<()> {
     // Step 1: Resolve name to the dep_id used in state.links
-    // (this is dep.remote if non-empty, otherwise dep.local)
     let repo_id = resolve_repo_id(&name);
+
+    // Check for uncommitted changes in editable repos before removal
+    if let Ok(workspace_dir) = find_workspace_root() {
+        if let Ok(config) = parser::load_config(&workspace_dir) {
+            for dep in &config.dependencies {
+                let dep_name = if !dep.remote.is_empty() {
+                    dep.remote.as_str()
+                } else if !dep.origin.is_empty() {
+                    dep.origin.as_str()
+                } else {
+                    dep.local.as_str()
+                };
+                let short_name = dep_name.rsplit('/').next().unwrap_or("").trim_end_matches(".git");
+                let local_base = dep.local.rsplit('/').next().unwrap_or("");
+                let matches = short_name == name
+                    || local_base == name
+                    || dep_name == name
+                    || dep.path == name;
+
+                if matches && dep.editable {
+                    // Determine worktree path
+                    let worktree_path = if !dep.local.is_empty() {
+                        let p = std::path::Path::new(&dep.local);
+                        if p.is_absolute() { p.to_path_buf() } else { workspace_dir.join(&dep.local) }
+                    } else { continue; };
+
+                    if worktree_path.exists() {
+                        match crate::worktree::check_dirty(&worktree_path) {
+                            Ok(status) if status.is_dirty() => {
+                                let branch_info = dep.branch.as_deref().unwrap_or("unknown");
+                                if atty::is(atty::Stream::Stdin) {
+                                    // Interactive terminal: show prompt
+                                    println!("\n\x1b[33m⚠️  Repository \"{}\" (branch: {}) has uncommitted changes:\x1b[0m", name, branch_info);
+                                    println!("    {} modified, {} added, {} deleted, {} untracked\n",
+                                        status.modified, status.added, status.deleted, status.untracked);
+
+                                    let items = vec![
+                                        "Discard changes and remove",
+                                        "Keep worktree files (remove from config only)",
+                                        "Cancel",
+                                    ];
+                                    let selection = dialoguer::Select::new()
+                                        .with_prompt("What would you like to do?")
+                                        .items(&items)
+                                        .default(2)
+                                        .interact()?;
+
+                                    match selection {
+                                        0 => { /* Discard: continue with normal removal */ }
+                                        1 => {
+                                            // Keep files: only remove from config
+                                            remove_from_config(&name)?;
+                                            println!("\x1b[32m✓\x1b[0m Removed from .vdwrc configuration (worktree files preserved)");
+                                            return Ok(());
+                                        }
+                                        _ => {
+                                            println!("Operation cancelled.");
+                                            return Ok(());
+                                        }
+                                    }
+                                } else {
+                                    // Non-interactive: print warning and continue
+                                    eprintln!(
+                                        "\x1b[33mWarning:\x1b[0m Repository \"{}\" (branch: {}) has {} uncommitted change(s). Proceeding with removal.",
+                                        name, branch_info, status.total()
+                                    );
+                                }
+                            }
+                            Ok(_) => { /* clean, continue */ }
+                            Err(e) => {
+                                tracing::warn!("Failed to check dirty status for {}: {}", name, e);
+                            }
+                        }
+                    }
+                    break;
+                }
+            }
+        }
+    }
 
     // Step 2: Unlink first (remove linked files + update state.json)
     if let Some(ref id) = repo_id {
@@ -438,6 +516,112 @@ pub fn list() -> Result<()> {
 
     println!();
     println!("Total: {} repository(ies)", config.dependencies.len());
+
+    Ok(())
+}
+
+/// Show repository dirty status as JSON
+pub fn status(name: String) -> Result<()> {
+    let workspace_dir = find_workspace_root()?;
+    let config = parser::load_config(&workspace_dir)?;
+
+    // Find matching dependency
+    let dep = config.dependencies.iter().find(|dep| {
+        // Match by remote URL basename
+        let short_name = dep
+            .remote
+            .rsplit('/')
+            .next()
+            .unwrap_or("")
+            .trim_end_matches(".git");
+        if !short_name.is_empty() && short_name == name {
+            return true;
+        }
+        // Match by origin path basename
+        if !dep.origin.is_empty() {
+            let origin_base = dep.origin.rsplit('/').next().unwrap_or("");
+            if !origin_base.is_empty() && origin_base == name {
+                return true;
+            }
+        }
+        // Match by local path basename
+        if !dep.local.is_empty() {
+            let local_base = dep.local.rsplit('/').next().unwrap_or("");
+            if !local_base.is_empty() && local_base == name {
+                return true;
+            }
+        }
+        // Match by dep.path
+        if dep.path == name {
+            return true;
+        }
+        false
+    });
+
+    let dep = match dep {
+        Some(d) => d,
+        None => anyhow::bail!("Repository '{}' not found in workspace configuration", name),
+    };
+
+    let branch = dep.branch.as_deref().unwrap_or("unknown").to_string();
+
+    if !dep.editable {
+        let output = serde_json::json!({
+            "repo": name,
+            "branch": branch,
+            "editable": false,
+            "dirty": false,
+            "changes": null,
+            "worktree_path": null,
+        });
+        println!("{}", serde_json::to_string(&output)?);
+        return Ok(());
+    }
+
+    // Resolve worktree path from dep.local
+    let worktree_path = if dep.local.is_empty() {
+        None
+    } else {
+        let p = std::path::Path::new(&dep.local);
+        let resolved = if p.is_absolute() {
+            p.to_path_buf()
+        } else {
+            workspace_dir.join(&dep.local)
+        };
+        Some(resolved)
+    };
+
+    match worktree_path {
+        Some(ref wp) if wp.exists() => {
+            let (dirty, changes) = match crate::worktree::check_dirty(wp) {
+                Ok(ds) => (ds.is_dirty(), serde_json::to_value(&ds).ok()),
+                Err(e) => {
+                    tracing::warn!("Failed to check dirty status for {}: {}", name, e);
+                    (false, None)
+                }
+            };
+            let output = serde_json::json!({
+                "repo": name,
+                "branch": branch,
+                "editable": true,
+                "dirty": dirty,
+                "changes": changes,
+                "worktree_path": wp.to_string_lossy(),
+            });
+            println!("{}", serde_json::to_string(&output)?);
+        }
+        _ => {
+            let output = serde_json::json!({
+                "repo": name,
+                "branch": branch,
+                "editable": true,
+                "dirty": false,
+                "changes": null,
+                "worktree_path": worktree_path.as_ref().map(|p| p.to_string_lossy()),
+            });
+            println!("{}", serde_json::to_string(&output)?);
+        }
+    }
 
     Ok(())
 }
