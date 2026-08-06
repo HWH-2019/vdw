@@ -1,10 +1,12 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use std::path::PathBuf;
 
 use crate::commands::link;
 use crate::config::parser;
+use crate::store::editable_locks::{
+    acquire_editable_lock, check_editable_lock, release_editable_lock,
+};
 use crate::store::{get_store_path, init_store, object_pool};
-use crate::store::editable_locks::{check_editable_lock, acquire_editable_lock, release_editable_lock};
 use crate::types::config::{Dependency, Scope, VDWConfig};
 
 /// Check if the input looks like a remote URL (contains :// or @)
@@ -12,11 +14,44 @@ fn is_remote_url(input: &str) -> bool {
     input.contains("://") || input.contains('@')
 }
 
+/// Return a repository-like basename for URLs and local paths.
+fn repo_basename(input: &str) -> &str {
+    input
+        .trim_end_matches(|c| c == '/' || c == '\\')
+        .rsplit(|c| c == '/' || c == '\\')
+        .next()
+        .unwrap_or("")
+        .trim_end_matches(".git")
+}
+
+/// Match every identifier accepted by repository commands consistently.
+fn dependency_matches(dep: &Dependency, name: &str) -> bool {
+    if dep.remote == name || dep.origin == name || dep.local == name || dep.path == name {
+        return true;
+    }
+
+    // Only treat a separator-free input as a short repository name. Full paths
+    // must match exactly to avoid removing another repository with the same basename.
+    if name.contains('/') || name.contains('\\') {
+        return false;
+    }
+
+    let short_name = name.trim_end_matches(".git");
+    [&dep.remote, &dep.origin, &dep.local]
+        .into_iter()
+        .any(|identifier| !identifier.is_empty() && repo_basename(identifier) == short_name)
+}
+
 /// Add a repository to the workspace
 /// This will:
 /// 1. Clone the repository to the Content Store (for remote URLs)
 /// 2. Update the .vdwrc configuration file
-pub fn add(url: String, path: Option<String>, branch: Option<String>, editable: bool) -> Result<()> {
+pub fn add(
+    url: String,
+    path: Option<String>,
+    branch: Option<String>,
+    editable: bool,
+) -> Result<()> {
     if is_remote_url(&url) {
         // Remote repo: clone to store, then update config
         let store_path = ensure_store()?;
@@ -131,7 +166,7 @@ fn update_config(
         tag: None,
         commit: None,
         scope: Scope {
-            include: vec!["**/*".to_string()],  // Default: all files
+            include: vec!["**/*".to_string()], // Default: all files
             exclude: vec![],
         },
         editable,
@@ -157,12 +192,17 @@ fn update_config(
             "objects/{}-{}/worktrees/{}",
             repo_name, repo_hash, &branch_name
         ));
-        if let Err(e) = acquire_editable_lock(&repo_id, &branch_name, &workspace_dir, &worktree_path) {
+        if let Err(e) =
+            acquire_editable_lock(&repo_id, &branch_name, &workspace_dir, &worktree_path)
+        {
             tracing::warn!("Failed to acquire editable lock: {}", e);
         }
     }
 
-    println!("\x1b[32m✓\x1b[0m Configuration updated: {}", config_path.display());
+    println!(
+        "\x1b[32m✓\x1b[0m Configuration updated: {}",
+        config_path.display()
+    );
     println!("  Dependencies: {} total", config.dependencies.len());
 
     Ok(())
@@ -202,39 +242,11 @@ fn resolve_repo_id(name: &str) -> Option<String> {
     let workspace_dir = find_workspace_root().ok()?;
     let config = parser::load_config(&workspace_dir).ok()?;
 
-    for dep in &config.dependencies {
-        let dep_id = dep.dep_id().to_string();
-
-        // Match by short name from remote URL
-        let short_name = dep
-            .remote
-            .rsplit('/')
-            .next()
-            .unwrap_or("")
-            .trim_end_matches(".git");
-        if !short_name.is_empty() && short_name == name {
-            return Some(dep_id);
-        }
-
-        // Match by origin path (original source for local-only deps)
-        if !dep.origin.is_empty() && dep.origin == name {
-            return Some(dep_id);
-        }
-
-        // Match by exact local path
-        if dep.local == name {
-            return Some(dep_id);
-        }
-
-        // Match by local/origin path basename
-        let base_path = if !dep.origin.is_empty() { &dep.origin } else { &dep.local };
-        let basename = base_path.rsplit('/').next().unwrap_or("");
-        if !basename.is_empty() && basename == name {
-            return Some(dep_id);
-        }
-    }
-
-    None
+    config
+        .dependencies
+        .iter()
+        .find(|dep| dependency_matches(dep, name))
+        .map(|dep| dep.dep_id().to_string())
 }
 
 /// Remove a repository from the workspace
@@ -246,26 +258,18 @@ pub fn remove(name: String) -> Result<()> {
     if let Ok(workspace_dir) = find_workspace_root() {
         if let Ok(config) = parser::load_config(&workspace_dir) {
             for dep in &config.dependencies {
-                let dep_name = if !dep.remote.is_empty() {
-                    dep.remote.as_str()
-                } else if !dep.origin.is_empty() {
-                    dep.origin.as_str()
-                } else {
-                    dep.local.as_str()
-                };
-                let short_name = dep_name.rsplit('/').next().unwrap_or("").trim_end_matches(".git");
-                let local_base = dep.local.rsplit('/').next().unwrap_or("");
-                let matches = short_name == name
-                    || local_base == name
-                    || dep_name == name
-                    || dep.path == name;
-
-                if matches && dep.editable {
+                if dependency_matches(dep, &name) && dep.editable {
                     // Determine worktree path
                     let worktree_path = if !dep.local.is_empty() {
                         let p = std::path::Path::new(&dep.local);
-                        if p.is_absolute() { p.to_path_buf() } else { workspace_dir.join(&dep.local) }
-                    } else { continue; };
+                        if p.is_absolute() {
+                            p.to_path_buf()
+                        } else {
+                            workspace_dir.join(&dep.local)
+                        }
+                    } else {
+                        continue;
+                    };
 
                     if worktree_path.exists() {
                         match crate::worktree::check_dirty(&worktree_path) {
@@ -274,8 +278,13 @@ pub fn remove(name: String) -> Result<()> {
                                 if atty::is(atty::Stream::Stdin) {
                                     // Interactive terminal: show prompt
                                     println!("\n\x1b[33m⚠️  Repository \"{}\" (branch: {}) has uncommitted changes:\x1b[0m", name, branch_info);
-                                    println!("    {} modified, {} added, {} deleted, {} untracked\n",
-                                        status.modified, status.added, status.deleted, status.untracked);
+                                    println!(
+                                        "    {} modified, {} added, {} deleted, {} untracked\n",
+                                        status.modified,
+                                        status.added,
+                                        status.deleted,
+                                        status.untracked
+                                    );
 
                                     let items = vec![
                                         "Discard changes and remove",
@@ -323,9 +332,12 @@ pub fn remove(name: String) -> Result<()> {
 
     // Step 2: Unlink first (remove linked files + update state.json)
     if let Some(ref id) = repo_id {
-        if let Err(e) = link::unlink(Some(id.as_str())) {
-            tracing::warn!("Unlink before remove failed (continuing): {}", e);
-        }
+        link::unlink(Some(id.as_str())).with_context(|| {
+            format!(
+                "Failed to unlink repository '{}'; configuration and store were not changed",
+                name
+            )
+        })?;
     }
 
     // Step 3: Remove from .vdwrc configuration
@@ -369,7 +381,10 @@ pub fn remove(name: String) -> Result<()> {
                         }
                     }
                     _ => {
-                        println!("\x1b[33mMultiple repositories match '{}' in store:\x1b[0m", name);
+                        println!(
+                            "\x1b[33mMultiple repositories match '{}' in store:\x1b[0m",
+                            name
+                        );
                         for (dir_name, metadata) in matched {
                             println!("  {} -> {}", dir_name, metadata.repo_url);
                         }
@@ -394,72 +409,45 @@ fn remove_from_config(name: &str) -> Result<bool> {
         Ok(dir) => dir,
         Err(_) => return Ok(false),
     };
-    let config_path = workspace_dir.join(".vdwrc");
-
-    if !config_path.exists() {
-        return Ok(false);
-    }
-
-    let content = std::fs::read_to_string(&config_path)?;
-    let mut config = parser::parse_yaml(&content)?;
+    let mut config = parser::load_config(&workspace_dir)?;
 
     let original_len = config.dependencies.len();
 
     // Find dependencies being removed to release their editable locks
-    let deps_to_remove: Vec<_> = config.dependencies.iter().filter(|dep| {
-        if is_remote_url(name) {
-            dep.remote == name
-        } else {
-            dep.local == name
-                || dep.remote.rsplit('/').next().unwrap_or("").trim_end_matches(".git") == name
-                || dep.local.rsplit('/').next().unwrap_or("") == name
-        }
-    }).collect();
+    let deps_to_remove: Vec<_> = config
+        .dependencies
+        .iter()
+        .filter(|dep| dependency_matches(dep, name))
+        .cloned()
+        .collect();
 
-    // Release editable locks for removed dependencies
-    for dep in &deps_to_remove {
-        let dep_id = dep.dep_id().to_string();
-        let branch = dep.branch.as_deref().unwrap_or("main");
-        if let Err(e) = release_editable_lock(&dep_id, branch, &workspace_dir) {
-            tracing::warn!("Failed to release editable lock for {} branch '{}': {}", dep_id, branch, e);
-        }
-    }
-
-    if is_remote_url(name) {
-        // Match by remote URL
-        config.dependencies.retain(|dep| dep.remote != name);
-    } else {
-        // Match by local path or repo short name
-        config.dependencies.retain(|dep| {
-            // Check exact local path match
-            if dep.local == name {
-                return false;
-            }
-            // Check short name from remote URL (e.g., "repo" from "git@github.com:org/repo.git")
-            let short_name = dep
-                .remote
-                .rsplit('/')
-                .next()
-                .unwrap_or("")
-                .trim_end_matches(".git");
-            if !short_name.is_empty() && short_name == name {
-                return false;
-            }
-            // Check short name from local path basename
-            let local_basename = dep.local.rsplit('/').next().unwrap_or("");
-            if !local_basename.is_empty() && local_basename == name {
-                return false;
-            }
-            true
-        });
-    }
+    config
+        .dependencies
+        .retain(|dep| !dependency_matches(dep, name));
 
     let removed = config.dependencies.len() < original_len;
 
     if removed {
-        let yaml_content = serde_yaml::to_string(&config)?;
-        std::fs::write(&config_path, &yaml_content)?;
-        println!("\x1b[32m✓\x1b[0m Repository removed from configuration: {}", name);
+        parser::save_config(&workspace_dir, &config)?;
+
+        // Release editable locks only after the configuration update succeeds.
+        for dep in &deps_to_remove {
+            let dep_id = dep.dep_id().to_string();
+            let branch = dep.branch.as_deref().unwrap_or("main");
+            if let Err(e) = release_editable_lock(&dep_id, branch, &workspace_dir) {
+                tracing::warn!(
+                    "Failed to release editable lock for {} branch '{}': {}",
+                    dep_id,
+                    branch,
+                    e
+                );
+            }
+        }
+
+        println!(
+            "\x1b[32m✓\x1b[0m Repository removed from configuration: {}",
+            name
+        );
     }
 
     Ok(removed)
@@ -484,10 +472,7 @@ pub fn list() -> Result<()> {
     }
 
     // Print table header
-    println!(
-        "{:<40} {:<12} {:<8} {}",
-        "REPO", "BRANCH", "EDIT", "PATH"
-    );
+    println!("{:<40} {:<12} {:<8} {}", "REPO", "BRANCH", "EDIT", "PATH");
     println!("{}", "-".repeat(80));
 
     for dep in &config.dependencies {
@@ -526,37 +511,10 @@ pub fn status(name: String) -> Result<()> {
     let config = parser::load_config(&workspace_dir)?;
 
     // Find matching dependency
-    let dep = config.dependencies.iter().find(|dep| {
-        // Match by remote URL basename
-        let short_name = dep
-            .remote
-            .rsplit('/')
-            .next()
-            .unwrap_or("")
-            .trim_end_matches(".git");
-        if !short_name.is_empty() && short_name == name {
-            return true;
-        }
-        // Match by origin path basename
-        if !dep.origin.is_empty() {
-            let origin_base = dep.origin.rsplit('/').next().unwrap_or("");
-            if !origin_base.is_empty() && origin_base == name {
-                return true;
-            }
-        }
-        // Match by local path basename
-        if !dep.local.is_empty() {
-            let local_base = dep.local.rsplit('/').next().unwrap_or("");
-            if !local_base.is_empty() && local_base == name {
-                return true;
-            }
-        }
-        // Match by dep.path
-        if dep.path == name {
-            return true;
-        }
-        false
-    });
+    let dep = config
+        .dependencies
+        .iter()
+        .find(|dep| dependency_matches(dep, &name));
 
     let dep = match dep {
         Some(d) => d,
@@ -636,4 +594,47 @@ fn ensure_store() -> Result<std::path::PathBuf> {
     }
 
     Ok(store_path)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn dependency() -> Dependency {
+        Dependency {
+            remote: "git@github.com:example/service.git".to_string(),
+            origin: "/repos/original-service".to_string(),
+            local: "/store/worktrees/service-main".to_string(),
+            repo: String::new(),
+            path: "services/service".to_string(),
+            branch: Some("main".to_string()),
+            tag: None,
+            commit: None,
+            scope: Scope::default(),
+            editable: true,
+        }
+    }
+
+    #[test]
+    fn dependency_match_accepts_all_supported_identifiers() {
+        let dep = dependency();
+
+        assert!(dependency_matches(&dep, &dep.remote));
+        assert!(dependency_matches(&dep, &dep.origin));
+        assert!(dependency_matches(&dep, &dep.local));
+        assert!(dependency_matches(&dep, &dep.path));
+        assert!(dependency_matches(&dep, "service"));
+        assert!(dependency_matches(&dep, "service.git"));
+        assert!(dependency_matches(&dep, "original-service"));
+        assert!(dependency_matches(&dep, "service-main"));
+    }
+
+    #[test]
+    fn dependency_match_requires_exact_full_paths() {
+        let dep = dependency();
+
+        assert!(!dependency_matches(&dep, "/another/service"));
+        assert!(!dependency_matches(&dep, "services/other"));
+        assert!(!dependency_matches(&dep, "unknown"));
+    }
 }

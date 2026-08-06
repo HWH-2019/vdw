@@ -3,6 +3,7 @@ import * as path from 'path';
 import * as yaml from 'js-yaml';
 import { VDWConfig, Dependency } from '../types/vdwTypes';
 import { log, logError } from '../utils/logger';
+import { findConfigPath } from './configPaths';
 
 export class ConfigService {
     private config: VDWConfig | null = null;
@@ -13,15 +14,19 @@ export class ConfigService {
         this.workspacePath = workspacePath;
     }
 
-    /** Load .vdwrc from workspace */
+    /** Load .vdwrc or .vdwrc.yml from workspace */
     loadConfig(): VDWConfig | null {
-        const vdwrcPath = path.join(this.workspacePath, '.vdwrc');
+        const vdwrcPath = findConfigPath(this.workspacePath);
 
-        if (!fs.existsSync(vdwrcPath)) {
+        if (!vdwrcPath) {
             this.config = null;
             this.configPath = null;
             return null;
         }
+
+        this.config = null;
+        this.configPath = vdwrcPath;
+        const configName = path.basename(vdwrcPath);
 
         try {
             const content = fs.readFileSync(vdwrcPath, 'utf-8');
@@ -29,7 +34,7 @@ export class ConfigService {
 
             // Basic validation
             if (!parsed || !parsed.workspace || !Array.isArray(parsed.dependencies)) {
-                logError('Invalid .vdwrc format');
+                logError(`Invalid ${configName} format`);
                 return null;
             }
 
@@ -60,12 +65,10 @@ export class ConfigService {
             });
 
             this.config = parsed;
-            this.configPath = vdwrcPath;
             log(`Loaded config: ${parsed.workspace.name} (${parsed.dependencies.length} deps)`);
             return parsed;
         } catch (err) {
-            logError('Failed to parse .vdwrc', err);
-            this.config = null;
+            logError(`Failed to parse ${configName}`, err);
             return null;
         }
     }
@@ -83,9 +86,9 @@ export class ConfigService {
         return this.configPath;
     }
 
-    /** Check if .vdwrc exists */
+    /** Check if a supported VDW configuration file exists */
     hasConfig(): boolean {
-        return fs.existsSync(path.join(this.workspacePath, '.vdwrc'));
+        return findConfigPath(this.workspacePath) !== null;
     }
 
     /** Force reload */

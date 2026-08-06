@@ -2,7 +2,7 @@
   "name": "vdw-vscode",
   "displayName": "VDW - Virtual Dev Workspace",
   "description": "Cross-repo dependency management and AI context filtering for multi-repository development",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "publisher": "vdw-team",
   "license": "Apache-2.0",
   "repository": {
@@ -38,9 +38,10 @@
     "theme": "dark"
   },
   "activationEvents": [
-      "workspaceContains:.vdwrc",
-      "onStartupFinished"
-    ],
+    "workspaceContains:.vdwrc",
+    "workspaceContains:.vdwrc.yml",
+    "onStartupFinished"
+  ],
   "main": "./out/extension.js",
   "contributes": {
     "commands": [
@@ -116,19 +117,19 @@
       "view/title": [
         {
           "command": "vdw.addRepo",
-          "when": "view == vdwWorkspace",
+          "when": "view == vdwWorkspace && vdw.hasConfig",
           "group": "navigation@1",
           "icon": "$(add)"
         },
         {
           "command": "vdw.refreshContext",
-          "when": "view == vdwWorkspace",
+          "when": "view == vdwWorkspace && vdw.hasConfig",
           "group": "navigation@2",
           "icon": "$(refresh)"
         },
         {
           "command": "vdw.relink",
-          "when": "view == vdwWorkspace",
+          "when": "view == vdwWorkspace && vdw.hasConfig",
           "group": "navigation@3",
           "icon": "$(sync)"
         }

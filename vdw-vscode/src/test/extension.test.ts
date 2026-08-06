@@ -1,9 +1,13 @@
 import * as assert from 'assert';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 import * as yaml from 'js-yaml';
 import { minimatch } from 'minimatch';
 
 // Test VDW types
 import { VDWConfig, Dependency, Scope } from '../types/vdwTypes';
+import { findConfigPath } from '../services/configPaths';
 
 describe('VDW Extension Tests', () => {
     describe('Type Definitions', () => {
@@ -77,6 +81,36 @@ dependencies: []
 `;
             const parsed = yaml.load(yamlContent) as VDWConfig;
             assert.strictEqual(parsed.dependencies.length, 0);
+        });
+    });
+
+    describe('Config path resolution', () => {
+        let workspacePath: string;
+
+        beforeEach(() => {
+            workspacePath = fs.mkdtempSync(path.join(os.tmpdir(), 'vdw-vscode-test-'));
+        });
+
+        afterEach(() => {
+            fs.rmSync(workspacePath, { recursive: true, force: true });
+        });
+
+        it('should resolve .vdwrc.yml when .vdwrc is absent', () => {
+            fs.writeFileSync(path.join(workspacePath, '.vdwrc.yml'), `
+workspace:
+  name: yml-workspace
+  version: "1.0"
+dependencies: []
+`);
+
+            assert.strictEqual(findConfigPath(workspacePath), path.join(workspacePath, '.vdwrc.yml'));
+        });
+
+        it('should prefer .vdwrc when both config filenames exist', () => {
+            fs.writeFileSync(path.join(workspacePath, '.vdwrc'), 'dependencies: []');
+            fs.writeFileSync(path.join(workspacePath, '.vdwrc.yml'), 'dependencies: []');
+
+            assert.strictEqual(findConfigPath(workspacePath), path.join(workspacePath, '.vdwrc'));
         });
     });
 

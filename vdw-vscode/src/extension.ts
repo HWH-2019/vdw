@@ -29,12 +29,11 @@ export function activate(context: vscode.ExtensionContext) {
     // 1. Initialize services
     const cliService = new VDWCliService(workspacePath);
     const configService = new ConfigService(workspacePath);
-    configService.loadConfig();
-
-    const hasConfig = configService.getConfig() !== null;
+    const hasConfig = configService.loadConfig() !== null;
+    void vscode.commands.executeCommand('setContext', 'vdw.hasConfig', hasConfig);
 
     if (!hasConfig) {
-        log('No .vdwrc found, showing initialization guide');
+        log('No valid VDW configuration found, showing initialization guide');
 
         // Minimal init: TreeView with init guide + commands
         treeProvider = new WorkspaceTreeProvider(configService, cliService);
@@ -56,7 +55,8 @@ export function activate(context: vscode.ExtensionContext) {
                     const result = await cliService.init();
                     if (result.exitCode === 0) {
                         vscode.window.showInformationMessage('VDW workspace initialized successfully!');
-                        configService.reload();
+                        const config = configService.reload();
+                        void vscode.commands.executeCommand('setContext', 'vdw.hasConfig', config !== null);
                         treeProvider!.refresh();
                         statusBar!.update();
                         const wsFolder = vscode.workspace.workspaceFolders?.[0];
@@ -77,10 +77,12 @@ export function activate(context: vscode.ExtensionContext) {
             })
         );
 
-        // Watch for .vdwrc creation to trigger full reload
-        const initWatcher = vscode.workspace.createFileSystemWatcher('**/.vdwrc');
+        // Watch for either supported config filename to trigger full initialization.
+        const initWatcher = vscode.workspace.createFileSystemWatcher('**/.vdwrc{,.yml}');
         initWatcher.onDidCreate(() => {
-            log('.vdwrc created, reloading window...');
+            log('VDW configuration created, reloading window...');
+            const config = configService.reload();
+            void vscode.commands.executeCommand('setContext', 'vdw.hasConfig', config !== null);
             vscode.commands.executeCommand('workbench.action.reloadWindow');
         });
         context.subscriptions.push(initWatcher);
@@ -123,11 +125,12 @@ export function activate(context: vscode.ExtensionContext) {
         autoOpenService,
     );
 
-    // 8. Watch .vdwrc for changes
-    const watcher = vscode.workspace.createFileSystemWatcher('**/.vdwrc');
+    // 8. Watch supported VDW configuration filenames for changes
+    const watcher = vscode.workspace.createFileSystemWatcher('**/.vdwrc{,.yml}');
     watcher.onDidChange(() => {
-        log('.vdwrc changed, reloading...');
-        configService.reload();
+        log('VDW configuration changed, reloading...');
+        const config = configService.reload();
+        void vscode.commands.executeCommand('setContext', 'vdw.hasConfig', config !== null);
         contextService?.refresh();
         fileProvider?.refresh();
         treeProvider?.refresh();
@@ -135,15 +138,17 @@ export function activate(context: vscode.ExtensionContext) {
         void autoOpenService?.openAllEditableRepositories();
     });
     watcher.onDidCreate(() => {
-        log('.vdwrc created, loading...');
-        configService.reload();
+        log('VDW configuration created, loading...');
+        const config = configService.reload();
+        void vscode.commands.executeCommand('setContext', 'vdw.hasConfig', config !== null);
         treeProvider?.refresh();
         statusBar?.update();
         void autoOpenService?.openAllEditableRepositories();
     });
     watcher.onDidDelete(() => {
-        log('.vdwrc deleted');
-        configService.reload();
+        log('VDW configuration deleted');
+        const config = configService.reload();
+        void vscode.commands.executeCommand('setContext', 'vdw.hasConfig', config !== null);
         treeProvider?.refresh();
         statusBar?.update();
     });

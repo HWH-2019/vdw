@@ -312,9 +312,10 @@ export function registerCommands(
                 if (!workspaceFolder) {
                     throw new Error('No workspace folder found');
                 }
-                const vdwrcPath = path.join(workspaceFolder.uri.fsPath, '.vdwrc');
+                const vdwrcPath = configService.getConfigPath()
+                    || path.join(workspaceFolder.uri.fsPath, '.vdwrc');
                 if (!fs.existsSync(vdwrcPath)) {
-                    throw new Error('.vdwrc file not found');
+                    throw new Error('VDW configuration file not found');
                 }
                 const content = fs.readFileSync(vdwrcPath, 'utf-8');
                 const config = yaml.load(content) as any;
@@ -322,9 +323,14 @@ export function registerCommands(
                     throw new Error('Invalid .vdwrc format');
                 }
                 const beforeCount = config.dependencies.length;
-                config.dependencies = config.dependencies.filter(
-                    (d: any) => !(dep.remote && d.remote === dep.remote) && !(dep.local && d.local === dep.local) && d.repo !== repoIdentifier && d.path !== dep.path
-                );
+                config.dependencies = config.dependencies.filter((d: any) => {
+                    const sameDependency = (dep.remote && d.remote === dep.remote)
+                        || (dep.origin && d.origin === dep.origin)
+                        || (dep.local && d.local === dep.local)
+                        || d.repo === repoIdentifier
+                        || d.path === dep.path;
+                    return !sameDependency;
+                });
                 if (config.dependencies.length === beforeCount) {
                     logError('Dependency not found in .vdwrc, nothing to remove', { remote: dep.remote, local: dep.local, path: dep.path });
                 } else {
@@ -335,17 +341,13 @@ export function registerCommands(
                 return true;
             };
 
-            // Helper: full removal (unlink + remove from .vdwrc)
+            // Helper: let the CLI own unlink, state, lock, store, and config updates.
             const fullRemoval = async (): Promise<void> => {
-                log('Step 1: Unlinking repository...');
-                const unlinkResult = await cliService.unlinkRepo(repoIdentifier);
-                if (unlinkResult.exitCode !== 0) {
-                    logError('Unlink before remove failed', unlinkResult.stderr);
-                    // Continue anyway — the dependency might already be unlinked
+                log(`Removing repository through CLI: ${repoIdentifier}`);
+                const result = await cliService.removeRepo(repoIdentifier);
+                if (result.exitCode !== 0) {
+                    throw new Error(result.stderr || result.stdout || 'VDW CLI remove failed');
                 }
-
-                log('Step 2: Removing dependency from .vdwrc...');
-                await removeFromVdwrcOnly();
             };
 
             try {
@@ -354,7 +356,10 @@ export function registerCommands(
                 let changesInfo = '';
                 if (dep.editable) {
                     log(`Checking dirty state for: ${repoName}`);
-                    const statusPromise = cliService.checkRepoStatus(repoIdentifier);
+                    // dep.path is supported by the first CLI version that introduced
+                    // `repo status`, while full remote URLs were not matched reliably.
+                    const statusIdentifier = dep.path || repoIdentifier;
+                    const statusPromise = cliService.checkRepoStatus(statusIdentifier);
                     const timeoutPromise = new Promise<null>(resolve => setTimeout(() => resolve(null), 5000));
                     const statusResult = await Promise.race([statusPromise, timeoutPromise]);
 
