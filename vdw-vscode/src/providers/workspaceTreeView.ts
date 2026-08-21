@@ -1,66 +1,34 @@
-import * as vscode from 'vscode';
-import * as fs from 'fs';
 import * as path from 'path';
-import { VDWConfig, Dependency } from '../types/vdwTypes';
+import * as vscode from 'vscode';
 import { ConfigService } from '../services/configService';
-import { VDWCliService } from '../services/vdwCliService';
+import { WorkspaceStatusService } from '../services/workspaceStatusService';
+import { Dependency, RepositoryRuntimeStatus } from '../types/vdwTypes';
+import {
+    formatRepositoryDescription,
+    getDependencyName,
+    getDesiredRevision,
+    isDefaultScope,
+    repositoryStatusPriority,
+} from '../utils/workspaceStatus';
 
-export class WorkspaceTreeProvider implements vscode.TreeDataProvider<WorkspaceTreeItem> {
-    private _onDidChangeTreeData = new vscode.EventEmitter<WorkspaceTreeItem | undefined | null | void>();
+export class WorkspaceTreeProvider implements vscode.TreeDataProvider<WorkspaceTreeItem>, vscode.Disposable {
+    private readonly _onDidChangeTreeData = new vscode.EventEmitter<WorkspaceTreeItem | undefined | null | void>();
     readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
+    private readonly statusSubscription: vscode.Disposable;
 
-    private configService: ConfigService;
-    private cliService: VDWCliService;
-    private linkedRepos: Set<string> = new Set(); // Track which repos are linked
-
-    constructor(configService: ConfigService, cliService: VDWCliService) {
-        this.configService = configService;
-        this.cliService = cliService;
-        // Initialize linked repos on construction
-        this.updateLinkedRepos();
+    constructor(
+        private readonly configService: ConfigService,
+        private readonly statusService: WorkspaceStatusService,
+        private readonly workspaceRoot: string,
+    ) {
+        this.statusSubscription = this.statusService.onDidChange(() => {
+            this._onDidChangeTreeData.fire();
+        });
     }
 
     refresh(): void {
-        this.updateLinkedRepos();
         this._onDidChangeTreeData.fire();
-    }
-
-    /**
-     * Update the set of linked repositories by checking if their paths exist
-     */
-    private updateLinkedRepos(): void {
-        this.linkedRepos.clear();
-        
-        const config = this.configService.getConfig();
-        if (!config) {
-            return;
-        }
-        
-        const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
-        if (!workspaceFolder) {
-            return;
-        }
-        
-        const workspaceRoot = workspaceFolder.uri.fsPath;
-        
-        for (const dep of config.dependencies) {
-            // Check if the path exists in the workspace
-            const fullPath = path.join(workspaceRoot, dep.path);
-            if (fs.existsSync(fullPath)) {
-                // Additional check: see if it looks like a linked repo (has files)
-                try {
-                    const stats = fs.statSync(fullPath);
-                    if (stats.isDirectory()) {
-                        const files = fs.readdirSync(fullPath);
-                        if (files.length > 0) {
-                            this.linkedRepos.add(dep.path);
-                        }
-                    }
-                } catch (error) {
-                    // If we can't read it, assume it's not linked
-                }
-            }
-        }
+        void this.statusService.refresh();
     }
 
     getTreeItem(element: WorkspaceTreeItem): vscode.TreeItem {
@@ -68,15 +36,15 @@ export class WorkspaceTreeProvider implements vscode.TreeDataProvider<WorkspaceT
     }
 
     getChildren(element?: WorkspaceTreeItem): WorkspaceTreeItem[] {
+        if (element) return [];
+
         const config = this.configService.getConfig();
         if (!config) {
             const initItem = new WorkspaceTreeItem(
                 'Initialize VDW Workspace',
-                vscode.TreeItemCollapsibleState.None,
-                'initGuide',
-                undefined,
-                'Click to set up your workspace'
+                'vdwInitGuide',
             );
+            initItem.description = 'Create .vdwrc';
             initItem.iconPath = new vscode.ThemeIcon('play-circle');
             initItem.command = {
                 command: 'vdw.init',
@@ -85,162 +53,149 @@ export class WorkspaceTreeProvider implements vscode.TreeDataProvider<WorkspaceT
             return [initItem];
         }
 
-        // Show welcome message when no dependencies
         if (config.dependencies.length === 0) {
-            return [new WorkspaceTreeItem(
-                'No dependencies configured',
-                vscode.TreeItemCollapsibleState.None,
-                'welcome',
-                undefined,
-                'Click the + button above to add your first repository'
-            )];
+            const welcome = new WorkspaceTreeItem('No repositories configured', 'vdwWelcome');
+            welcome.description = 'Use + to add one';
+            welcome.iconPath = new vscode.ThemeIcon('info');
+            return [welcome];
         }
 
-        if (!element) {
-            // Root level: show each dependency
-            return config.dependencies.map(dep => {
-                const repoName = dep.remote
-                    ? dep.remote.split('/').pop()?.replace('.git', '') || dep.remote
-                    : path.basename(dep.origin || dep.local);
-                const version = dep.branch || dep.tag || dep.commit?.substring(0, 7) || 'main';
-                const label = `${repoName}@${version}`;
-                
-                // Determine link status
-                const isLinked = this.linkedRepos.has(dep.path);
-                const statusDesc = isLinked ? '✅ Linked' : '⚪ Not linked';
-                const editableDesc = dep.editable ? '[可编辑]' : '[只读]';
-
-                const item = new WorkspaceTreeItem(
-                    label,
-                    vscode.TreeItemCollapsibleState.Collapsed,
-                    isLinked ? 'linkedRepo' : 'unlinkedRepo',
-                    dep,
-                    `${editableDesc} ${statusDesc}`
-                );
-                                
-                // Set icon based on link status (both show link icon)
-                if (isLinked) {
-                    item.iconPath = new vscode.ThemeIcon('link', new vscode.ThemeColor('terminal.ansiGreen'));
-                } else {
-                    item.iconPath = new vscode.ThemeIcon('link');
-                }
-                                
-                // Enhanced tooltip
-                item.tooltip = new vscode.MarkdownString()
-                    .appendMarkdown(`**${repoName}**\n\n`)
-                    .appendMarkdown(`🔗 **URL**: ${dep.remote || dep.origin || dep.local}\n\n`)
-                    .appendMarkdown(` **Path**: ${dep.path}\n\n`)
-                    .appendMarkdown(`🌿 **Branch**: ${version}\n\n`)
-                    .appendMarkdown(`📝 **Scope**: ${dep.scope.include.join(', ')}\n\n`)
-                    .appendMarkdown(`${dep.editable ? '️ **Editable** (worktree)' : ' **Read-only'} (linked)`) 
-                    .appendMarkdown(`\n\n---\n\n${isLinked ? '✅ **Status**: Linked' : '⚪ **Status**: Not linked (run `vdw link`)'}`);
-                                
-                return item;
+        return config.dependencies
+            .map(dependency => {
+                const status = this.statusService.getRepositoryStatus(dependency)
+                    ?? createCheckingStatus(dependency, this.workspaceRoot);
+                return createRepositoryItem(dependency, status);
+            })
+            .sort((left, right) => {
+                const priority = repositoryStatusPriority(left.status!)
+                    - repositoryStatusPriority(right.status!);
+                return priority || String(left.label ?? '').localeCompare(String(right.label ?? ''));
             });
-        }
-
-        if ((element.contextType === 'repo' || element.contextType === 'linkedRepo' || element.contextType === 'unlinkedRepo') && element.dependency) {
-            // Show dependency details
-            const dep = element.dependency;
-            const children: WorkspaceTreeItem[] = [];
-
-            // Path — use 'linkedPath' so terminal icon only shows for linked repos
-            const pathContextValue = element.contextType === 'linkedRepo' ? 'linkedPath' : 'path';
-            const pathItem = new WorkspaceTreeItem(
-                `${dep.path}`,
-                vscode.TreeItemCollapsibleState.None,
-                pathContextValue,
-                dep,
-                '路径'
-            );
-            pathItem.iconPath = new vscode.ThemeIcon('folder');
-            children.push(pathItem);
-
-            // Scope includes
-            if (dep.scope.include.length > 0) {
-                const scopeItem = new WorkspaceTreeItem(
-                    `${dep.scope.include.join(', ')}`,
-                    vscode.TreeItemCollapsibleState.None,
-                    'scope',
-                    undefined,
-                    'Scope'
-                );
-                scopeItem.iconPath = new vscode.ThemeIcon('filter');
-                children.push(scopeItem);
-            }
-
-            // Scope excludes
-            if (dep.scope.exclude.length > 0) {
-                const excludeItem = new WorkspaceTreeItem(
-                    `${dep.scope.exclude.join(', ')}`,
-                    vscode.TreeItemCollapsibleState.None,
-                    'exclude',
-                    undefined,
-                    'Exclude'
-                );
-                excludeItem.iconPath = new vscode.ThemeIcon('circle-slash');
-                children.push(excludeItem);
-            }
-
-            // Status
-            const isLinked = this.linkedRepos.has(dep.path);
-            const statusLabel = isLinked ? '已链接' : '未链接';
-            const statusIcon = isLinked ? 'check' : 'warning';
-            const statusDesc = dep.editable ? '可编辑 (worktree)' : '只读 (linked)';
-            const statusItem = new WorkspaceTreeItem(
-                statusLabel,
-                vscode.TreeItemCollapsibleState.None,
-                'status',
-                undefined,
-                statusDesc
-            );
-            statusItem.iconPath = new vscode.ThemeIcon(
-                statusIcon, 
-                isLinked ? new vscode.ThemeColor('terminal.ansiGreen') : new vscode.ThemeColor('terminal.ansiYellow')
-            );
-            children.push(statusItem);
-
-            return children;
-        }
-
-        return [];
     }
 
     dispose(): void {
+        this.statusSubscription.dispose();
         this._onDidChangeTreeData.dispose();
     }
 }
 
 export class WorkspaceTreeItem extends vscode.TreeItem {
     constructor(
-        public readonly label: string,
-        public readonly collapsibleState: vscode.TreeItemCollapsibleState,
-        public readonly contextType: string,
+        label: string,
+        contextValue: string,
         public readonly dependency?: Dependency,
-        public readonly description?: string,
+        public readonly status?: RepositoryRuntimeStatus,
     ) {
-        super(label, collapsibleState);
+        super(label, vscode.TreeItemCollapsibleState.None);
+        this.contextValue = contextValue;
+    }
+}
 
-        // Set contextValue for menu actions (this is what VS Code uses for when clauses)
-        this.contextValue = contextType;
+function createRepositoryItem(
+    dependency: Dependency,
+    status: RepositoryRuntimeStatus,
+): WorkspaceTreeItem {
+    const contextValue = status.state === 'missing'
+        ? 'vdwRepoMissing'
+        : status.state === 'invalidWorktree'
+            ? 'vdwRepoInvalid'
+            : dependency.editable
+                ? 'vdwRepoEditable'
+                : 'vdwRepoReadOnly';
+    const item = new WorkspaceTreeItem(
+        getDependencyName(dependency),
+        contextValue,
+        dependency,
+        status,
+    );
+    item.id = dependency.path;
+    item.description = formatRepositoryDescription(dependency, status);
+    item.iconPath = getStatusIcon(dependency, status);
+    item.resourceUri = vscode.Uri.file(status.fullPath);
+    item.tooltip = buildTooltip(dependency, status);
+    item.accessibilityInformation = {
+        label: `${getDependencyName(dependency)}, ${item.description}`,
+    };
 
-        // Set description if provided
-        if (description) {
-            this.description = description;
-        }
+    if (status.exists && status.state !== 'invalidWorktree') {
+        item.command = dependency.editable
+            ? {
+                command: 'vdw.openSourceControl',
+                title: 'Open in Source Control',
+                arguments: [item],
+            }
+            : {
+                command: 'vdw.revealInExplorer',
+                title: 'Reveal in Explorer',
+                arguments: [item],
+            };
+    }
 
-        // Set icon based on type
-        if (contextType === 'repo' || contextType === 'linkedRepo' || contextType === 'unlinkedRepo') {
-            this.iconPath = new vscode.ThemeIcon('repo');
-        } else if (contextType === 'info') {
-            this.iconPath = new vscode.ThemeIcon('info');
-        } else if (contextType === 'welcome') {
-            this.iconPath = new vscode.ThemeIcon('info');
-        }
+    return item;
+}
 
-        // Set tooltip
-        if (dependency) {
-            this.tooltip = `${dependency.remote || dependency.origin || dependency.local}\nBranch: ${dependency.branch || dependency.tag || dependency.commit || 'main'}\nEditable: ${dependency.editable}`;
+function getStatusIcon(
+    dependency: Dependency,
+    status: RepositoryRuntimeStatus,
+): vscode.ThemeIcon {
+    switch (status.state) {
+        case 'checking':
+            return new vscode.ThemeIcon('sync~spin');
+        case 'missing':
+        case 'invalidWorktree':
+            return new vscode.ThemeIcon('error', new vscode.ThemeColor('problemsErrorIcon.foreground'));
+        case 'scmMissing':
+        case 'branchDrift':
+            return new vscode.ThemeIcon('warning', new vscode.ThemeColor('problemsWarningIcon.foreground'));
+        case 'dirty':
+            return new vscode.ThemeIcon('git-commit', new vscode.ThemeColor('gitDecoration.modifiedResourceForeground'));
+        case 'ready':
+            return dependency.editable
+                ? new vscode.ThemeIcon('repo')
+                : new vscode.ThemeIcon('lock');
+    }
+}
+
+function buildTooltip(
+    dependency: Dependency,
+    status: RepositoryRuntimeStatus,
+): vscode.MarkdownString {
+    const tooltip = new vscode.MarkdownString();
+    tooltip.appendMarkdown(`**${getDependencyName(dependency)}**\n\n`);
+    tooltip.appendMarkdown(`$(git-branch) Declared: \`${status.desiredRevision}\`\n\n`);
+    if (status.currentBranch) {
+        tooltip.appendMarkdown(`$(source-control) Current: \`${status.currentBranch}\`\n\n`);
+    } else if (status.detachedCommit) {
+        tooltip.appendMarkdown(`$(git-commit) Detached: \`${status.detachedCommit.substring(0, 12)}\`\n\n`);
+    }
+    tooltip.appendMarkdown(`$(folder) Path: \`${dependency.path}\`\n\n`);
+    tooltip.appendMarkdown(`Mode: **${dependency.editable ? 'Editable worktree' : 'Read-only projection'}**\n\n`);
+    tooltip.appendMarkdown(`Status: **${formatRepositoryDescription(dependency, status)}**`);
+
+    if (!isDefaultScope(dependency)) {
+        tooltip.appendMarkdown(`\n\n$(filter) AI scope: \`${dependency.scope.include.join(', ')}\``);
+        if (dependency.scope.exclude.length > 0) {
+            tooltip.appendMarkdown(`\n\nExcluded: \`${dependency.scope.exclude.join(', ')}\``);
         }
     }
+    const source = dependency.remote || dependency.origin || dependency.local;
+    if (source) tooltip.appendMarkdown(`\n\nSource: \`${source}\``);
+    return tooltip;
+}
+
+function createCheckingStatus(
+    dependency: Dependency,
+    workspaceRoot: string,
+): RepositoryRuntimeStatus {
+    return {
+        dependencyPath: dependency.path,
+        fullPath: path.resolve(workspaceRoot, dependency.path),
+        state: 'checking',
+        exists: false,
+        scmRegistered: false,
+        desiredRevision: getDesiredRevision(dependency),
+        changeCount: 0,
+        ahead: 0,
+        behind: 0,
+    };
 }

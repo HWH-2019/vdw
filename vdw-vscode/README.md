@@ -9,11 +9,11 @@
 
 | Feature | Description |
 |---------|-------------|
-| 📂 **Dependency Tree View** | See all your repos at a glance — linked vs unlinked, editable vs read-only |
+| 📂 **Repository Status View** | Compact repository rows in Source Control with missing, dirty, branch drift, and SCM registration status |
 | ➕ **Add Repo Wizard** | Interactive dialog to add remote or local repos with branch selection and scope configuration |
 | 🔗 **One-Click Link / Unlink** | Link or unlink individual repos directly from the tree |
-| 🔄 **Relink All** | Refresh read-only projections and migrate legacy editable repos without replacing native worktrees |
-| 🩺 **Status Bar** | Real-time dependency count and file context size |
+| 🔄 **Reconcile Workspace** | Refresh read-only projections and migrate legacy editable repos without replacing native worktrees |
+| 🩺 **Status Bar** | Quiet repository summary that highlights workspace issues and dirty repositories |
 | 🤖 **AI Context** | Filter files per dependency scope — only expose what matters to LLMs |
 | 📝 **Native Editable Repos** | Lets Source Control discover workspace-native worktrees, then performs a best-effort refresh |
 | ⚡ **Config Watcher** | Auto-refresh when `.vdwrc` changes |
@@ -22,32 +22,27 @@
 
 ## 🖼️ What It Looks Like
 
-### Activity Bar & Tree View
-The VDW icon in the activity bar opens the **Dependencies** panel:
+### Source Control Repository View
+VDW contributes a compact **VDW Repositories** view to the native Source Control sidebar:
 
 ```
-📦 VDW Workspace
-├── ui-lib@main          ✅ Linked  [可编辑]
-│   ├── 📁 ./packages/ui-lib
-│   ├── 🔍 src/**/*.ts
-│   └── ✅ 已链接 (editable)
-├── api-service@develop   ⚪ Not linked [只读]
-│   ├── 📁 ./services/api
-│   ├── 🔍 src/**/*.rs
-│   └── ⚪ 未链接 (read-only)
-└── protos@v2.0.0        ✅ Linked  [只读]
+VDW REPOSITORIES
+├── ⚠ ui-lib         feature/workspace · 12 changes · ↑1
+├── ◉ api-service    develop
+└── ✕ protos         v2.0.0 · missing
 ```
 
-- **Green link icon** → repo is linked and files exist in workspace
-- **Gray link icon** → repo is configured but not yet linked
-- **Inline actions**: ⛓️ Link / 🔗 Unlink / 🗑️ Remove
-- **Tooltip**: full repo URL, branch, scope, editable status
+- Healthy repositories stay quiet; missing worktrees, branch drift, and repositories not loaded by SCM are highlighted.
+- Repository names and branches are separate, so long branch names do not hide repository identity.
+- **Inline actions**: open Source Control, open a terminal, or reveal the repository in Explorer.
+- Link appears inline only for a missing repository. Unlink, remove, and reconcile remain in menus because they modify workspace state.
+- Path, source, mode, and non-default AI scope remain available in the tooltip without consuming tree rows.
 
 ### Status Bar
 ```
-🔗 VDW: 3 deps, 1,247 files
+⚠ VDW: 1 issue
 ```
-Shows dependency count and total files in AI context. Click to open command palette.
+Click to open a keyboard-friendly repository picker. Selecting an editable repository opens Source Control; selecting a read-only projection reveals it in Explorer.
 
 ---
 
@@ -128,7 +123,7 @@ Open **Preferences: Open Settings (JSON)** from the Command Palette to set it. T
 
 1. Open a folder containing a `.vdwrc` file.
 2. The extension activates automatically (`workspaceContains:.vdwrc` / `.vdwrc.yml`, with startup activation as a fallback).
-3. Look for the VDW icon in the activity bar.
+3. Open **Source Control** and expand **VDW Repositories**.
 4. Run **VDW: Validate Configuration** from the Command Palette.
 5. If validation fails to launch, open **View → Output**, select **VDW**, and verify `vdw.cliPath`.
 
@@ -157,11 +152,15 @@ All commands are accessible via the **Command Palette** (`Cmd+Shift+P` / `Ctrl+S
 |---------|-----------|-------------|
 | `VDW: Add Repository` | ➕ | Interactive wizard to add a remote or local repo |
 | `VDW: Initialize Workspace` | — | Create a `.vdwrc` in the current folder |
-| `VDW: Relink All` | 🔄 | Refresh read-only links and migrate legacy editable projections; keep native editable worktrees in place |
+| `VDW: Reconcile Workspace` | menu | Refresh read-only links and migrate legacy editable projections; keep native editable worktrees in place |
 | `VDW: Validate Configuration` | — | Check `.vdwrc` for errors |
-| `VDW: Refresh Context` | 🔃 | Rebuild the file context and update stats |
-| `Link Repository` | ⛓️ (inline) | Link a specific unlinked repo |
-| `Unlink Repository` | 🔗 (inline) | Unlink a specific linked repo |
+| `VDW: Refresh Workspace Status` | 🔃 | Refresh configuration, AI context, and runtime Git status without changing workspace files |
+| `VDW: Open Repository` | status bar | Pick a repository and navigate to Source Control or Explorer |
+| `Open in Source Control` | inline | Register and reveal an editable worktree in Source Control |
+| `Open in Terminal` | inline | Start a terminal at the repository root |
+| `Reveal in Explorer` | inline | Reveal the repository root in the native Explorer |
+| `Link Repository` | inline when missing | Link a specific missing repository |
+| `Unlink Repository` | context menu | Unlink a specific available repository |
 | `Remove Repository` | 🗑️ (context menu) | Unlink + remove from `.vdwrc` |
 
 ---
@@ -217,7 +216,7 @@ dependencies:
         - "src/**/*.ts"
 ```
 
-Each dependency appears as a tree item with its link status, scope filters, and version info.
+Each dependency appears as one compact repository row. Dynamic Git and IDE status is kept in memory and is never written to `state.json`.
 
 ---
 

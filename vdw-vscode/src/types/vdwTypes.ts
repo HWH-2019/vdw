@@ -53,6 +53,36 @@ export interface RepoStatusResult {
     worktree_path: string | null;
 }
 
+export type RepositoryRuntimeState =
+    | 'checking'
+    | 'missing'
+    | 'invalidWorktree'
+    | 'scmMissing'
+    | 'branchDrift'
+    | 'dirty'
+    | 'ready';
+
+/** Runtime-only repository state used by the IDE. Never persisted to state.json. */
+export interface RepositoryRuntimeStatus {
+    dependencyPath: string;
+    fullPath: string;
+    state: RepositoryRuntimeState;
+    exists: boolean;
+    scmRegistered: boolean;
+    desiredRevision: string;
+    currentBranch?: string;
+    detachedCommit?: string;
+    changeCount: number;
+    ahead: number;
+    behind: number;
+}
+
+export interface WorkspaceRuntimeStatus {
+    repositories: RepositoryRuntimeStatus[];
+    issueCount: number;
+    dirtyCount: number;
+}
+
 export type LinkConflictReason =
     | 'content_differs'
     | 'metadata_differs'

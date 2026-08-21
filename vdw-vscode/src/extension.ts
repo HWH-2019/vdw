@@ -7,6 +7,7 @@ import { WorkspaceTreeProvider } from './providers/workspaceTreeView';
 import { StatusBarManager } from './providers/statusBar';
 import { registerCommands } from './commands/index';
 import { AutoOpenService } from './services/autoOpenService';
+import { WorkspaceStatusService } from './services/workspaceStatusService';
 import { log, logError, dispose as disposeLogger } from './utils/logger';
 
 let fileProvider: VDWFileProvider | undefined;
@@ -14,6 +15,7 @@ let treeProvider: WorkspaceTreeProvider | undefined;
 let statusBar: StatusBarManager | undefined;
 let contextService: ContextService | undefined;
 let autoOpenService: AutoOpenService | undefined;
+let workspaceStatusService: WorkspaceStatusService | undefined;
 
 export function activate(context: vscode.ExtensionContext) {
     log('VDW extension activating...');
@@ -30,21 +32,22 @@ export function activate(context: vscode.ExtensionContext) {
     const cliService = new VDWCliService(workspacePath);
     const configService = new ConfigService(workspacePath);
     const hasConfig = configService.loadConfig() !== null;
+    workspaceStatusService = new WorkspaceStatusService(configService, workspacePath);
     void vscode.commands.executeCommand('setContext', 'vdw.hasConfig', hasConfig);
 
     if (!hasConfig) {
         log('No valid VDW configuration found, showing initialization guide');
 
         // Minimal init: TreeView with init guide + commands
-        treeProvider = new WorkspaceTreeProvider(configService, cliService);
+        treeProvider = new WorkspaceTreeProvider(configService, workspaceStatusService, workspacePath);
         const treeView = vscode.window.createTreeView('vdwWorkspace', {
             treeDataProvider: treeProvider,
-            showCollapseAll: true,
+            showCollapseAll: false,
         });
         context.subscriptions.push(treeView);
 
         // Create a minimal StatusBar so vdw.init can use it
-        statusBar = new StatusBarManager(configService);
+        statusBar = new StatusBarManager(configService, workspaceStatusService);
         statusBar.update();
 
         // Register only vdw.init so the init guide button works
@@ -58,6 +61,7 @@ export function activate(context: vscode.ExtensionContext) {
                         const config = configService.reload();
                         void vscode.commands.executeCommand('setContext', 'vdw.hasConfig', config !== null);
                         treeProvider!.refresh();
+                        void workspaceStatusService?.refresh();
                         statusBar!.update();
                         const wsFolder = vscode.workspace.workspaceFolders?.[0];
                         if (wsFolder) {
@@ -96,15 +100,18 @@ export function activate(context: vscode.ExtensionContext) {
     );
 
     // 3. Initialize TreeView
-    treeProvider = new WorkspaceTreeProvider(configService, cliService);
+    treeProvider = new WorkspaceTreeProvider(configService, workspaceStatusService, workspacePath);
     const treeView = vscode.window.createTreeView('vdwWorkspace', {
         treeDataProvider: treeProvider,
-        showCollapseAll: true,
+        showCollapseAll: false,
     });
+    treeView.onDidChangeVisibility(event => {
+        if (event.visible) treeProvider?.refresh();
+    }, undefined, context.subscriptions);
     context.subscriptions.push(treeView);
 
     // 4. Initialize StatusBar
-    statusBar = new StatusBarManager(configService);
+    statusBar = new StatusBarManager(configService, workspaceStatusService);
     statusBar.update();
 
     // 5. Initialize AutoOpenService
@@ -121,6 +128,7 @@ export function activate(context: vscode.ExtensionContext) {
         contextService,
         fileProvider,
         treeProvider,
+        workspaceStatusService,
         statusBar,
         autoOpenService,
     );
@@ -162,6 +170,7 @@ export function activate(context: vscode.ExtensionContext) {
     // 10. Auto-open and refresh exact VDW-managed worktrees on activation
     (async () => {
         await autoOpenService.openAllEditableRepositories();
+        await workspaceStatusService?.refresh();
         log('Auto-open Git repositories completed');
     })();
 
@@ -174,5 +183,6 @@ export function deactivate() {
     fileProvider?.dispose();
     treeProvider?.dispose();
     contextService?.dispose();
+    workspaceStatusService?.dispose();
     disposeLogger();
 }

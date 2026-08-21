@@ -292,10 +292,10 @@ dependencies:
 
 The VS Code extension provides a visual GUI over the CLI:
 
-- 📂 **Dependency Tree View** — see all repos at a glance
+- 📂 **SCM Repository View** — compact rows highlight missing worktrees, dirty repositories, branch drift, and SCM registration issues
 - ➕ **Add Repo Wizard** — interactive dialog with branch selection (fuzzy search)
-- 🔗 **One-Click Link / Unlink** — inline actions on tree items
-- 🔄 **Relink All** — refresh read-only projections and migrate legacy editable repos without replacing native worktrees
+- 🧭 **Native Navigation** — open Source Control, Explorer, or a repository terminal directly from each row
+- 🔄 **Reconcile Workspace** — refresh read-only projections and migrate legacy editable repos without replacing native worktrees
 - 📝 **Native Git Repos** — editable repos are discovered normally by Source Control; the extension performs a best-effort refresh
 - ⚡ **Config Watcher** — auto-refresh when `.vdwrc` changes
 

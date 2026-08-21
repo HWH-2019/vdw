@@ -6,7 +6,12 @@ import * as yaml from 'js-yaml';
 import { minimatch } from 'minimatch';
 
 // Test VDW types
-import { VDWConfig, Dependency, Scope } from '../types/vdwTypes';
+import {
+    VDWConfig,
+    Dependency,
+    RepositoryRuntimeStatus,
+    Scope,
+} from '../types/vdwTypes';
 import { findConfigPath } from '../services/configPaths';
 import {
     buildConflictListArgs,
@@ -17,6 +22,14 @@ import {
     dependencyMatchesIdentifier,
     getEditableWorktreePaths,
 } from '../utils/gitRepositories';
+import {
+    collectRepositoryRuntimeStatus,
+    formatRepositoryDescription,
+    getDependencyName,
+    isDefaultScope,
+    repositoryStatusPriority,
+    summarizeWorkspaceStatus,
+} from '../utils/workspaceStatus';
 
 describe('VDW Extension Tests', () => {
     describe('Type Definitions', () => {
@@ -238,6 +251,172 @@ dependencies: []
                 getEditableWorktreePaths(unlinked, workspaceRoot),
                 ['/Users/test/.vdw/workspaces/example/packages/repo'],
             );
+        });
+    });
+
+    describe('Workspace repository status presentation', () => {
+        const dependency: Dependency = {
+            remote: 'git@example.com:org/example.git',
+            origin: '',
+            local: './packages/example',
+            path: './packages/example',
+            branch: 'feature/workspace',
+            scope: { include: ['**/*'], exclude: [] },
+            editable: true,
+        };
+
+        const readyStatus: RepositoryRuntimeStatus = {
+            dependencyPath: dependency.path,
+            fullPath: '/workspace/packages/example',
+            state: 'ready',
+            exists: true,
+            scmRegistered: true,
+            desiredRevision: 'feature/workspace',
+            currentBranch: 'feature/workspace',
+            changeCount: 0,
+            ahead: 0,
+            behind: 0,
+        };
+
+        it('should keep the repository name separate from the long branch', () => {
+            assert.strictEqual(getDependencyName(dependency), 'example');
+            assert.strictEqual(
+                formatRepositoryDescription(dependency, readyStatus),
+                'feature/workspace',
+            );
+        });
+
+        it('should omit the default all-files AI scope', () => {
+            assert.strictEqual(isDefaultScope(dependency), true);
+            assert.strictEqual(
+                isDefaultScope({
+                    ...dependency,
+                    scope: { include: ['src/**'], exclude: [] },
+                }),
+                false,
+            );
+        });
+
+        it('should show dirty and remote synchronization counts compactly', () => {
+            const dirtyStatus: RepositoryRuntimeStatus = {
+                ...readyStatus,
+                state: 'dirty',
+                changeCount: 12,
+                ahead: 1,
+                behind: 2,
+            };
+            assert.strictEqual(
+                formatRepositoryDescription(dependency, dirtyStatus),
+                'feature/workspace · 12 changes · ↑1 ↓2',
+            );
+
+            const driftStatus: RepositoryRuntimeStatus = {
+                ...dirtyStatus,
+                state: 'branchDrift',
+                currentBranch: 'feature/other',
+            };
+            assert.strictEqual(
+                formatRepositoryDescription(dependency, driftStatus),
+                'feature/other → feature/workspace · 12 changes · ↑1 ↓2',
+            );
+            assert.strictEqual(summarizeWorkspaceStatus([driftStatus]).dirtyCount, 1);
+        });
+
+        it('should rank actionable issues before dirty and ready repositories', () => {
+            const missingStatus: RepositoryRuntimeStatus = {
+                ...readyStatus,
+                state: 'missing',
+                exists: false,
+                scmRegistered: false,
+            };
+            const dirtyStatus: RepositoryRuntimeStatus = {
+                ...readyStatus,
+                state: 'dirty',
+                changeCount: 1,
+            };
+            assert.ok(repositoryStatusPriority(missingStatus) < repositoryStatusPriority(dirtyStatus));
+            assert.ok(repositoryStatusPriority(dirtyStatus) < repositoryStatusPriority(readyStatus));
+            assert.deepStrictEqual(
+                summarizeWorkspaceStatus([missingStatus, dirtyStatus, readyStatus]),
+                {
+                    repositories: [missingStatus, dirtyStatus, readyStatus],
+                    issueCount: 1,
+                    dirtyCount: 1,
+                },
+            );
+        });
+
+        it('should derive runtime states from worktree and Git repository evidence', () => {
+            const workspacePath = fs.mkdtempSync(path.join(os.tmpdir(), 'vdw-status-test-'));
+            const repositoryPath = path.join(workspacePath, 'packages', 'example');
+            try {
+                assert.strictEqual(
+                    collectRepositoryRuntimeStatus(dependency, workspacePath).state,
+                    'missing',
+                );
+
+                fs.mkdirSync(repositoryPath, { recursive: true });
+                assert.strictEqual(
+                    collectRepositoryRuntimeStatus(dependency, workspacePath).state,
+                    'invalidWorktree',
+                );
+
+                fs.writeFileSync(path.join(repositoryPath, '.git'), 'gitdir: /tmp/example.git');
+                assert.strictEqual(
+                    collectRepositoryRuntimeStatus(dependency, workspacePath).state,
+                    'scmMissing',
+                );
+
+                const gitApi = {
+                    repositories: [{
+                        rootUri: { fsPath: repositoryPath },
+                        state: {
+                            HEAD: { name: 'feature/other', ahead: 1, behind: 2 },
+                            mergeChanges: [],
+                            indexChanges: [],
+                            workingTreeChanges: [{}],
+                            untrackedChanges: [],
+                        },
+                    }],
+                };
+                const drift = collectRepositoryRuntimeStatus(dependency, workspacePath, gitApi);
+                assert.strictEqual(drift.state, 'branchDrift');
+                assert.strictEqual(drift.changeCount, 1);
+                assert.strictEqual(drift.ahead, 1);
+                assert.strictEqual(drift.behind, 2);
+
+                const dirty = collectRepositoryRuntimeStatus(
+                    { ...dependency, branch: 'feature/other' },
+                    workspacePath,
+                    gitApi,
+                );
+                assert.strictEqual(dirty.state, 'dirty');
+            } finally {
+                fs.rmSync(workspacePath, { recursive: true, force: true });
+            }
+        });
+    });
+
+    describe('Repository view contributions', () => {
+        const packageJson = JSON.parse(
+            fs.readFileSync(path.resolve(__dirname, '..', '..', 'package.json'), 'utf-8'),
+        );
+
+        it('should contribute VDW repositories to Source Control without a separate activity container', () => {
+            const scmViews = packageJson.contributes.views.scm;
+            assert.ok(Array.isArray(scmViews));
+            assert.strictEqual(scmViews[0].id, 'vdwWorkspace');
+            assert.strictEqual(scmViews[0].name, 'VDW Repositories');
+            assert.strictEqual(packageJson.contributes.viewsContainers, undefined);
+        });
+
+        it('should keep reconcile out of the inline title navigation group', () => {
+            const reconcileMenu = packageJson.contributes.menus['view/title'].find(
+                (entry: any) => entry.command === 'vdw.relink',
+            );
+            assert.ok(reconcileMenu);
+            assert.notStrictEqual(reconcileMenu.group, 'navigation');
+            assert.strictEqual(reconcileMenu.group, '1_workspace@1');
         });
     });
 });

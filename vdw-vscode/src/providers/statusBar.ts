@@ -1,35 +1,52 @@
 import * as vscode from 'vscode';
 import { ConfigService } from '../services/configService';
+import { WorkspaceStatusService } from '../services/workspaceStatusService';
 
 export class StatusBarManager {
     private statusBarItem: vscode.StatusBarItem;
-    private configService: ConfigService;
+    private statusSubscription: vscode.Disposable;
 
-    constructor(configService: ConfigService) {
-        this.configService = configService;
+    constructor(
+        private readonly configService: ConfigService,
+        private readonly statusService: WorkspaceStatusService,
+    ) {
         this.statusBarItem = vscode.window.createStatusBarItem(
             vscode.StatusBarAlignment.Left,
             100
         );
-        this.statusBarItem.command = 'workbench.action.quickOpen';
-        this.statusBarItem.tooltip = 'VDW Workspace - Click to open command palette';
+        this.statusSubscription = this.statusService.onDidChange(() => this.update());
     }
 
     /** Update the status bar with current state */
-    update(fileCount?: number): void {
+    update(_fileCount?: number): void {
         const config = this.configService.getConfig();
 
         if (!config) {
             this.statusBarItem.text = '$(link) VDW: No config';
             this.statusBarItem.backgroundColor = undefined;
+            this.statusBarItem.command = 'vdw.init';
+            this.statusBarItem.tooltip = 'Initialize a VDW workspace';
             this.statusBarItem.show();
             return;
         }
 
         const depCount = config.dependencies.length;
-        const filesText = fileCount !== undefined ? `, ${fileCount} files` : '';
-        this.statusBarItem.text = `$(link) VDW: ${depCount} deps${filesText}`;
-        this.statusBarItem.backgroundColor = undefined;
+        const snapshot = this.statusService.getSnapshot();
+        this.statusBarItem.command = 'vdw.openWorkspaceSwitcher';
+
+        if (snapshot.issueCount > 0) {
+            this.statusBarItem.text = `$(warning) VDW: ${snapshot.issueCount} issue${snapshot.issueCount === 1 ? '' : 's'}`;
+            this.statusBarItem.backgroundColor = new vscode.ThemeColor('statusBarItem.warningBackground');
+            this.statusBarItem.tooltip = `Open VDW repositories — ${snapshot.issueCount} workspace issue${snapshot.issueCount === 1 ? '' : 's'}`;
+        } else if (snapshot.dirtyCount > 0) {
+            this.statusBarItem.text = `$(git-commit) VDW: ${snapshot.dirtyCount} dirty`;
+            this.statusBarItem.backgroundColor = undefined;
+            this.statusBarItem.tooltip = `Open VDW repositories — ${snapshot.dirtyCount} repositor${snapshot.dirtyCount === 1 ? 'y' : 'ies'} with changes`;
+        } else {
+            this.statusBarItem.text = `$(repo) VDW: ${depCount} repo${depCount === 1 ? '' : 's'}`;
+            this.statusBarItem.backgroundColor = undefined;
+            this.statusBarItem.tooltip = 'Open VDW repositories';
+        }
         this.statusBarItem.show();
     }
 
@@ -52,6 +69,7 @@ export class StatusBarManager {
     }
 
     dispose(): void {
+        this.statusSubscription.dispose();
         this.statusBarItem.dispose();
     }
 }

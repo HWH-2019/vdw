@@ -8,6 +8,13 @@ import { AutoOpenService } from '../services/autoOpenService';
 import { VDWFileProvider } from '../providers/fileProvider';
 import { WorkspaceTreeProvider } from '../providers/workspaceTreeView';
 import { StatusBarManager } from '../providers/statusBar';
+import { WorkspaceStatusService } from '../services/workspaceStatusService';
+import { Dependency, RepositoryRuntimeStatus } from '../types/vdwTypes';
+import {
+    formatRepositoryDescription,
+    getDependencyName,
+    repositoryStatusPriority,
+} from '../utils/workspaceStatus';
 import * as yaml from 'js-yaml';
 import { log, logError, show as showLog } from '../utils/logger';
 import { handleAddRepo } from './addRepo';
@@ -20,6 +27,7 @@ export function registerCommands(
     contextService: ContextService,
     fileProvider: VDWFileProvider,
     treeProvider: WorkspaceTreeProvider,
+    workspaceStatusService: WorkspaceStatusService,
     statusBar: StatusBarManager,
     autoOpenService?: AutoOpenService,
 ): void {
@@ -519,20 +527,123 @@ export function registerCommands(
         })
     );
 
+    // vdw.openSourceControl - Ensure the editable worktree is registered and show SCM.
+    context.subscriptions.push(
+        vscode.commands.registerCommand('vdw.openSourceControl', async (treeItem: any) => {
+            const dependency = treeItem?.dependency as Dependency | undefined;
+            if (!dependency?.path) return;
+
+            const fullPath = resolveDependencyPath(dependency);
+            if (!fs.existsSync(fullPath)) {
+                const link = await vscode.window.showWarningMessage(
+                    `Repository path is missing: ${dependency.path}`,
+                    'Link Repository',
+                );
+                if (link === 'Link Repository') {
+                    await vscode.commands.executeCommand('vdw.linkRepo', treeItem);
+                }
+                return;
+            }
+
+            try {
+                const identifier = dependency.remote || dependency.origin || dependency.local || dependency.path;
+                await autoOpenService?.openAllEditableRepositories(identifier);
+                await vscode.commands.executeCommand('git.openRepository', fullPath);
+                await vscode.commands.executeCommand('workbench.view.scm');
+                await workspaceStatusService.refresh();
+            } catch (error) {
+                logError(`Failed to open Source Control for ${dependency.path}`, error);
+                vscode.window.showErrorMessage(`Failed to open Source Control: ${error}`);
+            }
+        })
+    );
+
+    // vdw.revealInExplorer - Reveal the repository root in the native Explorer.
+    context.subscriptions.push(
+        vscode.commands.registerCommand('vdw.revealInExplorer', async (treeItem: any) => {
+            const dependency = treeItem?.dependency as Dependency | undefined;
+            if (!dependency?.path) return;
+
+            const fullPath = resolveDependencyPath(dependency);
+            if (!fs.existsSync(fullPath)) {
+                vscode.window.showWarningMessage(`Repository path is missing: ${dependency.path}`);
+                return;
+            }
+            await vscode.commands.executeCommand('revealInExplorer', vscode.Uri.file(fullPath));
+        })
+    );
+
     // vdw.openInTerminal - Open dependency path in terminal
     context.subscriptions.push(
         vscode.commands.registerCommand('vdw.openInTerminal', (treeItem: any) => {
-            if (!treeItem?.dependency?.path) {
+            const dependency = treeItem?.dependency as Dependency | undefined;
+            if (!dependency?.path) return;
+
+            const fullPath = resolveDependencyPath(dependency);
+            if (!fs.existsSync(fullPath)) {
+                vscode.window.showWarningMessage(`Repository path is missing: ${dependency.path}`);
                 return;
             }
-            const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-            if (!workspaceRoot) {
-                return;
-            }
-            const fullPath = path.join(workspaceRoot, treeItem.dependency.path);
-            const repoName = path.basename(treeItem.dependency.path);
+            const repoName = getDependencyName(dependency);
             const terminal = vscode.window.createTerminal({ cwd: fullPath, name: repoName });
             terminal.show();
+        })
+    );
+
+    // vdw.openWorkspaceSwitcher - Keyboard-first repository navigation.
+    context.subscriptions.push(
+        vscode.commands.registerCommand('vdw.openWorkspaceSwitcher', async () => {
+            const config = configService.getConfig();
+            if (!config || config.dependencies.length === 0) {
+                const action = await vscode.window.showInformationMessage(
+                    'No VDW repositories are configured.',
+                    'Add Repository',
+                );
+                if (action === 'Add Repository') {
+                    await vscode.commands.executeCommand('vdw.addRepo');
+                }
+                return;
+            }
+
+            const snapshot = await workspaceStatusService.refresh();
+            const items: RepositoryQuickPickItem[] = config.dependencies
+                .map(dependency => {
+                    const status = snapshot.repositories.find(candidate =>
+                        candidate.dependencyPath === dependency.path,
+                    );
+                    return {
+                        label: `${getQuickPickIcon(status)} ${getDependencyName(dependency)}`,
+                        description: status
+                            ? formatRepositoryDescription(dependency, status)
+                            : 'checking…',
+                        detail: resolveDependencyPath(dependency),
+                        dependency,
+                        status,
+                    };
+                })
+                .sort((left, right) => {
+                    if (!left.status || !right.status) return 0;
+                    const priority = repositoryStatusPriority(left.status) - repositoryStatusPriority(right.status);
+                    return priority || getDependencyName(left.dependency).localeCompare(getDependencyName(right.dependency));
+                });
+
+            const selected = await vscode.window.showQuickPick(items, {
+                placeHolder: 'Select a VDW repository',
+                matchOnDescription: true,
+                matchOnDetail: true,
+            });
+            if (!selected) return;
+
+            const treeItem = { dependency: selected.dependency, status: selected.status };
+            if (selected.status?.state === 'missing') {
+                await vscode.commands.executeCommand('vdw.linkRepo', treeItem);
+            } else if (selected.status?.state === 'invalidWorktree') {
+                await vscode.commands.executeCommand('vdw.relink');
+            } else if (selected.dependency.editable) {
+                await vscode.commands.executeCommand('vdw.openSourceControl', treeItem);
+            } else {
+                await vscode.commands.executeCommand('vdw.revealInExplorer', treeItem);
+            }
         })
     );
 
@@ -544,16 +655,45 @@ export function registerCommands(
                 contextService.refresh();
                 fileProvider.refresh();
                 treeProvider.refresh();
-                const fileCount = await contextService.getFileCount();
-                statusBar.update(fileCount);
-
                 await autoOpenService?.openAllEditableRepositories();
+                const snapshot = await workspaceStatusService.refresh();
+                statusBar.update();
 
-                vscode.window.showInformationMessage(`Context refreshed: ${fileCount} files in scope`);
+                vscode.window.showInformationMessage(
+                    `Workspace status refreshed: ${snapshot.repositories.length} repositories`,
+                );
             } catch (err) {
                 logError('Refresh context failed', err);
                 vscode.window.showErrorMessage(`Failed to refresh context: ${err}`);
             }
         })
     );
+}
+
+interface RepositoryQuickPickItem extends vscode.QuickPickItem {
+    dependency: Dependency;
+    status?: RepositoryRuntimeStatus;
+}
+
+function resolveDependencyPath(dependency: Dependency): string {
+    const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+    if (!workspaceRoot) throw new Error('No workspace folder found');
+    return path.resolve(workspaceRoot, dependency.path);
+}
+
+function getQuickPickIcon(status?: RepositoryRuntimeStatus): string {
+    switch (status?.state) {
+        case 'missing':
+        case 'invalidWorktree':
+            return '$(error)';
+        case 'scmMissing':
+        case 'branchDrift':
+            return '$(warning)';
+        case 'dirty':
+            return '$(git-commit)';
+        case 'ready':
+            return '$(repo)';
+        default:
+            return '$(sync~spin)';
+    }
 }

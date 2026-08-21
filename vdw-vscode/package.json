@@ -64,7 +64,7 @@
       },
       {
         "command": "vdw.relink",
-        "title": "VDW: Relink allRepo",
+        "title": "VDW: Reconcile Workspace",
         "icon": "$(sync)"
       },
       {
@@ -78,7 +78,7 @@
       },
       {
         "command": "vdw.refreshContext",
-        "title": "VDW: Refresh Context",
+        "title": "VDW: Refresh Workspace Status",
         "icon": "$(refresh)"
       },
       {
@@ -93,23 +93,31 @@
           "light": "resources/icons/terminal-light.svg",
           "dark": "resources/icons/terminal-dark.svg"
         }
+      },
+      {
+        "command": "vdw.openSourceControl",
+        "title": "Open in Source Control",
+        "icon": "$(source-control)"
+      },
+      {
+        "command": "vdw.revealInExplorer",
+        "title": "Reveal in Explorer",
+        "icon": "$(folder-opened)"
+      },
+      {
+        "command": "vdw.openWorkspaceSwitcher",
+        "title": "VDW: Open Repository",
+        "icon": "$(repo)"
       }
     ],
-    "viewsContainers": {
-      "activitybar": [
-        {
-          "id": "vdw-explorer",
-          "title": "VDW Workspace",
-          "icon": "resources/icons/vdw.svg"
-        }
-      ]
-    },
     "views": {
-      "vdw-explorer": [
+      "scm": [
         {
           "id": "vdwWorkspace",
-          "name": "Dependencies",
-          "contextualTitle": "VDW Workspace"
+          "name": "VDW Repositories",
+          "contextualTitle": "VDW Workspace",
+          "visibility": "collapsed",
+          "icon": "resources/icons/vdw.svg"
         }
       ]
     },
@@ -130,35 +138,50 @@
         {
           "command": "vdw.relink",
           "when": "view == vdwWorkspace && vdw.hasConfig",
-          "group": "navigation@3",
+          "group": "1_workspace@1",
           "icon": "$(sync)"
+        },
+        {
+          "command": "vdw.validate",
+          "when": "view == vdwWorkspace && vdw.hasConfig",
+          "group": "1_workspace@2"
         }
       ],
       "view/item/context": [
         {
-          "command": "vdw.unlinkRepo",
-          "when": "view == vdwWorkspace && viewItem == linkedRepo",
+          "command": "vdw.openSourceControl",
+          "when": "view == vdwWorkspace && viewItem == vdwRepoEditable",
           "group": "inline@1"
         },
         {
           "command": "vdw.linkRepo",
-          "when": "view == vdwWorkspace && viewItem == unlinkedRepo",
+          "when": "view == vdwWorkspace && viewItem == vdwRepoMissing",
           "group": "inline@1"
         },
         {
-          "command": "vdw.removeRepo",
-          "when": "view == vdwWorkspace && viewItem == linkedRepo",
-          "group": "2@remove"
-        },
-        {
-          "command": "vdw.removeRepo",
-          "when": "view == vdwWorkspace && viewItem == unlinkedRepo",
-          "group": "2@remove"
-        },
-        {
           "command": "vdw.openInTerminal",
-          "when": "view == vdwWorkspace && viewItem == linkedPath",
+          "when": "view == vdwWorkspace && (viewItem == vdwRepoEditable || viewItem == vdwRepoReadOnly || viewItem == vdwRepoInvalid)",
           "group": "inline@2"
+        },
+        {
+          "command": "vdw.revealInExplorer",
+          "when": "view == vdwWorkspace && (viewItem == vdwRepoEditable || viewItem == vdwRepoReadOnly || viewItem == vdwRepoInvalid)",
+          "group": "inline@3"
+        },
+        {
+          "command": "vdw.unlinkRepo",
+          "when": "view == vdwWorkspace && (viewItem == vdwRepoEditable || viewItem == vdwRepoReadOnly || viewItem == vdwRepoInvalid)",
+          "group": "1_manage@1"
+        },
+        {
+          "command": "vdw.relink",
+          "when": "view == vdwWorkspace && viewItem == vdwRepoInvalid",
+          "group": "1_manage@2"
+        },
+        {
+          "command": "vdw.removeRepo",
+          "when": "view == vdwWorkspace && (viewItem == vdwRepoEditable || viewItem == vdwRepoReadOnly || viewItem == vdwRepoInvalid || viewItem == vdwRepoMissing)",
+          "group": "2_remove@1"
         }
       ]
     },
