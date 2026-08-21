@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use anyhow::Result;
+use anyhow::{bail, Context, Result};
 
 use crate::worktree::git_ops;
 
@@ -24,23 +24,46 @@ pub fn create_worktree(
     let worktree_name = sanitize_branch_name(branch_name);
     let worktree_path = worktree_base_path.join(&worktree_name);
 
-    // If worktree already exists, return its path
-    if worktree_path.exists() {
+    create_worktree_at(bare_repo_path, branch_name, &worktree_path)?;
+    Ok(worktree_path)
+}
+
+/// Create a git worktree at an exact path.
+///
+/// Editable VDW dependencies use this API so the directory opened by the
+/// editor is the Git worktree itself instead of a per-file projection.
+pub fn create_worktree_at(
+    bare_repo_path: &Path,
+    branch_name: &str,
+    worktree_path: &Path,
+) -> Result<()> {
+    let worktree_name = sanitize_branch_name(branch_name);
+
+    if worktree_path.join(".git").exists() {
         tracing::info!("Worktree already exists: {}", worktree_path.display());
-        return Ok(worktree_path);
+        return Ok(());
+    }
+    if worktree_path.exists() && std::fs::read_dir(worktree_path)?.next().is_some() {
+        bail!(
+            "Refusing to create a worktree in non-empty directory: {}",
+            worktree_path.display()
+        );
     }
 
-    std::fs::create_dir_all(worktree_base_path)?;
+    if let Some(parent) = worktree_path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
 
     // Try git2 worktree API first, fall back to git CLI if needed
-    let result = create_worktree_via_git2(bare_repo_path, branch_name, &worktree_path, &worktree_name);
+    let result =
+        create_worktree_via_git2(bare_repo_path, branch_name, worktree_path, &worktree_name);
     if result.is_ok() {
         tracing::info!(
             "Created worktree '{}' at {}",
             branch_name,
             worktree_path.display()
         );
-        return Ok(worktree_path);
+        return Ok(());
     }
 
     // Fallback: use git CLI command
@@ -48,14 +71,66 @@ pub fn create_worktree(
         "git2 worktree API failed ({:?}), falling back to git CLI",
         result.err()
     );
-    create_worktree_via_command(bare_repo_path, branch_name, &worktree_path)?;
+    create_worktree_via_command(bare_repo_path, branch_name, worktree_path)?;
 
     tracing::info!(
         "Created worktree '{}' at {} (via git CLI)",
         branch_name,
         worktree_path.display()
     );
-    Ok(worktree_path)
+    Ok(())
+}
+
+/// Move a registered Git worktree while preserving its index, dirty changes,
+/// untracked files, and worktree metadata.
+pub fn move_worktree(bare_repo_path: &Path, from: &Path, to: &Path) -> Result<()> {
+    if let Some(parent) = to.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+
+    let output = Command::new("git")
+        .args(["worktree", "move"])
+        .arg(from)
+        .arg(to)
+        .current_dir(bare_repo_path)
+        .output()
+        .with_context(|| format!("Failed to start git worktree move for {}", from.display()))?;
+
+    if !output.status.success() {
+        bail!(
+            "git worktree move failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
+    }
+    Ok(())
+}
+
+/// Remove a registered worktree by its exact filesystem path.
+pub fn remove_worktree_at(bare_repo_path: &Path, worktree_path: &Path, force: bool) -> Result<()> {
+    let mut command = Command::new("git");
+    command.args(["worktree", "remove"]);
+    if force {
+        command.arg("--force");
+    }
+    let output = command
+        .arg(worktree_path)
+        .current_dir(bare_repo_path)
+        .output()
+        .with_context(|| {
+            format!(
+                "Failed to start git worktree remove for {}",
+                worktree_path.display()
+            )
+        })?;
+
+    if !output.status.success() {
+        bail!(
+            "git worktree remove failed for {}: {}",
+            worktree_path.display(),
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
+    }
+    Ok(())
 }
 
 /// Create worktree using git2's native API
@@ -86,12 +161,7 @@ fn create_worktree_via_command(
     worktree_path: &Path,
 ) -> Result<()> {
     let output = Command::new("git")
-        .args([
-            "worktree",
-            "add",
-            &worktree_path.to_string_lossy(),
-            branch,
-        ])
+        .args(["worktree", "add", &worktree_path.to_string_lossy(), branch])
         .current_dir(bare_repo_path)
         .output()?;
 
@@ -178,11 +248,7 @@ fn remove_worktree_via_git2(bare_repo_path: &Path, worktree_name: &str, force: b
 }
 
 /// Remove worktree using git CLI (fallback)
-fn remove_worktree_via_command(
-    bare_repo_path: &Path,
-    branch: &str,
-    force: bool,
-) -> Result<()> {
+fn remove_worktree_via_command(bare_repo_path: &Path, branch: &str, force: bool) -> Result<()> {
     let mut args = vec!["worktree", "remove", branch];
     if force {
         args.push("--force");
@@ -350,6 +416,36 @@ mod tests {
             let _ = remove_worktree(&bare_path, &default_branch, true);
         }
 
+        drop(bare_repo);
+        let _ = bare_dir;
+    }
+
+    #[test]
+    fn test_create_and_move_worktree_at_exact_path() {
+        let (bare_dir, bare_path) = create_test_bare_repo_with_commit();
+        let workspace = tempfile::tempdir().expect("workspace");
+        let original = workspace.path().join("store-worktree");
+        let target = workspace.path().join("packages/repo");
+        let bare_repo = git2::Repository::open_bare(&bare_path).expect("bare repo");
+        let branch = git_ops::list_branches(&bare_repo)
+            .expect("branches")
+            .into_iter()
+            .find(|branch| branch == "master" || branch == "main")
+            .expect("default branch");
+
+        create_worktree_at(&bare_path, &branch, &original).expect("create exact worktree");
+        std::fs::write(original.join("untracked.txt"), "preserved").expect("untracked");
+        move_worktree(&bare_path, &original, &target).expect("move worktree");
+
+        assert!(!original.exists());
+        assert!(target.join(".git").exists());
+        assert_eq!(
+            std::fs::read_to_string(target.join("untracked.txt")).unwrap(),
+            "preserved"
+        );
+
+        remove_worktree_at(&bare_path, &target, true).expect("remove exact worktree");
+        assert!(!target.exists());
         drop(bare_repo);
         let _ = bare_dir;
     }

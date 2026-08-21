@@ -2,7 +2,7 @@
   "name": "vdw-vscode",
   "displayName": "VDW - Virtual Dev Workspace",
   "description": "Cross-repo dependency management and AI context filtering for multi-repository development",
-  "version": "0.6.2",
+  "version": "0.7.0",
   "publisher": "vdw-team",
   "license": "Apache-2.0",
   "repository": {
@@ -173,7 +173,7 @@
         "vdw.autoOpenGitRepositories": {
           "type": "boolean",
           "default": true,
-          "description": "Automatically open editable Git repositories in VS Code Source Control after link/relink/add operations"
+          "description": "Refresh native editable workspace repositories in VS Code Source Control after link/relink/add operations"
         },
         "vdw.autoOpenDelay": {
           "type": "number",

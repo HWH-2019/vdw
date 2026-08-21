@@ -1,6 +1,5 @@
-#![deprecated(
-    note = "Junction is no longer the default since v0.6.0. Windows now uses HardLink. This module will be removed in v0.7.0."
-)]
+//! Legacy junction support retained so 0.7 can unlink state created by older
+//! Windows releases. New per-file projections prefer hardlinks or symlinks.
 
 use anyhow::Result;
 use std::path::Path;

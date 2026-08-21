@@ -206,13 +206,14 @@ pub fn resolve_in_workspace(
             accepted.as_str()
         ));
 
+    std::fs::create_dir_all(&backup_root)?;
     for conflict in &selected_conflicts {
         let relative_path = workspace_relative_path(workspace_root, &conflict.target)?;
-        backup_file(
+        backup_file_if_exists(
             &conflict.source,
             &backup_root.join("store").join(&relative_path),
         )?;
-        backup_file(
+        backup_file_if_exists(
             &conflict.target,
             &backup_root.join("workspace").join(&relative_path),
         )?;
@@ -220,17 +221,54 @@ pub fn resolve_in_workspace(
 
     let apply_result = (|| -> Result<WorkspaceState> {
         for conflict in &selected_conflicts {
-            if accepted == ConflictResolutionSide::Workspace {
-                std::fs::copy(&conflict.target, &conflict.source).with_context(|| {
-                    format!(
-                        "Failed to accept workspace content for {}",
-                        conflict.target.display()
-                    )
-                })?;
+            match (conflict.reason, accepted) {
+                (engine::LinkConflictReason::TargetMissing, ConflictResolutionSide::Store) => {
+                    hardlink::create_hardlink(&conflict.source, &conflict.target).with_context(
+                        || format!("Failed to restore {} from Store", conflict.target.display()),
+                    )?;
+                }
+                (engine::LinkConflictReason::TargetMissing, ConflictResolutionSide::Workspace) => {
+                    remove_path_if_exists(&conflict.source).with_context(|| {
+                        format!(
+                            "Failed to accept workspace deletion for {}",
+                            conflict.target.display()
+                        )
+                    })?;
+                }
+                (engine::LinkConflictReason::SourceMissing, ConflictResolutionSide::Store) => {
+                    remove_path_if_exists(&conflict.target).with_context(|| {
+                        format!(
+                            "Failed to accept Store deletion for {}",
+                            conflict.target.display()
+                        )
+                    })?;
+                }
+                (engine::LinkConflictReason::SourceMissing, ConflictResolutionSide::Workspace) => {
+                    copy_file(
+                        &conflict.target,
+                        &conflict.source,
+                        "accept workspace content",
+                    )?;
+                    hardlink::create_hardlink(&conflict.source, &conflict.target).with_context(
+                        || format!("Failed to rebuild hardlink {}", conflict.target.display()),
+                    )?;
+                }
+                (_, ConflictResolutionSide::Workspace) => {
+                    copy_file(
+                        &conflict.target,
+                        &conflict.source,
+                        "accept workspace content",
+                    )?;
+                    hardlink::create_hardlink(&conflict.source, &conflict.target).with_context(
+                        || format!("Failed to rebuild hardlink {}", conflict.target.display()),
+                    )?;
+                }
+                (_, ConflictResolutionSide::Store) => {
+                    hardlink::create_hardlink(&conflict.source, &conflict.target).with_context(
+                        || format!("Failed to rebuild hardlink {}", conflict.target.display()),
+                    )?;
+                }
             }
-            hardlink::create_hardlink(&conflict.source, &conflict.target).with_context(|| {
-                format!("Failed to rebuild hardlink {}", conflict.target.display())
-            })?;
         }
 
         let mut new_state = original_state.clone();
@@ -240,10 +278,9 @@ pub fn resolve_in_workspace(
                 Err(_) => continue,
             };
             if selected_relative_paths.contains(&relative_path) {
-                if let Some((inode, volume)) = engine::get_file_inode(&entry.source) {
-                    entry.source_inode = Some(inode);
-                    entry.source_volume = Some(volume);
-                }
+                let identity = engine::get_file_inode(&entry.source);
+                entry.source_inode = identity.map(|(inode, _)| inode);
+                entry.source_volume = identity.map(|(_, volume)| volume);
             }
         }
         new_state.save()?;
@@ -326,7 +363,10 @@ fn normalize_relative_path(path: &Path) -> Result<PathBuf> {
     Ok(normalized)
 }
 
-fn backup_file(source: &Path, backup: &Path) -> Result<()> {
+fn backup_file_if_exists(source: &Path, backup: &Path) -> Result<()> {
+    if std::fs::symlink_metadata(source).is_err() {
+        return Ok(());
+    }
     if let Some(parent) = backup.parent() {
         std::fs::create_dir_all(parent)?;
     }
@@ -337,6 +377,35 @@ fn backup_file(source: &Path, backup: &Path) -> Result<()> {
             backup.display()
         )
     })?;
+    Ok(())
+}
+
+fn copy_file(source: &Path, target: &Path, operation: &str) -> Result<()> {
+    if let Some(parent) = target.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::copy(source, target).with_context(|| {
+        format!(
+            "Failed to {} from {} to {}",
+            operation,
+            source.display(),
+            target.display()
+        )
+    })?;
+    Ok(())
+}
+
+fn remove_path_if_exists(path: &Path) -> Result<()> {
+    let metadata = match std::fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error.into()),
+    };
+    if metadata.file_type().is_dir() {
+        std::fs::remove_dir_all(path)?;
+    } else {
+        std::fs::remove_file(path)?;
+    }
     Ok(())
 }
 
@@ -358,36 +427,33 @@ fn rollback_from_backup(
         let store_backup = backup_root.join("store").join(&relative_path);
         let workspace_backup = backup_root.join("workspace").join(&relative_path);
 
-        if let Err(error) = std::fs::copy(&store_backup, &conflict.source) {
+        if let Err(error) = remove_path_if_exists(&conflict.target) {
             errors.push(format!(
-                "restore Store {}: {}",
+                "clear workspace {}: {}",
+                conflict.target.display(),
+                error
+            ));
+        }
+        if let Err(error) = remove_path_if_exists(&conflict.source) {
+            errors.push(format!(
+                "clear Store {}: {}",
                 conflict.source.display(),
                 error
             ));
         }
-        if let Err(error) = hardlink::remove_hardlink(&conflict.target) {
-            errors.push(format!(
-                "remove rebuilt target {}: {}",
-                conflict.target.display(),
-                error
-            ));
-        }
-        if let Some(parent) = conflict.target.parent() {
-            if let Err(error) = std::fs::create_dir_all(parent) {
-                errors.push(format!(
-                    "restore target directory {}: {}",
-                    parent.display(),
-                    error
-                ));
-                continue;
+        if store_backup.exists() {
+            if let Err(error) = copy_file(&store_backup, &conflict.source, "restore Store backup") {
+                errors.push(error.to_string());
             }
         }
-        if let Err(error) = std::fs::copy(&workspace_backup, &conflict.target) {
-            errors.push(format!(
-                "restore workspace {}: {}",
-                conflict.target.display(),
-                error
-            ));
+        if workspace_backup.exists() {
+            if let Err(error) = copy_file(
+                &workspace_backup,
+                &conflict.target,
+                "restore workspace backup",
+            ) {
+                errors.push(error.to_string());
+            }
         }
     }
 
@@ -487,5 +553,65 @@ mod tests {
         let error = normalize_selected_paths(workspace.path(), &[PathBuf::from("../outside")])
             .expect_err("outside path must be rejected");
         assert!(error.to_string().contains("inside the workspace"));
+    }
+
+    #[test]
+    fn resolve_missing_workspace_target_accepts_store_or_workspace_deletion() {
+        for accepted in [
+            ConflictResolutionSide::Store,
+            ConflictResolutionSide::Workspace,
+        ] {
+            let workspace = tempfile::tempdir().expect("workspace");
+            let store = tempfile::tempdir().expect("store");
+            let source = store.path().join("file.txt");
+            let target = workspace.path().join("packages/repo/file.txt");
+            std::fs::write(&source, "store file").expect("source");
+            conflict_state(workspace.path(), &source, &target)
+                .save()
+                .expect("state");
+
+            resolve_in_workspace(workspace.path(), None, accepted, &[]).expect("resolve");
+
+            if accepted == ConflictResolutionSide::Store {
+                assert_eq!(
+                    engine::get_file_inode(&source),
+                    engine::get_file_inode(&target)
+                );
+            } else {
+                assert!(!source.exists());
+                assert!(!target.exists());
+            }
+        }
+    }
+
+    #[test]
+    fn resolve_missing_store_source_accepts_store_deletion_or_workspace() {
+        for accepted in [
+            ConflictResolutionSide::Store,
+            ConflictResolutionSide::Workspace,
+        ] {
+            let workspace = tempfile::tempdir().expect("workspace");
+            let store = tempfile::tempdir().expect("store");
+            let source = store.path().join("file.txt");
+            let target = workspace.path().join("packages/repo/file.txt");
+            std::fs::create_dir_all(target.parent().unwrap()).expect("target parent");
+            std::fs::write(&target, "workspace file").expect("target");
+            conflict_state(workspace.path(), &source, &target)
+                .save()
+                .expect("state");
+
+            resolve_in_workspace(workspace.path(), None, accepted, &[]).expect("resolve");
+
+            if accepted == ConflictResolutionSide::Store {
+                assert!(!source.exists());
+                assert!(!target.exists());
+            } else {
+                assert_eq!(
+                    engine::get_file_inode(&source),
+                    engine::get_file_inode(&target)
+                );
+                assert_eq!(std::fs::read_to_string(source).unwrap(), "workspace file");
+            }
+        }
     }
 }

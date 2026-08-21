@@ -12,10 +12,10 @@
 | 📂 **Dependency Tree View** | See all your repos at a glance — linked vs unlinked, editable vs read-only |
 | ➕ **Add Repo Wizard** | Interactive dialog to add remote or local repos with branch selection and scope configuration |
 | 🔗 **One-Click Link / Unlink** | Link or unlink individual repos directly from the tree |
-| 🔄 **Relink All** | Unlink all + re-link with updated `.vdwrc` config in one command |
+| 🔄 **Relink All** | Refresh read-only projections and migrate legacy editable repos without replacing native worktrees |
 | 🩺 **Status Bar** | Real-time dependency count and file context size |
 | 🤖 **AI Context** | Filter files per dependency scope — only expose what matters to LLMs |
-| 📝 **Auto-Open Editable Repos** | Registers complete managed worktrees in Source Control after Git initialization |
+| 📝 **Native Editable Repos** | Lets Source Control discover workspace-native worktrees, then performs a best-effort refresh |
 | ⚡ **Config Watcher** | Auto-refresh when `.vdwrc` changes |
 
 ---
@@ -87,7 +87,7 @@ Use the same release version for the CLI and VSIX whenever possible. The extensi
 If the VS Code `code` command is installed, the equivalent terminal command is:
 
 ```bash
-VERSION=0.6.2  # replace with the downloaded VSIX version
+VERSION=0.7.0  # replace with the downloaded VSIX version
 code --install-extension "./vdw_vscode_${VERSION}.vsix" --force
 ```
 
@@ -136,7 +136,7 @@ Open **Preferences: Open Settings (JSON)** from the Command Palette to set it. T
 
 ### Upgrade or uninstall
 
-- Upgrade: install the newer VSIX with **Install from VSIX...** again, or rerun `code --install-extension "./vdw_vscode_0.6.2.vsix" --force` with the new filename.
+- Upgrade: install the newer VSIX with **Install from VSIX...** again, or rerun `code --install-extension "./vdw_vscode_0.7.0.vsix" --force` with the new filename.
 - Uninstall: remove **VDW - Virtual Dev Workspace** from the Extensions view, or run:
 
 ```bash
@@ -149,7 +149,7 @@ Uninstalling the extension does not remove the CLI, `~/.vdw/store`, `.vdwrc`, or
 
 ## 🎮 Commands
 
-When unlinking, relinking, or removing a repository finds different Store and workspace versions, the extension can open the corresponding VS Code diff. Resolve files individually or batch-accept all Store/workspace versions; VDW backs up both sides under `.vdw/conflict-backups/` before rebuilding hardlinks.
+When upgrading a legacy editable projection, unlinking, or removing a repository finds different Store and workspace versions, the extension can open the corresponding VS Code diff. Missing files are also conflicts because hardlinks cannot propagate independent create/delete/rename operations. Resolve files individually or batch-accept all Store/workspace versions; VDW backs up both sides under `.vdw/conflict-backups/` before applying the selection.
 
 All commands are accessible via the **Command Palette** (`Cmd+Shift+P` / `Ctrl+Shift+P`):
 
@@ -157,7 +157,7 @@ All commands are accessible via the **Command Palette** (`Cmd+Shift+P` / `Ctrl+S
 |---------|-----------|-------------|
 | `VDW: Add Repository` | ➕ | Interactive wizard to add a remote or local repo |
 | `VDW: Initialize Workspace` | — | Create a `.vdwrc` in the current folder |
-| `VDW: Relink All` | 🔄 | Unlink all + re-link with updated config |
+| `VDW: Relink All` | 🔄 | Refresh read-only links and migrate legacy editable projections; keep native editable worktrees in place |
 | `VDW: Validate Configuration` | — | Check `.vdwrc` for errors |
 | `VDW: Refresh Context` | 🔃 | Rebuild the file context and update stats |
 | `Link Repository` | ⛓️ (inline) | Link a specific unlinked repo |
@@ -171,7 +171,7 @@ All commands are accessible via the **Command Palette** (`Cmd+Shift+P` / `Ctrl+S
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `vdw.cliPath` | `vdw` | CLI command or absolute binary path; the default requires `vdw` on the Extension Host's `PATH` |
-| `vdw.autoOpenGitRepositories` | `true` | Auto-open editable repos in Source Control |
+| `vdw.autoOpenGitRepositories` | `true` | Best-effort refresh of native editable workspace repos in Source Control |
 | `vdw.autoOpenDelay` | `500` | Deprecated compatibility setting; repository registration now waits for Git events |
 
 ### CLI Binary Resolution
@@ -241,13 +241,13 @@ Each dependency appears as a tree item with its link status, scope filters, and 
 └───────────────────────────────────────┘
 ```
 
-The extension is a **thin UI layer** over the VDW Rust CLI. Every operation (link, unlink, validate, init) spawns the CLI binary and parses its output. The extension's job is to:
+The extension is a **thin UI layer** over the VDW Rust CLI. Every operation (link, unlink, validate, init) spawns the CLI binary and parses its output. Since VDW 0.7, editable dependencies are complete Git worktrees at `dependency.path`; `scope` filters AI context rather than the physical editable checkout. The extension's job is to:
 
 - Read and cache the `.vdwrc` configuration
 - Determine which repos are linked (by checking if paths exist)
 - Present an interactive tree view with link/unlink actions
-- Open complete managed worktrees after the built-in Git extension initializes, including external Store paths in Qoder
-- Close managed worktrees before unlink/relink and reopen them only after links are stable
+- Let the built-in Git extension discover nested workspace repositories and request a public-API refresh after Git initializes
+- Close a native worktree only when unlink/remove is about to delete it; relink leaves the repository registered
 - Track file context statistics for AI assistance
 
 ---

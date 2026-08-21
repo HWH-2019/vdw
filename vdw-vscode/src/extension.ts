@@ -108,7 +108,7 @@ export function activate(context: vscode.ExtensionContext) {
     statusBar.update();
 
     // 5. Initialize AutoOpenService
-    autoOpenService = new AutoOpenService(configService);
+    autoOpenService = new AutoOpenService(configService, workspacePath);
 
     // 6. Initialize Context Service
     contextService = new ContextService(configService, fileProvider, workspacePath);

@@ -8,6 +8,7 @@ export function formatConflictReason(reason: LinkConflictReason): string {
         case 'content_differs': return '文件内容不同';
         case 'metadata_differs': return '文件权限或元数据不同';
         case 'source_missing': return 'Store 文件缺失';
+        case 'target_missing': return '工作区文件缺失';
         case 'target_unreadable': return '工作区文件无法读取';
         case 'target_type_changed': return '工作区文件类型已改变';
         case 'link_target_changed': return '链接目标已改变';

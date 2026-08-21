@@ -11,8 +11,8 @@ export interface WorkspaceMeta {
 export interface Dependency {
     remote: string;   // Remote Git URL, empty string for local repos
     origin: string;   // Original source path for local-only repos (preserved when local is overwritten)
-    local: string;    // VDW-managed worktree path (or original path for old-format configs)
-    path: string;     // Workspace link path (relative)
+    local: string;    // Native workspace worktree after link (or original path for old configs)
+    path: string;     // Native worktree root (editable) or projection root (read-only)
     branch?: string;
     tag?: string;
     commit?: string;
@@ -57,6 +57,7 @@ export type LinkConflictReason =
     | 'content_differs'
     | 'metadata_differs'
     | 'source_missing'
+    | 'target_missing'
     | 'target_unreadable'
     | 'target_type_changed'
     | 'link_target_changed';

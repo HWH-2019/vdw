@@ -1,4 +1,5 @@
 import * as path from 'path';
+import * as fs from 'fs';
 import * as vscode from 'vscode';
 
 import { VDWCliService } from '../services/vdwCliService';
@@ -19,7 +20,7 @@ const BACK_TO_LIST = '返回冲突列表';
 const CANCEL = '取消';
 
 /**
- * Resolve link conflicts before unlink/relink/remove. Returns false when the
+ * Resolve legacy projection conflicts before migration/unlink/remove. Returns false when the
  * user cancels or a conflict cannot be resolved safely.
  */
 export async function ensureLinkConflictsResolved(
@@ -38,7 +39,7 @@ export async function ensureLinkConflictsResolved(
     while (report.conflict_count > 0) {
         const resolvableCount = report.conflicts.filter(conflict => conflict.resolvable).length;
         const message = [
-            `检测到 ${report.conflict_count} 个 Store 与工作区内容冲突。`,
+            `检测到 ${report.conflict_count} 个 Store 与工作区内容或文件拓扑冲突。`,
             '请先打开对应文件进行对比，或批量选择保留一侧。',
             '未采用的一侧会备份到工作区 .vdw/conflict-backups。',
             resolvableCount < report.conflict_count
@@ -124,6 +125,19 @@ async function pickConflict(conflicts: LinkConflict[]): Promise<LinkConflict | u
 }
 
 async function openConflictDiff(conflict: LinkConflict): Promise<void> {
+    const sourceExists = fs.existsSync(conflict.source);
+    const targetExists = fs.existsSync(conflict.target);
+    if (!sourceExists || !targetExists) {
+        const existingPath = sourceExists ? conflict.source : conflict.target;
+        if (existingPath) {
+            const document = await vscode.workspace.openTextDocument(vscode.Uri.file(existingPath));
+            await vscode.window.showTextDocument(document, { preview: true });
+        }
+        vscode.window.showInformationMessage(
+            `${formatConflictReason(conflict.reason)}，缺失的一侧无法打开对比；请选择接受 Store 或工作区来决定保留文件还是删除文件。`,
+        );
+        return;
+    }
     const title = `VDW 冲突：Store ↔ 工作区 — ${path.basename(conflict.relative_path)}`;
     await vscode.commands.executeCommand(
         'vscode.diff',
@@ -143,7 +157,7 @@ async function resolveConflicts(
     const count = relativePaths.length || report.conflict_count;
     const sideLabel = accepted === 'store' ? 'Store' : '工作区';
     const confirmed = await vscode.window.showWarningMessage(
-        `确认对 ${count} 个冲突接受${sideLabel}版本？\n\n两侧文件都会先备份，随后重新建立硬链接。`,
+        `确认对 ${count} 个冲突接受${sideLabel}版本？\n\n现有文件会先备份，随后按选择同步内容、创建或删除文件。`,
         { modal: true },
         `确认接受${sideLabel}`,
         CANCEL,

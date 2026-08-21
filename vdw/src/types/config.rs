@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::fmt;
+use std::path::{Component, Path};
 
 /// VDW workspace configuration root
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -122,6 +123,27 @@ impl Dependency {
             ));
         }
 
+        let workspace_path = Path::new(&self.path);
+        let mut has_normal_component = false;
+        for component in workspace_path.components() {
+            match component {
+                Component::Normal(_) => has_normal_component = true,
+                Component::CurDir => {}
+                Component::ParentDir | Component::RootDir | Component::Prefix(_) => {
+                    return Err(format!(
+                        "Dependency '{}' path must stay inside the workspace: '{}'",
+                        dep_id, self.path
+                    ));
+                }
+            }
+        }
+        if !has_normal_component {
+            return Err(format!(
+                "Dependency '{}' path must name a subdirectory inside the workspace",
+                dep_id
+            ));
+        }
+
         // Check scope.include must be non-empty
         if self.scope.include.is_empty() {
             return Err(format!(
@@ -139,10 +161,7 @@ impl Dependency {
         let mut hasher = Sha256::new();
         hasher.update(source.as_bytes());
         let result = hasher.finalize();
-        format!("{:x}", result)
-            .chars()
-            .take(8)
-            .collect()
+        format!("{:x}", result).chars().take(8).collect()
     }
 }
 
@@ -217,7 +236,10 @@ dependencies:
         assert_eq!(config.workspace.name, "test-workspace");
         assert_eq!(config.workspace.version, "1.0");
         assert_eq!(config.dependencies.len(), 1);
-        assert_eq!(config.dependencies[0].remote, "https://github.com/example/repo.git");
+        assert_eq!(
+            config.dependencies[0].remote,
+            "https://github.com/example/repo.git"
+        );
         assert_eq!(config.dependencies[0].local, "");
         assert_eq!(config.dependencies[0].branch, Some("main".to_string()));
         assert!(!config.dependencies[0].editable);
@@ -230,7 +252,9 @@ dependencies:
         dep.local = String::new();
         let result = dep.validate();
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("at least one of 'remote', 'origin', or 'local'"));
+        assert!(result
+            .unwrap_err()
+            .contains("at least one of 'remote', 'origin', or 'local'"));
     }
 
     #[test]
@@ -258,6 +282,16 @@ dependencies:
         let result = dep.validate();
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("exactly one of"));
+    }
+
+    #[test]
+    fn test_dependency_validate_rejects_path_outside_workspace() {
+        for path in ["../repo", "/tmp/repo", "."] {
+            let mut dep = sample_dependency();
+            dep.path = path.to_string();
+            let error = dep.validate().expect_err("unsafe path must be rejected");
+            assert!(error.contains("inside the workspace"));
+        }
     }
 
     #[test]

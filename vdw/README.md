@@ -1,7 +1,7 @@
 # 🏗️ VDW — Virtual Dev Workspace
 
-> **Cross-repo development middleware for the AI era**  
-> Seamlessly stitch multiple repositories into one development workspace, then serve the context to your AI coding assistant.
+> **Declarative multi-repository worktree orchestration for the AI era**
+> Materialize the repositories a task needs in one workspace, then serve scoped context to your AI coding assistant.
 
 [![Rust](https://img.shields.io/badge/Rust-🦀-orange?style=flat-square)](https://www.rust-lang.org)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue?style=flat-square)](LICENSE)
@@ -22,7 +22,7 @@ You need them all in one place during development. But cloning them manually, ke
 **VDW solves this.** It gives you:
 
 1. 🗄️ A **content-addressable store** on your machine that deduplicates repos
-2. 🔗 **Smart linking** — expose only the files you want via hardlinks / symlinks
+2. 🔗 **Declarative orchestration** — native workspace worktrees for editable repos and scoped links for read-only deps
 3. 🤖 **AI context filtering** — generate a clean file list for LLM-based coding assistants
 4. 📝 **Editable dependencies** — repos added with `--editable` use git worktrees so you can modify code with full git support
 
@@ -35,9 +35,9 @@ Think of it as **`npm link` but for any language**, combined with **AI-aware fil
 | Feature | Description |
 |---------|-------------|
 | 📦 **Content Store** | Bare git repos in `~/.vdw/store/objects/` — automatic dedup via SHA256 |
-| 🔗 **Smart Linking** | Hardlinks on same filesystem, symlinks cross-filesystem (or junctions on Windows) |
-| 🎯 **Scope Filtering** | Glob patterns to include/exclude files per dependency |
-| ✏️ **Editable Mode** | Git worktrees for repos you need to modify |
+| 🔗 **Read-only Projection** | Hardlinks on same filesystem, symlinks cross-filesystem (or junctions on Windows) |
+| 🎯 **Scope Filtering** | Glob patterns for AI context and read-only projections |
+| ✏️ **Editable Mode** | Complete native Git worktrees directly at each workspace path |
 | 🔍 **AI Context** | Generate filtered file lists for LLM-powered coding tools |
 | 🌐 **SSH Auth** | Delegates to system OpenSSH — no key management needed |
 | 🛡️ **Idempotent** | Run `vdw link` 100 times — same result every time |
@@ -69,7 +69,7 @@ Download the matching archive from [GitHub Releases](https://github.com/HWH-2019
 macOS/Linux example:
 
 ```bash
-VERSION=0.6.2            # replace with the release you downloaded
+VERSION=0.7.0            # replace with the release you downloaded
 OS=darwin                # darwin or linux
 ARCH=arm64               # arm64 or x86_64
 ASSET="vdw_${OS}_${ARCH}_${VERSION}"
@@ -194,7 +194,23 @@ vdw link
 vdw link --repo git@github.com:org/ui-lib.git
 ```
 
-VDW walks each dependency's source directory, applies scope filters, and creates hardlinks (or symlinks) at the configured path. Git metadata (`.git` directories and worktree pointer files) is never projected. IDE integrations register the complete managed worktree instead, so scope filtering cannot appear as deleted Git files. Run it anytime to refresh.
+Editable dependencies become complete native Git worktrees at their configured `path`; their `.git` pointer is real, and `scope` only filters AI context. Read-only dependencies still use scope-filtered hardlinks or symlinks. Run `vdw link` anytime to refresh without replacing an existing native editable worktree.
+
+### Upgrade legacy editable projections to 0.7
+
+On the first 0.7 `link` or `relink`, VDW moves the old Store worktree into the workspace with `git worktree move`. The branch, index, dirty changes, and untracked Store files are preserved. Workspace-only files are copied into the new worktree and backed up under `.vdw/migration-backups/`.
+
+Because hardlinks do not propagate independent create/delete/rename operations, migration stops if either side is missing or content differs. Inspect the corresponding files and choose Store or workspace, for one file or in bulk:
+
+```bash
+vdw conflicts list
+vdw conflicts resolve --accept store
+vdw conflicts resolve --accept workspace
+vdw conflicts resolve --accept workspace --path packages/ui-lib/src/button.ts
+vdw relink
+```
+
+VDW backs up every resolved side under `.vdw/conflict-backups/`. Once migrated, editable repos no longer occupy per-file entries in `.vdw/state.json`; that file tracks read-only projections only.
 
 ### ❌ Unlink
 
@@ -209,7 +225,7 @@ vdw unlink --repo git@github.com:org/ui-lib.git
 If an editor has replaced a hardlink and the Store/workspace contents differ, VDW stops before deleting anything. Inspect and resolve the files first:
 
 ```bash
-# List only real content/metadata conflicts
+# List content, metadata, and Store/workspace topology conflicts
 vdw conflicts list
 
 # Accept one side for every conflict (both sides are backed up first)
@@ -230,6 +246,9 @@ vdw repo remove https://github.com/org/ui-lib.git
 
 # By name (fuzzy search)
 vdw repo remove ui-lib
+
+# Explicitly discard dirty editable-worktree changes
+vdw repo remove ui-lib --force
 ```
 
 ### 📋 List repositories
@@ -330,13 +349,13 @@ dependencies:
 | Field | Required | Description |
 |-------|----------|-------------|
 | `remote` | ✅ | Git URL (`https://`, `git@`, or empty for local repos) |
-| `local` | ✅ (if no remote) | Local repository path on disk |
+| `local` | ✅ (if no remote) | Local source before first link; VDW records the native worktree path after link |
 | `origin` | ❌ | Original source path (preserved when `local` is overwritten with worktree path) |
-| `path` | ✅ | Where to link in your workspace |
+| `path` | ✅ | Workspace-relative native worktree root (editable) or projection root (read-only); absolute paths and `..` are rejected |
 | `branch` / `tag` / `commit` | ✅ (pick one) | Which version to track |
-| `scope.include` | ✅ | Glob patterns for files to expose |
-| `scope.exclude` | ❌ | Glob patterns to filter out |
-| `editable` | ❌ | Enable git worktree (default: `false`) |
+| `scope.include` | ✅ | AI context patterns; also selects read-only projection files |
+| `scope.exclude` | ❌ | Context/read-only projection exclusions |
+| `editable` | ❌ | Create a complete native worktree at `path` (default: `false`) |
 
 ---
 
@@ -346,8 +365,8 @@ dependencies:
                     ┌─────────────────────────────────────┐
                     │         Your Workspace               │
                     │                                     │
-                    │   packages/ui-lib/ (hardlinks)      │
-                    │   services/api/    (worktree)        │
+                    │   packages/ui-lib/ (read-only links) │
+                    │   services/api/    (Git worktree)    │
                     │   packages/protos/ (symlinks)        │
                     │                                     │
                     └───────────┬─────────────────────────┘
@@ -373,12 +392,13 @@ dependencies:
 **The flow:**
 
 1. **`vdw repo add`** → clones a bare git repo into the content store, records commit hash + metadata
-2. **`vdw link`** → walks each repo's files, matches scope filters, creates hardlinks/symlinks in your workspace
-3. **`vdw unlink`** → removes all links (but keeps the store intact)
-4. **Editable mode** → creates a git worktree from the bare repo so you can commit/push changes
-5. **Local repos** → when origin is a local path, VDW also fetches remote-tracking branches (not just local branches)
+2. **`vdw link`** → creates native workspace worktrees for editable deps and scoped links for read-only deps
+3. **`vdw relink`** → refreshes read-only links while keeping native editable repositories and local changes in place
+4. **`vdw unlink`** → removes managed links/worktrees but keeps the bare Store objects intact
+5. **Editable mode** → uses `dependency.path` as a normal nested Git repository so IDE Source Control can discover it natively
+6. **Local repos** → when origin is a local path, VDW also fetches remote-tracking branches (not just local branches)
 
-### Link strategies (auto-selected)
+### Read-only link strategies (auto-selected)
 
 | Condition | Strategy | Fallback |
 |-----------|----------|----------|
@@ -387,7 +407,7 @@ dependencies:
 | Windows (directory) | 🪟 Junction | Symlink |
 | Windows (file) | 🪟 Symlink | — |
 
-Hardlinks are preferred because they take zero disk space and don't break when the source moves.
+Hardlinks avoid duplicate file data. VDW records and audits them because atomic saves and independent create/delete/rename operations can detach the workspace topology.
 
 ---
 

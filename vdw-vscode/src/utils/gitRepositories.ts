@@ -1,3 +1,4 @@
+import * as path from 'path';
 import { Dependency, VDWConfig } from '../types/vdwTypes';
 
 export function dependencyMatchesIdentifier(
@@ -14,24 +15,25 @@ export function dependencyMatchesIdentifier(
 }
 
 /**
- * Return complete editable worktrees. Workspace projections only contain the
- * configured scope and therefore cannot be used as Git roots: Git would report
- * every excluded tracked file as deleted.
+ * Return native editable worktrees inside the VDW workspace. Since VDW 0.7,
+ * dependency.path is the complete Git worktree and scope only filters AI context.
  */
 export function getEditableWorktreePaths(
     config: VDWConfig,
+    workspaceRoot: string,
     identifier?: string,
 ): string[] {
     const seen = new Set<string>();
     const worktrees: string[] = [];
 
     for (const dependency of config.dependencies) {
-        if (!dependency.editable || !dependency.local) continue;
+        if (!dependency.editable) continue;
         if (!dependencyMatchesIdentifier(dependency, identifier)) continue;
 
-        if (seen.has(dependency.local)) continue;
-        seen.add(dependency.local);
-        worktrees.push(dependency.local);
+        const worktreePath = path.resolve(workspaceRoot, dependency.path);
+        if (seen.has(worktreePath)) continue;
+        seen.add(worktreePath);
+        worktrees.push(worktreePath);
     }
 
     return worktrees;

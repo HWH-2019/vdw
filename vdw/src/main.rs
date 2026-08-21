@@ -11,12 +11,12 @@ const VERSION: &str = concat!(env!("CARGO_PKG_VERSION"), "-debug");
 #[cfg(not(debug_assertions))]
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
-/// Virtual Dev Workspace - Cross-repo development middleware
+/// Virtual Dev Workspace - Declarative multi-repository worktree orchestration
 #[derive(Parser)]
 #[command(
     name = "vdw",
     version = VERSION,
-    about = "Virtual Dev Workspace - Cross-repo development middleware"
+    about = "Virtual Dev Workspace - Declarative multi-repository worktree orchestration"
 )]
 struct Cli {
     /// Enable verbose logging
@@ -35,7 +35,7 @@ enum Commands {
         #[arg(short, long)]
         template: Option<String>,
     },
-    /// Create links for the workspace
+    /// Materialize configured dependencies in the workspace
     Link {
         /// Only link the specified repository URL
         #[arg(long)]
@@ -44,16 +44,16 @@ enum Commands {
         #[arg(long)]
         watch: bool,
     },
-    /// Remove links from the workspace
+    /// Remove managed links and editable worktrees from the workspace
     Unlink {
         /// Only unlink the specified repository URL
         #[arg(long)]
         repo: Option<String>,
     },
-    /// Rebuild all links as one transaction
+    /// Refresh read-only projections and migrate legacy editable worktrees
     Relink {
-        /// Allow relinking editable worktrees with uncommitted changes
-        #[arg(long)]
+        /// Deprecated compatibility flag; native editable worktrees are always preserved
+        #[arg(long, hide = true)]
         allow_dirty: bool,
     },
     /// Inspect and resolve workspace/Store link conflicts
@@ -106,6 +106,9 @@ enum RepoCommands {
     Remove {
         /// Name of the repository to remove
         name: String,
+        /// Discard uncommitted changes in an editable worktree
+        #[arg(long)]
+        force: bool,
     },
     /// List all repositories in the workspace
     List,
@@ -199,7 +202,7 @@ fn run_command(cli: Cli) -> anyhow::Result<()> {
                 branch,
                 editable,
             } => commands::repo::add(url, path, branch, editable),
-            RepoCommands::Remove { name } => commands::repo::remove(name),
+            RepoCommands::Remove { name, force } => commands::repo::remove(name, force),
             RepoCommands::List => commands::repo::list(),
             RepoCommands::Status { name } => commands::repo::status(name),
         },

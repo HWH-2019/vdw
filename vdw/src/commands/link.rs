@@ -2,12 +2,14 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
+use chrono::Utc;
+use walkdir::WalkDir;
 
 use crate::config::{env_resolver, parser, validator};
 use crate::link::engine;
 use crate::store::editable_locks::{acquire_editable_lock, release_editable_lock};
 use crate::store::{manager as store_manager, object_pool};
-use crate::types::workspace::WorkspaceState;
+use crate::types::workspace::{LinkEntry, WorkspaceState};
 use crate::worktree::manager as worktree_manager;
 
 /// Record the VDW-managed worktree path on the dependency.
@@ -84,9 +86,21 @@ pub fn execute(repo_filter: Option<&str>, watch: bool) -> Result<()> {
     } else {
         state.links.clone()
     };
-    engine::verify_links_for_removal(&previous_links)?;
-    if let Err(error) = engine::remove_links(&previous_links) {
-        let rollback_result = engine::restore_links(&previous_links);
+    let editable_dep_ids = config
+        .dependencies
+        .iter()
+        .filter(|dep| dep.editable)
+        .map(|dep| dep.dep_id().to_string())
+        .collect::<HashSet<_>>();
+    let previous_readonly_links = previous_links
+        .iter()
+        .filter(|entry| !editable_dep_ids.contains(&entry.dependency_repo))
+        .cloned()
+        .collect::<Vec<_>>();
+
+    engine::verify_links_for_removal(&previous_readonly_links)?;
+    if let Err(error) = engine::remove_links(&previous_readonly_links) {
+        let rollback_result = engine::restore_links(&previous_readonly_links);
         return match rollback_result {
             Ok(()) => Err(error),
             Err(rollback_error) => Err(error.context(format!(
@@ -108,13 +122,19 @@ pub fn execute(repo_filter: Option<&str>, watch: bool) -> Result<()> {
     let mut editable_count = 0;
     let mut readonly_count = 0;
     let mut created_links = Vec::new();
+    let mut editable_migrations = Vec::new();
+    let mut editable_locks_to_acquire = Vec::new();
 
     macro_rules! try_link_step {
         ($operation:expr) => {
             match $operation {
                 Ok(value) => value,
                 Err(error) => {
-                    let rollback_result = rollback_link_files(&created_links, &previous_links);
+                    let rollback_result = rollback_link_transaction(
+                        &created_links,
+                        &previous_readonly_links,
+                        &editable_migrations,
+                    );
                     return match rollback_result {
                         Ok(()) => Err(error.into()),
                         Err(rollback_error) => Err(anyhow::Error::from(error).context(format!(
@@ -149,8 +169,7 @@ pub fn execute(repo_filter: Option<&str>, watch: bool) -> Result<()> {
         let bare_git_path = repo_dir.join("bare.git");
         let target_dir = cwd.join(&dep.path);
 
-        // b. Determine source directory
-        let source_dir = if dep.editable {
+        if dep.editable {
             let branch = dep
                 .branch
                 .as_deref()
@@ -158,87 +177,30 @@ pub fn execute(repo_filter: Option<&str>, watch: bool) -> Result<()> {
                 .or(dep.commit.as_deref())
                 .unwrap_or("main")
                 .to_string();
-
-            // Check if dep.local is already a VDW-managed worktree path (inside the store).
-            // Only reuse it if it's managed — original source paths must be replaced
-            // with worktrees so dep.local consistently points to a managed location.
-            let existing_worktree = if !dep.local.is_empty() {
-                let local_path = Path::new(&dep.local);
-                let is_managed = local_path.starts_with(&store_path);
-                if is_managed && local_path.exists() && local_path.join(".git").exists() {
-                    Some(local_path.to_path_buf())
-                } else {
-                    None
-                }
-            } else {
-                None
-            };
-
-            // If dep.local is empty, also scan the store for existing worktrees
-            // at the conventional path {repo_dir}/worktrees/{branch}/.
-            // This handles re-link after unlink (where dep.local was cleared).
-            let existing_worktree = if existing_worktree.is_none() {
-                let conventional_wt = repo_dir.join("worktrees").join(&branch);
-                if conventional_wt.exists() && conventional_wt.join(".git").exists() {
-                    println!(
-                        "  Found existing worktree in store: {}",
-                        conventional_wt.display()
-                    );
-                    Some(conventional_wt)
-                } else {
-                    None
-                }
-            } else {
-                existing_worktree
-            };
-
-            if let Some(wt_path) = existing_worktree {
-                println!("  Using existing worktree: {}", wt_path.display());
-                record_managed_worktree(dep, &wt_path);
-                if let Err(e) = acquire_editable_lock(&dep_id, &branch, &cwd, &wt_path) {
-                    tracing::warn!(
-                        "Failed to acquire editable lock for {} branch '{}': {}",
-                        dep_id,
-                        branch,
-                        e
-                    );
-                }
-                editable_count += 1;
-                wt_path
-            } else {
-                // Create worktree for editable deps
-                let worktree_base = repo_dir.join("worktrees");
-                let wt_path = try_link_step!(worktree_manager::create_worktree(
-                    &bare_git_path,
-                    &branch,
-                    &worktree_base,
-                ));
-
-                record_managed_worktree(dep, &wt_path);
-                if let Err(e) = acquire_editable_lock(&dep_id, &branch, &cwd, &wt_path) {
-                    tracing::warn!(
-                        "Failed to acquire editable lock for {} branch '{}': {}",
-                        dep_id,
-                        branch,
-                        e
-                    );
-                }
-
-                editable_count += 1;
-                wt_path
-            }
+            let dep_links = previous_links
+                .iter()
+                .filter(|entry| entry.dependency_repo == dep_id)
+                .cloned()
+                .collect::<Vec<_>>();
+            let migration = try_link_step!(prepare_editable_worktree(
+                &cwd,
+                &store_path,
+                &bare_git_path,
+                dep,
+                &branch,
+                &target_dir,
+                &dep_links,
+            ));
+            editable_migrations.push(migration);
+            record_managed_worktree(dep, &target_dir);
+            editable_locks_to_acquire.push((dep_id.clone(), branch, target_dir.clone()));
+            editable_count += 1;
+            println!("  Editable worktree: {}", target_dir.display());
         } else {
-            // For read-only deps, checkout from bare repo to a checkout dir inside the store
             let checkout_dir = repo_dir.join("checkout");
             try_link_step!(checkout_from_bare(&bare_git_path, &checkout_dir, dep));
-            readonly_count += 1;
-            checkout_dir
-        };
-
-        // c. Create links from source to workspace
-        if source_dir.exists() {
             let entries = try_link_step!(engine::create_dependency_links(
-                &source_dir,
+                &checkout_dir,
                 &target_dir,
                 &dep.scope,
                 &dep_id,
@@ -247,14 +209,17 @@ pub fn execute(repo_filter: Option<&str>, watch: bool) -> Result<()> {
             linked_count += entries.len();
             created_links.extend(entries.iter().cloned());
             state.links.extend(entries);
-        } else {
-            println!("  ⚠️  Source not available (network fetch may have failed)");
+            readonly_count += 1;
         }
     }
 
     // 4. Save updated config with local paths filled in
     if let Err(error) = parser::save_config(&cwd, &config) {
-        let rollback_result = rollback_link_files(&created_links, &previous_links);
+        let rollback_result = rollback_link_transaction(
+            &created_links,
+            &previous_readonly_links,
+            &editable_migrations,
+        );
         let _ = parser::save_config(&cwd, &original_config);
         return match rollback_result {
             Ok(()) => Err(error),
@@ -267,7 +232,11 @@ pub fn execute(repo_filter: Option<&str>, watch: bool) -> Result<()> {
 
     // 5. Save workspace state
     if let Err(error) = state.save() {
-        let rollback_result = rollback_link_files(&created_links, &previous_links);
+        let rollback_result = rollback_link_transaction(
+            &created_links,
+            &previous_readonly_links,
+            &editable_migrations,
+        );
         let _ = parser::save_config(&cwd, &original_config);
         let _ = original_state.save();
         return match rollback_result {
@@ -277,6 +246,22 @@ pub fn execute(repo_filter: Option<&str>, watch: bool) -> Result<()> {
                 rollback_error
             ))),
         };
+    }
+
+    for migration in &editable_migrations {
+        if let Err(error) = migration.finalize() {
+            tracing::warn!("Failed to trim migration backup: {}", error);
+        }
+    }
+    for (dep_id, branch, target_dir) in editable_locks_to_acquire {
+        if let Err(error) = acquire_editable_lock(&dep_id, &branch, &cwd, &target_dir) {
+            tracing::warn!(
+                "Failed to acquire editable lock for {} branch '{}': {}",
+                dep_id,
+                branch,
+                error
+            );
+        }
     }
 
     // 6. Print summary
@@ -306,14 +291,405 @@ pub fn execute(repo_filter: Option<&str>, watch: bool) -> Result<()> {
     Ok(())
 }
 
-fn rollback_link_files(
-    created_links: &[crate::types::workspace::LinkEntry],
-    previous_links: &[crate::types::workspace::LinkEntry],
-) -> Result<()> {
-    engine::verify_links_for_removal(created_links)?;
-    engine::remove_links(created_links)?;
-    engine::restore_links(previous_links)?;
+#[derive(Debug)]
+enum EditableMigration {
+    Existing,
+    Created {
+        bare_repo: PathBuf,
+        target: PathBuf,
+    },
+    Moved {
+        bare_repo: PathBuf,
+        legacy: PathBuf,
+        target: PathBuf,
+        staging: Option<PathBuf>,
+        overlay_paths: Vec<PathBuf>,
+    },
+}
+
+impl EditableMigration {
+    fn rollback(&self) -> Result<()> {
+        match self {
+            Self::Existing => Ok(()),
+            Self::Created { bare_repo, target } => {
+                worktree_manager::remove_worktree_at(bare_repo, target, true)
+            }
+            Self::Moved {
+                bare_repo,
+                legacy,
+                target,
+                staging,
+                overlay_paths,
+            } => {
+                for relative in overlay_paths.iter().rev() {
+                    remove_path_if_exists(&target.join(relative))?;
+                }
+                worktree_manager::move_worktree(bare_repo, target, legacy)?;
+                if let Some(staging) = staging {
+                    if let Some(parent) = target.parent() {
+                        std::fs::create_dir_all(parent)?;
+                    }
+                    std::fs::rename(staging, target).with_context(|| {
+                        format!(
+                            "Failed to restore legacy projection from {}",
+                            staging.display()
+                        )
+                    })?;
+                }
+                Ok(())
+            }
+        }
+    }
+
+    fn finalize(&self) -> Result<()> {
+        let Self::Moved {
+            staging: Some(staging),
+            overlay_paths,
+            ..
+        } = self
+        else {
+            return Ok(());
+        };
+
+        let preserved = overlay_paths.iter().cloned().collect::<HashSet<_>>();
+        let mut entries = WalkDir::new(staging)
+            .min_depth(1)
+            .into_iter()
+            .filter_map(|entry| entry.ok())
+            .collect::<Vec<_>>();
+        entries.sort_by_key(|entry| std::cmp::Reverse(entry.depth()));
+        for entry in entries {
+            let relative = entry.path().strip_prefix(staging)?;
+            if entry.file_type().is_dir() {
+                if std::fs::read_dir(entry.path())?.next().is_none() {
+                    std::fs::remove_dir(entry.path())?;
+                }
+            } else if !preserved.contains(relative) {
+                std::fs::remove_file(entry.path())?;
+            }
+        }
+
+        if staging.exists() && std::fs::read_dir(staging)?.next().is_none() {
+            std::fs::remove_dir(staging)?;
+        } else if staging.exists() {
+            println!(
+                "  Preserved workspace-only migration backup: {}",
+                staging.display()
+            );
+        }
+        Ok(())
+    }
+}
+
+fn prepare_editable_worktree(
+    workspace_root: &Path,
+    store_path: &Path,
+    bare_repo: &Path,
+    dep: &crate::types::config::Dependency,
+    branch: &str,
+    target: &Path,
+    legacy_links: &[LinkEntry],
+) -> Result<EditableMigration> {
+    if target.join(".git").exists() {
+        ensure_worktree_uses_store(target, bare_repo)?;
+        return Ok(EditableMigration::Existing);
+    }
+
+    let repo_dir = bare_repo
+        .parent()
+        .context("Store bare repository has no parent directory")?;
+    let legacy = find_legacy_worktree(
+        store_path,
+        repo_dir,
+        bare_repo,
+        dep,
+        branch,
+        target,
+        legacy_links,
+    )?;
+    let Some(legacy) = legacy else {
+        worktree_manager::create_worktree_at(bare_repo, branch, target)?;
+        return Ok(EditableMigration::Created {
+            bare_repo: bare_repo.to_path_buf(),
+            target: target.to_path_buf(),
+        });
+    };
+
+    ensure_projection_conflicts_resolved(dep.dep_id(), legacy_links)?;
+    let overlay_paths = validate_workspace_overlay(target, &legacy, legacy_links)?;
+    let staging = if target.exists() {
+        let staging = workspace_root
+            .join(".vdw")
+            .join("migration-backups")
+            .join(format!(
+                "{}-{}",
+                Utc::now().format("%Y%m%dT%H%M%S%.fZ"),
+                std::process::id()
+            ))
+            .join("workspace")
+            .join(&dep.path);
+        if let Some(parent) = staging.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::rename(target, &staging).with_context(|| {
+            format!(
+                "Failed to stage legacy workspace projection {}",
+                target.display()
+            )
+        })?;
+        Some(staging)
+    } else {
+        None
+    };
+
+    if let Err(error) = worktree_manager::move_worktree(bare_repo, &legacy, target) {
+        if let Some(staging) = &staging {
+            let _ = std::fs::rename(staging, target);
+        }
+        return Err(error.context("Failed to migrate the editable worktree into the workspace"));
+    }
+
+    let migration = EditableMigration::Moved {
+        bare_repo: bare_repo.to_path_buf(),
+        legacy,
+        target: target.to_path_buf(),
+        staging,
+        overlay_paths,
+    };
+    if let Err(error) = copy_workspace_overlay(&migration) {
+        let rollback_error = migration.rollback().err();
+        return match rollback_error {
+            Some(rollback_error) => Err(error.context(format!(
+                "Editable migration failed and rollback was incomplete: {}",
+                rollback_error
+            ))),
+            None => {
+                Err(error.context("Editable migration failed; the old projection was restored"))
+            }
+        };
+    }
+
+    Ok(migration)
+}
+
+fn ensure_worktree_uses_store(worktree: &Path, bare_repo: &Path) -> Result<()> {
+    let repo = git2::Repository::open(worktree)
+        .with_context(|| format!("Invalid editable Git worktree: {}", worktree.display()))?;
+    let actual = std::fs::canonicalize(repo.path())
+        .with_context(|| format!("Cannot resolve Git directory for {}", worktree.display()))?;
+    let expected = std::fs::canonicalize(bare_repo)
+        .with_context(|| format!("Cannot resolve Store repository {}", bare_repo.display()))?;
+    if actual != expected && !actual.starts_with(expected.join("worktrees")) {
+        bail!(
+            "Refusing to adopt editable directory {}: its Git directory is {}, expected a worktree of {}",
+            worktree.display(),
+            actual.display(),
+            expected.display()
+        );
+    }
     Ok(())
+}
+
+fn find_legacy_worktree(
+    store_path: &Path,
+    repo_dir: &Path,
+    bare_repo: &Path,
+    dep: &crate::types::config::Dependency,
+    branch: &str,
+    target: &Path,
+    legacy_links: &[LinkEntry],
+) -> Result<Option<PathBuf>> {
+    if !dep.local.is_empty() {
+        let local = PathBuf::from(&dep.local);
+        if local.starts_with(store_path) && local != target && local.join(".git").exists() {
+            return Ok(Some(local));
+        }
+    }
+
+    for entry in legacy_links {
+        let discover_from = entry.source.parent().unwrap_or(&entry.source);
+        if let Ok(repo) = git2::Repository::discover(discover_from) {
+            if let Some(workdir) = repo.workdir() {
+                if workdir != target && workdir.starts_with(store_path) {
+                    return Ok(Some(workdir.to_path_buf()));
+                }
+            }
+        }
+    }
+
+    let expected_name = branch.replace('/', "-");
+    if bare_repo.exists() {
+        for worktree in worktree_manager::list_worktrees(bare_repo)? {
+            if worktree.path != target
+                && (worktree.branch == branch || worktree.branch == expected_name)
+            {
+                return Ok(Some(worktree.path));
+            }
+        }
+    }
+
+    for candidate in [
+        repo_dir.join("worktrees").join(&expected_name),
+        repo_dir.join("worktrees").join(branch),
+    ] {
+        if candidate != target && candidate.join(".git").exists() {
+            return Ok(Some(candidate));
+        }
+    }
+    Ok(None)
+}
+
+fn ensure_projection_conflicts_resolved(dep_id: &str, entries: &[LinkEntry]) -> Result<()> {
+    let audit = engine::audit_links(entries);
+    if audit.conflicts.is_empty() {
+        return Ok(());
+    }
+    let preview = audit
+        .conflicts
+        .iter()
+        .take(10)
+        .map(|conflict| {
+            format!(
+                "{}: {}",
+                conflict.target.display(),
+                conflict.reason.description()
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n  - ");
+    bail!(
+        "Cannot migrate editable dependency '{}' while {} legacy projection conflict(s) remain:\n  - {}\n\
+         Run `vdw conflicts list --repo {}` to inspect the Store and workspace files, then use \
+         `vdw conflicts resolve --repo {} --accept store|workspace` (optionally with --path).",
+        dep_id,
+        audit.conflicts.len(),
+        preview,
+        dep_id,
+        dep_id
+    )
+}
+
+fn validate_workspace_overlay(
+    target: &Path,
+    legacy_worktree: &Path,
+    legacy_links: &[LinkEntry],
+) -> Result<Vec<PathBuf>> {
+    if !target.exists() {
+        return Ok(Vec::new());
+    }
+    if !target.is_dir() {
+        bail!(
+            "Editable workspace target is not a directory: {}",
+            target.display()
+        );
+    }
+
+    let tracked = legacy_links
+        .iter()
+        .filter_map(|entry| entry.target.strip_prefix(target).ok())
+        .map(Path::to_path_buf)
+        .collect::<HashSet<_>>();
+    let mut overlay = Vec::new();
+    for entry in WalkDir::new(target)
+        .min_depth(1)
+        .into_iter()
+        .filter_map(|entry| entry.ok())
+    {
+        if entry.file_type().is_dir() {
+            continue;
+        }
+        let relative = entry.path().strip_prefix(target)?.to_path_buf();
+        if tracked.contains(&relative) {
+            continue;
+        }
+        let store_file = legacy_worktree.join(&relative);
+        if !store_file.exists() {
+            if !entry.file_type().is_file() {
+                bail!(
+                    "Cannot migrate unsupported workspace-only file type: {}",
+                    entry.path().display()
+                );
+            }
+            overlay.push(relative);
+            continue;
+        }
+        if entry.file_type().is_file()
+            && engine::regular_files_are_equivalent(&store_file, entry.path()).unwrap_or(false)
+        {
+            continue;
+        }
+        bail!(
+            "Workspace-only path conflicts with the full editable worktree: {}. Move or reconcile this file before retrying `vdw link`.",
+            entry.path().display()
+        );
+    }
+    Ok(overlay)
+}
+
+fn copy_workspace_overlay(migration: &EditableMigration) -> Result<()> {
+    let EditableMigration::Moved {
+        target,
+        staging: Some(staging),
+        overlay_paths,
+        ..
+    } = migration
+    else {
+        return Ok(());
+    };
+    for relative in overlay_paths {
+        let source = staging.join(relative);
+        let destination = target.join(relative);
+        if let Some(parent) = destination.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::copy(&source, &destination).with_context(|| {
+            format!(
+                "Failed to preserve workspace-only file {}",
+                source.display()
+            )
+        })?;
+    }
+    Ok(())
+}
+
+fn remove_path_if_exists(path: &Path) -> Result<()> {
+    let metadata = match std::fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error.into()),
+    };
+    if metadata.file_type().is_dir() {
+        std::fs::remove_dir_all(path)?;
+    } else {
+        std::fs::remove_file(path)?;
+    }
+    Ok(())
+}
+
+fn rollback_link_transaction(
+    created_links: &[LinkEntry],
+    previous_links: &[LinkEntry],
+    migrations: &[EditableMigration],
+) -> Result<()> {
+    let mut errors = Vec::new();
+    if let Err(error) = engine::verify_links_for_removal(created_links)
+        .and_then(|_| engine::remove_links(created_links))
+    {
+        errors.push(format!("new read-only links: {}", error));
+    }
+    for migration in migrations.iter().rev() {
+        if let Err(error) = migration.rollback() {
+            errors.push(format!("editable migration: {}", error));
+        }
+    }
+    if let Err(error) = engine::restore_links(previous_links) {
+        errors.push(format!("previous read-only links: {}", error));
+    }
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        bail!(errors.join("; "))
+    }
 }
 
 /// Checkout files from a bare repo to a directory
@@ -476,21 +852,30 @@ fn make_dir_readonly_recursive(dir: &Path) -> Result<()> {
 }
 
 pub fn unlink(repo_filter: Option<&str>) -> Result<()> {
+    unlink_internal(repo_filter, false)
+}
+
+pub(crate) fn unlink_force(repo_filter: Option<&str>) -> Result<()> {
     unlink_internal(repo_filter, true)
 }
 
-fn unlink_internal(repo_filter: Option<&str>, clear_managed_local: bool) -> Result<()> {
+fn unlink_internal(repo_filter: Option<&str>, force_editable: bool) -> Result<()> {
     let cwd = std::env::current_dir()?;
-
-    // Load workspace state
     let state = WorkspaceState::load(&cwd)?;
-
-    if state.links.is_empty() {
-        println!("No links to remove.");
-        return Ok(());
+    let mut config = parser::load_config(&cwd)?;
+    env_resolver::resolve_env_vars(&mut config)?;
+    if let Err(errors) = validator::validate_config(&config) {
+        bail!(
+            "Refusing to unlink an invalid workspace configuration: {}",
+            errors
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join("; ")
+        );
     }
+    let store_path = store_manager::get_store_path()?;
 
-    // Filter links by repo if specified
     let links_to_remove: Vec<_> = if let Some(repo) = repo_filter {
         state
             .links
@@ -502,8 +887,43 @@ fn unlink_internal(repo_filter: Option<&str>, clear_managed_local: bool) -> Resu
         state.links.clone()
     };
 
-    if links_to_remove.is_empty() {
-        println!("No links found for the specified repository.");
+    let mut worktrees_to_remove = Vec::new();
+    for dep in config
+        .dependencies
+        .iter()
+        .filter(|dep| dep.editable && repo_filter.map(|repo| dep.dep_id() == repo).unwrap_or(true))
+    {
+        let Some(worktree) = managed_worktree_for_unlink(&cwd, &store_path, dep, &state)? else {
+            continue;
+        };
+        let bare_repo = bare_repo_for_managed_worktree(&worktree, &store_path)?;
+        if !force_editable {
+            let status = crate::worktree::check_dirty(&worktree).with_context(|| {
+                format!("Failed to inspect editable worktree {}", worktree.display())
+            })?;
+            if status.is_dirty() {
+                bail!(
+                    "Refusing to unlink editable worktree with uncommitted changes: {} \
+                     ({} modified, {} added, {} deleted, {} untracked). \
+                     Commit or stash the changes first.",
+                    worktree.display(),
+                    status.modified,
+                    status.added,
+                    status.deleted,
+                    status.untracked
+                );
+            }
+        }
+        worktrees_to_remove.push((
+            dep.dep_id().to_string(),
+            dep.branch.as_deref().unwrap_or("main").to_string(),
+            worktree,
+            bare_repo,
+        ));
+    }
+
+    if links_to_remove.is_empty() && worktrees_to_remove.is_empty() {
+        println!("No managed links or editable worktrees to remove.");
         return Ok(());
     }
 
@@ -511,8 +931,9 @@ fn unlink_internal(repo_filter: Option<&str>, clear_managed_local: bool) -> Resu
     // hardlink into an independent file that must be preserved.
     engine::verify_links_for_removal(&links_to_remove)?;
 
-    // Remove links
-    println!("Removing {} link(s)...", links_to_remove.len());
+    if !links_to_remove.is_empty() {
+        println!("Removing {} link(s)...", links_to_remove.len());
+    }
     if let Err(error) = engine::remove_links(&links_to_remove) {
         let rollback_result = engine::restore_links(&links_to_remove);
         return match rollback_result {
@@ -531,7 +952,6 @@ fn unlink_internal(repo_filter: Option<&str>, clear_managed_local: bool) -> Resu
         }
     }
 
-    // Update state: remove only the entries for the unlinked repo(s)
     let mut new_state = state.clone();
     if let Some(repo) = repo_filter {
         // Remove only the matching repo's links
@@ -552,29 +972,6 @@ fn unlink_internal(repo_filter: Option<&str>, clear_managed_local: bool) -> Resu
         };
     }
 
-    if !clear_managed_local {
-        println!("✅ {} link(s) removed.", links_to_remove.len());
-        return Ok(());
-    }
-
-    // Clear dep.local in .vdwrc for unlinked dependencies.
-    // dep.local holds the VDW-managed worktree path (set by `link`), so it must be cleared.
-    // But for OLD-format local-only deps (no origin, no remote), dep.local is the original
-    // source path and serves as identity — must NOT be cleared.
-    let mut config = match parser::load_config(&cwd) {
-        Ok(config) => config,
-        Err(error) => {
-            let rollback_result = engine::restore_links(&links_to_remove);
-            let _ = state.save();
-            return match rollback_result {
-                Ok(()) => Err(error),
-                Err(rollback_error) => Err(error.context(format!(
-                    "Additionally failed to restore removed links: {}",
-                    rollback_error
-                ))),
-            };
-        }
-    };
     let dep_ids_to_clear: Vec<String> = if let Some(repo) = repo_filter {
         vec![repo.to_string()]
     } else {
@@ -586,7 +983,6 @@ fn unlink_internal(repo_filter: Option<&str>, clear_managed_local: bool) -> Resu
             .map(|d| d.dep_id().to_string())
             .collect()
     };
-    let mut locks_to_release = Vec::new();
     for dep in &mut config.dependencies {
         // Old-format local-only deps: dep.local IS the identity, don't clear
         if dep.remote.is_empty() && dep.origin.is_empty() {
@@ -594,8 +990,6 @@ fn unlink_internal(repo_filter: Option<&str>, clear_managed_local: bool) -> Resu
         }
         let dep_id = dep.dep_id().to_string();
         if dep_ids_to_clear.contains(&dep_id) && dep.editable {
-            let branch = dep.branch.as_deref().unwrap_or("main");
-            locks_to_release.push((dep_id, branch.to_string()));
             dep.local = String::new();
         }
     }
@@ -611,8 +1005,17 @@ fn unlink_internal(repo_filter: Option<&str>, clear_managed_local: bool) -> Resu
         };
     }
 
-    for (dep_id, branch) in locks_to_release {
-        if let Err(e) = release_editable_lock(&dep_id, &branch, &cwd) {
+    for (dep_id, branch, worktree, bare_repo) in &worktrees_to_remove {
+        if let Err(error) =
+            worktree_manager::remove_worktree_at(bare_repo, worktree, force_editable)
+        {
+            bail!(
+                "Workspace metadata was unlinked, but editable worktree {} could not be removed: {}",
+                worktree.display(),
+                error
+            );
+        }
+        if let Err(e) = release_editable_lock(dep_id, branch, &cwd) {
             tracing::warn!(
                 "Failed to release editable lock for {} branch '{}': {}",
                 dep_id,
@@ -622,124 +1025,34 @@ fn unlink_internal(repo_filter: Option<&str>, clear_managed_local: bool) -> Resu
         }
     }
 
-    println!("✅ {} link(s) removed.", links_to_remove.len());
+    println!(
+        "✅ {} link(s) and {} editable worktree(s) removed.",
+        links_to_remove.len(),
+        worktrees_to_remove.len()
+    );
     Ok(())
 }
 
-/// Rebuild every workspace link as one CLI transaction.
-///
-/// Unlike the old extension-side `unlink` + `link` sequence, this keeps
-/// `.vdwrc` stable until the replacement links are ready and restores the
-/// previous state if either phase fails.
-pub fn relink(allow_dirty: bool) -> Result<()> {
-    let cwd = std::env::current_dir()?;
-    let original_config = parser::load_config(&cwd)?;
-    let original_state = WorkspaceState::load(&cwd)?;
-
-    engine::verify_links_for_removal(&original_state.links)?;
-    ensure_editable_worktrees_clean(&original_config, &original_state, allow_dirty)?;
-
-    println!("Relinking workspace as a single transaction...");
-    let relink_result = (|| -> Result<()> {
-        unlink_internal(None, false)?;
-        execute(None, false)
-    })();
-
-    if let Err(error) = relink_result {
-        let rollback_result = restore_relink_snapshot(&cwd, &original_config, &original_state);
-        return match rollback_result {
-            Ok(()) => Err(error.context("Relink failed; the previous workspace was restored")),
-            Err(rollback_error) => Err(error.context(format!(
-                "Relink failed and rollback was incomplete: {}",
-                rollback_error
-            ))),
-        };
-    }
-
-    println!("✅ Workspace relink transaction completed.");
+/// Refresh read-only projections and migrate legacy editable projections.
+/// Native editable worktrees stay in place, including dirty and untracked files.
+pub fn relink(_allow_dirty: bool) -> Result<()> {
+    println!("Relinking workspace without replacing native editable worktrees...");
+    execute(None, false)?;
+    println!("✅ Workspace relink completed.");
     Ok(())
 }
 
-fn restore_relink_snapshot(
-    cwd: &Path,
-    config: &crate::types::config::VDWConfig,
-    state: &WorkspaceState,
-) -> Result<()> {
-    let mut rollback_errors = Vec::new();
-
-    if let Err(error) = engine::restore_links(&state.links) {
-        rollback_errors.push(format!("links: {}", error));
-    }
-    if let Err(error) = state.save() {
-        rollback_errors.push(format!("state.json: {}", error));
-    }
-    if let Err(error) = parser::save_config(cwd, config) {
-        rollback_errors.push(format!(".vdwrc: {}", error));
-    }
-
-    if !rollback_errors.is_empty() {
-        bail!(rollback_errors.join("; "));
-    }
-    Ok(())
-}
-
-fn ensure_editable_worktrees_clean(
-    config: &crate::types::config::VDWConfig,
-    state: &WorkspaceState,
-    allow_dirty: bool,
-) -> Result<()> {
-    if allow_dirty {
-        return Ok(());
-    }
-
-    let mut checked = HashSet::new();
-    let mut dirty_worktrees = Vec::new();
-
-    for dep in config.dependencies.iter().filter(|dep| dep.editable) {
-        let worktree = find_managed_worktree(dep, state)?;
-        let Some(worktree) = worktree else {
-            continue;
-        };
-        let normalized = std::fs::canonicalize(&worktree).unwrap_or(worktree.clone());
-        if !checked.insert(normalized) {
-            continue;
-        }
-
-        let status = crate::worktree::check_dirty(&worktree).with_context(|| {
-            format!(
-                "Failed to inspect editable worktree for '{}': {}",
-                dep.dep_id(),
-                worktree.display()
-            )
-        })?;
-        if status.is_dirty() {
-            dirty_worktrees.push(format!(
-                "{} ({} changes: {} modified, {} added, {} deleted, {} untracked)",
-                worktree.display(),
-                status.total(),
-                status.modified,
-                status.added,
-                status.deleted,
-                status.untracked
-            ));
-        }
-    }
-
-    if !dirty_worktrees.is_empty() {
-        bail!(
-            "Refusing to relink editable worktrees with uncommitted changes:\n  - {}\n\
-             Commit or stash the changes first. Use --allow-dirty only when preserving them is intentional.",
-            dirty_worktrees.join("\n  - ")
-        );
-    }
-
-    Ok(())
-}
-
-fn find_managed_worktree(
+fn managed_worktree_for_unlink(
+    workspace_root: &Path,
+    store_path: &Path,
     dep: &crate::types::config::Dependency,
     state: &WorkspaceState,
 ) -> Result<Option<PathBuf>> {
+    let target = workspace_root.join(&dep.path);
+    if target.join(".git").exists() {
+        return Ok(Some(target));
+    }
+
     let matching_links: Vec<_> = state
         .links
         .iter()
@@ -750,14 +1063,16 @@ fn find_managed_worktree(
         let discover_from = entry.source.parent().unwrap_or(&entry.source);
         if let Ok(repo) = git2::Repository::discover(discover_from) {
             if let Some(workdir) = repo.workdir() {
-                return Ok(Some(workdir.to_path_buf()));
+                if workdir.starts_with(store_path) {
+                    return Ok(Some(workdir.to_path_buf()));
+                }
             }
         }
     }
 
     if !dep.local.is_empty() {
         let local = PathBuf::from(&dep.local);
-        if local.join(".git").exists() {
+        if local.starts_with(store_path) && local.join(".git").exists() {
             return Ok(Some(local));
         }
     }
@@ -772,10 +1087,41 @@ fn find_managed_worktree(
     Ok(None)
 }
 
+fn bare_repo_for_managed_worktree(worktree: &Path, store_path: &Path) -> Result<PathBuf> {
+    let repo = git2::Repository::open(worktree)
+        .with_context(|| format!("Invalid managed worktree {}", worktree.display()))?;
+    let git_dir = std::fs::canonicalize(repo.path())?;
+    let canonical_store = std::fs::canonicalize(store_path)?;
+    if !git_dir.starts_with(&canonical_store) {
+        bail!(
+            "Refusing to remove non-VDW Git worktree: {}",
+            worktree.display()
+        );
+    }
+    let worktrees_dir = git_dir.parent().context("Missing worktrees directory")?;
+    if worktrees_dir.file_name().and_then(|name| name.to_str()) != Some("worktrees") {
+        bail!(
+            "Cannot resolve Store repository for worktree {}",
+            worktree.display()
+        );
+    }
+    let bare_repo = worktrees_dir
+        .parent()
+        .context("Missing bare repository directory")?
+        .to_path_buf();
+    git2::Repository::open_bare(&bare_repo).with_context(|| {
+        format!(
+            "Resolved Store path is not a bare repository: {}",
+            bare_repo.display()
+        )
+    })?;
+    Ok(bare_repo)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::config::{Dependency, Scope, VDWConfig, WorkspaceMeta};
+    use crate::types::config::{Dependency, Scope};
     use std::fs;
 
     fn editable_dependency(remote: &str, local: &str, origin: &str) -> Dependency {
@@ -839,32 +1185,67 @@ mod tests {
     }
 
     #[test]
-    fn test_relink_preflight_rejects_dirty_editable_worktree() {
-        let repo_dir = create_clean_git_repo();
-        let dep = editable_dependency(
-            "https://github.com/example/repo.git",
-            &repo_dir.path().to_string_lossy(),
-            "",
-        );
-        let config = VDWConfig {
-            workspace: WorkspaceMeta {
-                name: "test".to_string(),
-                version: "1.0".to_string(),
-            },
-            dependencies: vec![dep],
+    fn test_legacy_editable_projection_migrates_to_native_worktree() {
+        let source_repo = create_clean_git_repo();
+        let workspace = tempfile::tempdir().expect("workspace");
+        let store = tempfile::tempdir().expect("store");
+        let repo_dir = store.path().join("objects/repo");
+        let bare_repo = repo_dir.join("bare.git");
+        fs::create_dir_all(&repo_dir).expect("repo dir");
+        git2::build::RepoBuilder::new()
+            .bare(true)
+            .clone(source_repo.path().to_str().unwrap(), &bare_repo)
+            .expect("bare clone");
+        let bare = git2::Repository::open_bare(&bare_repo).expect("bare");
+        let branch = crate::worktree::git_ops::list_branches(&bare)
+            .expect("branches")
+            .into_iter()
+            .find(|branch| branch == "main" || branch == "master")
+            .expect("default branch");
+        let legacy = repo_dir.join("worktrees").join(&branch);
+        worktree_manager::create_worktree_at(&bare_repo, &branch, &legacy)
+            .expect("legacy worktree");
+
+        let target = workspace.path().join("packages/repo");
+        let scope = Scope {
+            include: vec!["**/*".to_string()],
+            exclude: vec![],
         };
-        let state = WorkspaceState::new(repo_dir.path().join("workspace"));
+        let links = engine::create_dependency_links(&legacy, &target, &scope, "repo")
+            .expect("legacy projection");
+        fs::write(legacy.join("tracked.txt"), "dirty but preserved").expect("dirty edit");
+        fs::write(legacy.join("store-only.txt"), "store only").expect("store untracked");
+        fs::write(target.join("workspace-only.txt"), "workspace only")
+            .expect("workspace untracked");
+        let dep = editable_dependency("repo", &legacy.to_string_lossy(), "");
 
-        ensure_editable_worktrees_clean(&config, &state, false)
-            .expect("Clean worktree should pass preflight");
+        let migration = prepare_editable_worktree(
+            workspace.path(),
+            store.path(),
+            &bare_repo,
+            &dep,
+            &branch,
+            &target,
+            &links,
+        )
+        .expect("migration");
 
-        fs::write(repo_dir.path().join("untracked.txt"), "dirty")
-            .expect("Failed to create dirty file");
-        let error = ensure_editable_worktrees_clean(&config, &state, false)
-            .expect_err("Dirty worktree should block relink");
-        assert!(error.to_string().contains("uncommitted changes"));
-        ensure_editable_worktrees_clean(&config, &state, true)
-            .expect("--allow-dirty should bypass the preflight");
+        assert!(!legacy.exists());
+        assert!(target.join(".git").exists());
+        assert_eq!(
+            fs::read_to_string(target.join("tracked.txt")).unwrap(),
+            "dirty but preserved"
+        );
+        assert_eq!(
+            fs::read_to_string(target.join("store-only.txt")).unwrap(),
+            "store only"
+        );
+        assert_eq!(
+            fs::read_to_string(target.join("workspace-only.txt")).unwrap(),
+            "workspace only"
+        );
+        ensure_worktree_uses_store(&target, &bare_repo).expect("store ownership");
+        migration.finalize().expect("finalize migration");
     }
 
     /// Test that unlink correctly removes links created by the link engine

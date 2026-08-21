@@ -86,6 +86,7 @@ pub enum LinkConflictReason {
     ContentDiffers,
     MetadataDiffers,
     SourceMissing,
+    TargetMissing,
     TargetUnreadable,
     TargetTypeChanged,
     LinkTargetChanged,
@@ -97,6 +98,7 @@ impl LinkConflictReason {
             Self::ContentDiffers => "workspace content differs from Store",
             Self::MetadataDiffers => "workspace file metadata differs from Store",
             Self::SourceMissing => "Store source is missing or unreadable",
+            Self::TargetMissing => "workspace target is missing",
             Self::TargetUnreadable => "workspace target is unreadable",
             Self::TargetTypeChanged => "workspace target type changed",
             Self::LinkTargetChanged => "workspace link points to a different source",
@@ -194,6 +196,10 @@ fn hardlink_files_are_equivalent(source: &Path, target: &Path) -> Result<bool> {
     Ok(files_have_same_contents(source, target)? && files_have_same_permissions(source, target)?)
 }
 
+pub(crate) fn regular_files_are_equivalent(source: &Path, target: &Path) -> Result<bool> {
+    hardlink_files_are_equivalent(source, target)
+}
+
 fn canonical_link_target(target: &Path) -> Result<PathBuf> {
     let raw_target = std::fs::read_link(target)?;
     let resolved = if raw_target.is_absolute() {
@@ -209,6 +215,13 @@ fn canonical_link_target(target: &Path) -> Result<PathBuf> {
 
 fn inspect_link_for_removal(entry: &LinkEntry) -> LinkRemovalState {
     if !target_exists(&entry.target) {
+        if entry.link_type == LinkType::HardLink
+            && std::fs::symlink_metadata(&entry.source)
+                .map(|metadata| metadata.file_type().is_file())
+                .unwrap_or(false)
+        {
+            return conflict(entry, LinkConflictReason::TargetMissing, true);
+        }
         return LinkRemovalState::Missing;
     }
 
@@ -216,7 +229,12 @@ fn inspect_link_for_removal(entry: &LinkEntry) -> LinkRemovalState {
         LinkType::HardLink => {
             let source_metadata = match std::fs::symlink_metadata(&entry.source) {
                 Ok(metadata) if metadata.file_type().is_file() => metadata,
-                _ => return conflict(entry, LinkConflictReason::SourceMissing, false),
+                _ => {
+                    let resolvable = std::fs::symlink_metadata(&entry.target)
+                        .map(|metadata| metadata.file_type().is_file())
+                        .unwrap_or(false);
+                    return conflict(entry, LinkConflictReason::SourceMissing, resolvable);
+                }
             };
             let target_metadata = match std::fs::symlink_metadata(&entry.target) {
                 Ok(metadata) if metadata.file_type().is_file() => metadata,
@@ -328,11 +346,15 @@ fn matching_existing_link_type(
 /// editors that implement atomic save by replacing a hardlink with a new inode.
 pub fn verify_links_for_removal(entries: &[LinkEntry]) -> Result<()> {
     let audit = audit_links(entries);
+    let blocking_conflicts = audit
+        .conflicts
+        .iter()
+        .filter(|conflict| conflict.reason != LinkConflictReason::TargetMissing)
+        .collect::<Vec<_>>();
 
-    if !audit.conflicts.is_empty() {
+    if !blocking_conflicts.is_empty() {
         const MAX_CONFLICTS_TO_PRINT: usize = 20;
-        let preview = audit
-            .conflicts
+        let preview = blocking_conflicts
             .iter()
             .take(MAX_CONFLICTS_TO_PRINT)
             .map(|conflict| {
@@ -344,7 +366,9 @@ pub fn verify_links_for_removal(entries: &[LinkEntry]) -> Result<()> {
             })
             .collect::<Vec<_>>()
             .join("\n  - ");
-        let omitted = audit.conflicts.len().saturating_sub(MAX_CONFLICTS_TO_PRINT);
+        let omitted = blocking_conflicts
+            .len()
+            .saturating_sub(MAX_CONFLICTS_TO_PRINT);
         let omitted_message = if omitted > 0 {
             format!("\n  ... and {} more conflict(s)", omitted)
         } else {
@@ -353,7 +377,7 @@ pub fn verify_links_for_removal(entries: &[LinkEntry]) -> Result<()> {
         bail!(
             "Refusing to remove {} target(s) with workspace changes:\n  - {}{}\n\
              Run `vdw conflicts list` to inspect them, then resolve by accepting Store or workspace.",
-            audit.conflicts.len(),
+            blocking_conflicts.len(),
             preview,
             omitted_message
         );
@@ -952,8 +976,10 @@ mod tests {
     #[test]
     fn test_verify_allows_already_missing_target() {
         let dir = tempfile::tempdir().expect("Failed to create temp dir");
+        let source = dir.path().join("source.txt");
+        std::fs::write(&source, "store file").expect("source");
         let entry = LinkEntry {
-            source: dir.path().join("source.txt"),
+            source,
             target: dir.path().join("missing.txt"),
             link_type: LinkType::HardLink,
             dependency_repo: "repo".to_string(),
@@ -962,6 +988,48 @@ mod tests {
         };
 
         verify_links_for_removal(&[entry]).expect("Missing target needs no deletion");
+    }
+
+    #[test]
+    fn test_audit_exposes_missing_workspace_target_as_resolvable_conflict() {
+        let dir = tempfile::tempdir().expect("Failed to create temp dir");
+        let source = dir.path().join("source.txt");
+        std::fs::write(&source, "store file").expect("source");
+        let entry = LinkEntry {
+            source,
+            target: dir.path().join("missing.txt"),
+            link_type: LinkType::HardLink,
+            dependency_repo: "repo".to_string(),
+            source_inode: None,
+            source_volume: None,
+        };
+
+        let audit = audit_links(&[entry]);
+
+        assert_eq!(audit.conflicts.len(), 1);
+        assert_eq!(audit.conflicts[0].reason, LinkConflictReason::TargetMissing);
+        assert!(audit.conflicts[0].resolvable);
+    }
+
+    #[test]
+    fn test_audit_exposes_missing_store_source_as_resolvable_conflict() {
+        let dir = tempfile::tempdir().expect("Failed to create temp dir");
+        let target = dir.path().join("target.txt");
+        std::fs::write(&target, "workspace file").expect("target");
+        let entry = LinkEntry {
+            source: dir.path().join("missing.txt"),
+            target,
+            link_type: LinkType::HardLink,
+            dependency_repo: "repo".to_string(),
+            source_inode: None,
+            source_volume: None,
+        };
+
+        let audit = audit_links(&[entry]);
+
+        assert_eq!(audit.conflicts.len(), 1);
+        assert_eq!(audit.conflicts[0].reason, LinkConflictReason::SourceMissing);
+        assert!(audit.conflicts[0].resolvable);
     }
 
     #[test]

@@ -1,7 +1,7 @@
 # 🏗️ VDW — Virtual Dev Workspace
 
-> **Cross-repo development middleware for the AI era**  
-> Seamlessly stitch multiple repositories into one development workspace, then serve the context to your AI coding assistant.
+> **Declarative multi-repository worktree orchestration for the AI era**
+> Materialize the repositories a task needs in one workspace, then serve scoped context to your AI coding assistant.
 
 [![Rust](https://img.shields.io/badge/Rust-🦀-orange?style=flat-square)](https://www.rust-lang.org)
 [![VS Code](https://img.shields.io/badge/VS%20Code-Extension-blue?style=flat-square)](https://code.visualstudio.com)
@@ -14,7 +14,7 @@
 Modern development doesn't live in a single repo. VDW solves this by giving you:
 
 1. 🗄️ A **content-addressable store** on your machine that deduplicates repos
-2. 🔗 **Smart linking** — expose only the files you want via hardlinks / symlinks
+2. 🔗 **Declarative multi-repo orchestration** — editable repos are native workspace worktrees; read-only deps use scoped links
 3. 🤖 **AI context filtering** — generate a clean file list for LLM-based coding assistants
 4. 📝 **Editable dependencies** — repos added with `--editable` use git worktrees so you can modify code with full git support
 
@@ -76,7 +76,7 @@ Download the archive for your platform from [GitHub Releases](https://github.com
 On macOS or Linux:
 
 ```bash
-VERSION=0.6.2            # replace with the release you downloaded
+VERSION=0.7.0            # replace with the release you downloaded
 OS=darwin                # darwin or linux
 ARCH=arm64               # arm64 or x86_64
 ASSET="vdw_${OS}_${ARCH}_${VERSION}"
@@ -125,7 +125,7 @@ See the [CLI installation guide](vdw/README.md#install-the-cli) for upgrades, un
 3. If the `code` command is available, VS Code can also install it from a terminal:
 
 ```bash
-VERSION=0.6.2  # replace with the downloaded VSIX version
+VERSION=0.7.0  # replace with the downloaded VSIX version
 code --install-extension "./vdw_vscode_${VERSION}.vsix" --force
 ```
 
@@ -187,7 +187,25 @@ vdw repo add /path/to/local/repo --path packages/shared --branch feature/dev --e
 vdw link
 ```
 
-VDW walks each dependency's source directory, applies scope filters, and creates hardlinks (or symlinks) at the configured path.
+For an editable dependency, VDW creates a complete native Git worktree directly at its configured workspace path. For a read-only dependency, VDW applies the scope and creates hardlinks (or symlinks). `scope` filters AI context in both modes but never removes files from an editable worktree.
+
+### Upgrading an existing workspace to 0.7
+
+The first `vdw link` or `vdw relink` moves each legacy editable Store worktree into `dependency.path` with `git worktree move`. This preserves the branch, index, dirty changes, and untracked Store files. Workspace-only files are copied into the native worktree and retained under `.vdw/migration-backups/`.
+
+Legacy hardlinks can represent edits to an existing file, but not an independently created, deleted, or renamed file. VDW therefore stops when the old Store and workspace topology differs instead of choosing a side:
+
+```bash
+vdw conflicts list
+vdw conflicts resolve --accept store       # batch: Store wins
+vdw conflicts resolve --accept workspace   # batch: workspace wins
+# add --path packages/repo/path/to/file to resolve one file
+vdw relink
+```
+
+For a missing path, accepting Store restores/deletes the workspace path to match Store; accepting workspace applies the workspace creation/deletion back to the legacy Store worktree. Both sides are backed up under `.vdw/conflict-backups/` before resolution.
+
+After migration, editable dependencies no longer create per-file entries in `.vdw/state.json`; only read-only projections are tracked there. VS Code sees `packages/<repo>` as an ordinary nested Git repository, so relink does not close or replace its Source Control repository.
 
 ---
 
@@ -229,12 +247,12 @@ dependencies:
 | Field | Required | Description |
 |-------|----------|-------------|
 | `remote` | ✅ | Git URL (`https://`, `git@`, or empty for local repos) |
-| `local` | ✅ (if no remote) | Local repository path on disk |
-| `path` | ✅ | Where to link in your workspace |
+| `local` | ✅ (if no remote) | Local source before first link; VDW records the native worktree path after link |
+| `path` | ✅ | Workspace-relative native worktree root (editable) or projection root (read-only); absolute paths and `..` are rejected |
 | `branch` / `tag` / `commit` | ✅ (pick one) | Which version to track |
-| `scope.include` | ✅ | Glob patterns for files to expose |
-| `scope.exclude` | ❌ | Glob patterns to filter out |
-| `editable` | ❌ | Enable git worktree (default: `false`) |
+| `scope.include` | ✅ | Glob patterns for AI context; also selects read-only projection files |
+| `scope.exclude` | ❌ | Context/read-only projection exclusions |
+| `editable` | ❌ | Create a complete native worktree at `path` (default: `false`) |
 
 ---
 
@@ -244,8 +262,8 @@ dependencies:
                     ┌─────────────────────────────────────┐
                     │         Your Workspace               │
                     │                                     │
-                    │   packages/ui-lib/ (hardlinks)      │
-                    │   services/api/    (worktree)        │
+                    │   packages/ui-lib/ (read-only links) │
+                    │   services/api/    (Git worktree)    │
                     │   packages/protos/ (symlinks)        │
                     └───────────┬─────────────────────────┘
                                 │ link / unlink
@@ -259,7 +277,7 @@ dependencies:
                     └─────────────────────────────────────┘
 ```
 
-**Link strategies (auto-selected):**
+**Read-only link strategies (auto-selected):**
 
 | Condition | Strategy | Fallback |
 |-----------|----------|----------|
@@ -277,8 +295,8 @@ The VS Code extension provides a visual GUI over the CLI:
 - 📂 **Dependency Tree View** — see all repos at a glance
 - ➕ **Add Repo Wizard** — interactive dialog with branch selection (fuzzy search)
 - 🔗 **One-Click Link / Unlink** — inline actions on tree items
-- 🔄 **Relink All** — unlink + re-link with updated config
-- 📝 **Auto-Open Git Repos** — editable repos auto-register in Source Control
+- 🔄 **Relink All** — refresh read-only projections and migrate legacy editable repos without replacing native worktrees
+- 📝 **Native Git Repos** — editable repos are discovered normally by Source Control; the extension performs a best-effort refresh
 - ⚡ **Config Watcher** — auto-refresh when `.vdwrc` changes
 
 See [vdw-vscode/README.md](vdw-vscode/README.md) for full documentation.
@@ -299,9 +317,9 @@ The skill follows a scenario-chain model — it asks for confirmation, then pick
 
 | OS | Architectures | Link Strategy | Status |
 |----|--------------|---------------|--------|
-| 🍎 macOS | arm64 (M4), x86_64 | HardLink → Symlink | ✅ |
-| 🐧 Linux | x86_64, aarch64 | HardLink → Symlink | ⏳ |
-| 🪟 Windows | x86_64 (Git Bash / WSL) | Junction → Symlink | ⏳ |
+| 🍎 macOS | arm64 (M4), x86_64 | Native worktree / HardLink → Symlink | ✅ |
+| 🐧 Linux | x86_64, aarch64 | Native worktree / HardLink → Symlink | ⏳ |
+| 🪟 Windows | x86_64 (Git Bash / WSL) | Native worktree / Junction → Symlink | ⏳ |
 
 ---
 

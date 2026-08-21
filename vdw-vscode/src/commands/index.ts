@@ -134,13 +134,12 @@ export function registerCommands(
         })
     );
 
-    // vdw.relink - CLI-managed atomic relink
+    // vdw.relink - refresh without replacing native editable worktrees
     context.subscriptions.push(
         vscode.commands.registerCommand('vdw.relink', async () => {
-            let autoOpenSuspended = false;
             try {
                 const proceed = await vscode.window.showWarningMessage(
-                    'This will unlink all dependencies and re-link them based on the current configuration. Continue?',
+                    'This will refresh read-only dependencies and migrate legacy editable projections. Native editable worktrees and local changes stay in place. Continue?',
                     { modal: true },
                     'Yes, Relink',
                     'Cancel'
@@ -155,13 +154,8 @@ export function registerCommands(
                     return;
                 }
 
-                if (autoOpenService) {
-                    autoOpenService.suspendAutoOpen();
-                    autoOpenSuspended = true;
-                }
-                await autoOpenService?.closeEditableRepositories();
                 statusBar.showBusy('Relinking...');
-                log('Running transactional vdw relink...');
+                log('Refreshing VDW workspace...');
 
                 const relinkResult = await cliService.relink();
                 if (relinkResult.exitCode === 0) {
@@ -181,11 +175,8 @@ export function registerCommands(
                 vscode.window.showErrorMessage(`VDW relink error: ${err}`);
                 statusBar.showError('Error');
             } finally {
-                if (autoOpenSuspended) {
-                    autoOpenService?.resumeAutoOpen();
-                    configService.reload();
-                    await autoOpenService?.openAllEditableRepositories();
-                }
+                configService.reload();
+                await autoOpenService?.openAllEditableRepositories();
             }
         })
     );
@@ -400,7 +391,7 @@ export function registerCommands(
             };
 
             // Helper: let the CLI own unlink, state, lock, store, and config updates.
-            const fullRemoval = async (): Promise<boolean> => {
+            const fullRemoval = async (force = false): Promise<boolean> => {
                 if (!await ensureLinkConflictsResolved(cliService, repoIdentifier)) {
                     return false;
                 }
@@ -413,7 +404,7 @@ export function registerCommands(
                     }
                     await autoOpenService?.closeEditableRepositories(repoIdentifier);
                     log(`Removing repository through CLI: ${repoIdentifier}`);
-                    const result = await cliService.removeRepo(repoIdentifier);
+                    const result = await cliService.removeRepo(repoIdentifier, force);
                     if (result.exitCode !== 0) {
                         throw new Error(result.stderr || result.stdout || 'VDW CLI remove failed');
                     }
@@ -476,7 +467,7 @@ export function registerCommands(
                     if (choice === 'Discard & Remove') {
                         statusBar.showBusy(`Removing ${repoName}...`);
                         log(`Discard & Remove: full removal for ${repoName}`);
-                        if (!await fullRemoval()) return;
+                        if (!await fullRemoval(true)) return;
                     } else if (choice === 'Keep Files') {
                         // Keep worktree files: remove from .vdwrc only, skip unlink
                         log(`Keep Files: removing from config only for ${repoName}`);

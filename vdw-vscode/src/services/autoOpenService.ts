@@ -9,18 +9,19 @@ import { getEditableWorktreePaths } from '../utils/gitRepositories';
  * AutoOpenService - 在 add、link、relink 操作后以及扩展激活时，
  * 自动在 VS Code Source Control 面板中注册可编辑依赖的 Git 仓库。
  * 
- * Source Control 必须注册 dep.local 指向的完整 Store worktree。工作区内的
- * packages/<repo> 只是 scope 裁剪后的投影，注册它会把未投影的已提交文件
- * 误报为删除。Qoder 拒绝公开 API 打开工作区外仓库时使用内置强制命令兜底。
+ * VDW 0.7 的 editable 依赖本身就是工作区内的完整 Git worktree。
+ * 通常由 Git 扩展原生发现；本服务只在其初始化完成后做一次补充注册和刷新。
  */
 export class AutoOpenService implements vscode.Disposable {
     private configService: ConfigService;
+    private workspacePath: string;
     private _disposables: vscode.Disposable[] = [];
     private gitOperationQueue: Promise<void> = Promise.resolve();
     private autoOpenSuspensionCount = 0;
 
-    constructor(configService: ConfigService) {
+    constructor(configService: ConfigService, workspacePath: string) {
         this.configService = configService;
+        this.workspacePath = workspacePath;
     }
 
     /**
@@ -90,13 +91,13 @@ export class AutoOpenService implements vscode.Disposable {
             const config = this.configService.getConfig();
             if (!config) return;
 
-            const worktreePaths = getEditableWorktreePaths(config, repoIdentifier);
+            const worktreePaths = getEditableWorktreePaths(config, this.workspacePath, repoIdentifier);
 
             await this.syncManagedRepositories(worktreePaths);
         });
     }
 
-    /** Close managed worktrees before unlink/relink changes their lifecycle. */
+    /** Close native managed worktrees before unlink/remove deletes them. */
     async closeEditableRepositories(repoIdentifier?: string): Promise<void> {
         if (!this.isAutoOpenEnabled()) return;
 
@@ -104,7 +105,7 @@ export class AutoOpenService implements vscode.Disposable {
             const config = this.configService.getConfig();
             if (!config) return;
 
-            const worktreePaths = getEditableWorktreePaths(config, repoIdentifier);
+            const worktreePaths = getEditableWorktreePaths(config, this.workspacePath, repoIdentifier);
             await this.closeManagedRepositories(worktreePaths);
         });
     }
@@ -216,14 +217,7 @@ export class AutoOpenService implements vscode.Disposable {
 
             let current = this.findExactRepository(gitAPI, normalizedPath);
             if (!current && !settled) {
-                const commands = await vscode.commands.getCommands(true);
-                if (commands.includes('git.forceOpenRepository')) {
-                    // Qoder's public API deliberately rejects repositories outside
-                    // the current workspace. This built-in command bypasses only
-                    // that location check and still performs normal Git validation.
-                    log(`AutoOpen: Force-opening external managed worktree: ${worktreePath}`);
-                    await vscode.commands.executeCommand('git.forceOpenRepository', worktreePath);
-                } else if (typeof gitAPI.openRepository === 'function') {
+                if (typeof gitAPI.openRepository === 'function') {
                     const opened = await gitAPI.openRepository(vscode.Uri.file(worktreePath));
                     if (this.isExactRepository(opened, normalizedPath)) {
                         finish(opened);

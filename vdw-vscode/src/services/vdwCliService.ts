@@ -208,8 +208,8 @@ export class VDWCliService {
     }
 
     /** Run vdw repo remove for a specific repository */
-    async removeRepo(repoUrl: string): Promise<CommandResult> {
-        return this.executeCommand('repo', ['remove', repoUrl]);
+    async removeRepo(repoUrl: string, force = false): Promise<CommandResult> {
+        return this.executeCommand('repo', ['remove', repoUrl, ...(force ? ['--force'] : [])]);
     }
 
     /** Run vdw repo status for a specific repository */

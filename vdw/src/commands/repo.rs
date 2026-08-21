@@ -155,13 +155,15 @@ fn update_config(
         }
     }
 
+    let dependency_path = path.unwrap_or_else(|| format!("./packages/{}", repo_name));
+
     // Create new dependency
     let dependency = Dependency {
         remote: remote.to_string(),
         origin: String::new(),
         local: local.to_string(),
         repo: String::new(),
-        path: path.unwrap_or_else(|| format!("./packages/{}", repo_name)),
+        path: dependency_path.clone(),
         branch,
         tag: None,
         commit: None,
@@ -186,12 +188,7 @@ fn update_config(
 
     // Acquire editable lock after successful config write
     if editable {
-        let store_path = get_store_path().unwrap_or_else(|_| PathBuf::from(""));
-        let repo_hash = object_pool::compute_repo_hash(&repo_id);
-        let worktree_path = store_path.join(format!(
-            "objects/{}-{}/worktrees/{}",
-            repo_name, repo_hash, &branch_name
-        ));
+        let worktree_path = workspace_dir.join(&dependency_path);
         if let Err(e) =
             acquire_editable_lock(&repo_id, &branch_name, &workspace_dir, &worktree_path)
         {
@@ -250,9 +247,11 @@ fn resolve_repo_id(name: &str) -> Option<String> {
 }
 
 /// Remove a repository from the workspace
-pub fn remove(name: String) -> Result<()> {
+pub fn remove(name: String, force: bool) -> Result<()> {
     // Step 1: Resolve name to the dep_id used in state.links
     let repo_id = resolve_repo_id(&name);
+
+    let mut force_remove = force;
 
     // Check for uncommitted changes in editable repos before removal
     if let Ok(workspace_dir) = find_workspace_root() {
@@ -260,7 +259,10 @@ pub fn remove(name: String) -> Result<()> {
             for dep in &config.dependencies {
                 if dependency_matches(dep, &name) && dep.editable {
                     // Determine worktree path
-                    let worktree_path = if !dep.local.is_empty() {
+                    let workspace_target = workspace_dir.join(&dep.path);
+                    let worktree_path = if workspace_target.join(".git").exists() {
+                        workspace_target
+                    } else if !dep.local.is_empty() {
                         let p = std::path::Path::new(&dep.local);
                         if p.is_absolute() {
                             p.to_path_buf()
@@ -273,7 +275,7 @@ pub fn remove(name: String) -> Result<()> {
 
                     if worktree_path.exists() {
                         match crate::worktree::check_dirty(&worktree_path) {
-                            Ok(status) if status.is_dirty() => {
+                            Ok(status) if status.is_dirty() && !force_remove => {
                                 let branch_info = dep.branch.as_deref().unwrap_or("unknown");
                                 if atty::is(atty::Stream::Stdin) {
                                     // Interactive terminal: show prompt
@@ -298,7 +300,7 @@ pub fn remove(name: String) -> Result<()> {
                                         .interact()?;
 
                                     match selection {
-                                        0 => { /* Discard: continue with normal removal */ }
+                                        0 => force_remove = true,
                                         1 => {
                                             // Keep files: only remove from config
                                             remove_from_config(&name)?;
@@ -311,10 +313,11 @@ pub fn remove(name: String) -> Result<()> {
                                         }
                                     }
                                 } else {
-                                    // Non-interactive: print warning and continue
-                                    eprintln!(
-                                        "\x1b[33mWarning:\x1b[0m Repository \"{}\" (branch: {}) has {} uncommitted change(s). Proceeding with removal.",
-                                        name, branch_info, status.total()
+                                    anyhow::bail!(
+                                        "Repository '{}' (branch: {}) has {} uncommitted change(s). Re-run with --force only if discarding them is intentional.",
+                                        name,
+                                        branch_info,
+                                        status.total()
                                     );
                                 }
                             }
@@ -332,12 +335,12 @@ pub fn remove(name: String) -> Result<()> {
 
     // Step 2: Unlink first (remove linked files + update state.json)
     if let Some(ref id) = repo_id {
-        link::unlink(Some(id.as_str())).with_context(|| {
-            format!(
-                "Failed to unlink repository '{}'; configuration and store were not changed",
-                name
-            )
-        })?;
+        let result = if force_remove {
+            link::unlink_force(Some(id.as_str()))
+        } else {
+            link::unlink(Some(id.as_str()))
+        };
+        result.with_context(|| format!("Failed to unlink repository '{}'", name))?;
     }
 
     // Step 3: Remove from .vdwrc configuration

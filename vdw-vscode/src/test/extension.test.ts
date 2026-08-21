@@ -175,9 +175,14 @@ dependencies: []
         it('should present content differences as file comparison conflicts', () => {
             assert.strictEqual(formatConflictReason('content_differs'), '文件内容不同');
         });
+
+        it('should present missing workspace files as topology conflicts', () => {
+            assert.strictEqual(formatConflictReason('target_missing'), '工作区文件缺失');
+        });
     });
 
-    describe('Source Control managed worktree paths', () => {
+    describe('Source Control native workspace paths', () => {
+        const workspaceRoot = '/Users/test/.vdw/workspaces/example';
         const config: VDWConfig = {
             workspace: { name: 'vdw-workspace', version: '1.0' },
             dependencies: [
@@ -202,10 +207,10 @@ dependencies: []
             ],
         };
 
-        it('should keep the complete Store worktree even when it is under .vdw', () => {
+        it('should use the dependency workspace path instead of the legacy Store path', () => {
             assert.deepStrictEqual(
-                getEditableWorktreePaths(config),
-                ['/Users/test/.vdw/store/objects/repo/worktrees/main'],
+                getEditableWorktreePaths(config, workspaceRoot),
+                ['/Users/test/.vdw/workspaces/example/packages/repo'],
             );
         });
 
@@ -213,9 +218,10 @@ dependencies: []
             assert.deepStrictEqual(
                 getEditableWorktreePaths(
                     config,
+                    workspaceRoot,
                     'git@example.com:org/repo.git',
                 ),
-                ['/Users/test/.vdw/store/objects/repo/worktrees/main'],
+                ['/Users/test/.vdw/workspaces/example/packages/repo'],
             );
             assert.strictEqual(
                 dependencyMatchesIdentifier(config.dependencies[0], './packages/repo'),
@@ -223,14 +229,14 @@ dependencies: []
             );
         });
 
-        it('should not register unlinked editable dependencies', () => {
+        it('should derive the target before the worktree is linked', () => {
             const unlinked = {
                 ...config,
                 dependencies: [{ ...config.dependencies[0], local: '' }],
             };
             assert.deepStrictEqual(
-                getEditableWorktreePaths(unlinked),
-                [],
+                getEditableWorktreePaths(unlinked, workspaceRoot),
+                ['/Users/test/.vdw/workspaces/example/packages/repo'],
             );
         });
     });
