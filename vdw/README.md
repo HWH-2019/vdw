@@ -45,53 +45,111 @@ Think of it as **`npm link` but for any language**, combined with **AI-aware fil
 
 ---
 
-## 🚀 Quick Start
+## Install the CLI
 
-### Prerequisites
+### Requirements
 
-- **[Rust toolchain](https://rustup.rs)** (`cargo` + `rustc`)
-- **[Git](https://git-scm.com)**
-- **macOS**, **Linux**, or **Windows** (Git Bash / WSL)
+- **Git** is required at runtime for repository fetch and worktree operations.
+- Release archives do not require Rust.
+- Source installation requires the **[Rust toolchain](https://rustup.rs)** (`cargo` and `rustc`).
+- Supported environments are macOS, Linux, and Windows x86_64. On Windows, use PowerShell, Git Bash, or WSL as appropriate for your Git installation.
 
-### Install
+### Option A — Install a pre-built release
+
+Download the matching archive from [GitHub Releases](https://github.com/HWH-2019/vdw/releases):
+
+| Platform | Archive name | Binary inside |
+|----------|--------------|---------------|
+| macOS Apple Silicon | `vdw_darwin_arm64_<version>.tar.gz` | `vdw_darwin_arm64_<version>` |
+| macOS Intel | `vdw_darwin_x86_64_<version>.tar.gz` | `vdw_darwin_x86_64_<version>` |
+| Linux x86_64 | `vdw_linux_x86_64_<version>.tar.gz` | `vdw_linux_x86_64_<version>` |
+| Linux ARM64 | `vdw_linux_arm64_<version>.tar.gz` | `vdw_linux_arm64_<version>` |
+| Windows x86_64 | `vdw_win32_x86_64_<version>.tar.gz` | `vdw_win32_x86_64_<version>.exe` |
+
+macOS/Linux example:
 
 ```bash
-# 🏆 One-command install (recommended)
-cd vdw && make install
-
-# Or using the install script directly
-./install.sh
-
-# Or if you already have Rust and just want the binary:
-make install-quick
+VERSION=0.6.2            # replace with the release you downloaded
+OS=darwin                # darwin or linux
+ARCH=arm64               # arm64 or x86_64
+ASSET="vdw_${OS}_${ARCH}_${VERSION}"
+tar -xzf "${ASSET}.tar.gz"
+mkdir -p "$HOME/.local/bin"
+mv "$ASSET" "$HOME/.local/bin/vdw"
+chmod +x "$HOME/.local/bin/vdw"
 ```
 
-> `make install` handles everything: builds the release binary, copies it to `~/.local/bin`, clears macOS EDR quarantine, and updates the local copy for the VS Code plugin.
+Make sure `~/.local/bin` is on `PATH`:
 
-After install:
 ```bash
-# Verify it works
+echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc  # use ~/.bashrc for Bash
+source ~/.zshrc
+vdw --version
+```
+
+On Windows, extract the archive, rename the executable to `vdw.exe`, move it to a directory on `PATH`, and run `vdw --version`.
+
+### Option B — Install from source
+
+From the repository root:
+
+```bash
+cd vdw
+make install
+```
+
+Or clone and install in one flow:
+
+```bash
+git clone https://github.com/HWH-2019/vdw.git vdw-src
+cd vdw-src/vdw
+./install.sh
+```
+
+`install.sh` is the recommended source installer on macOS, Linux, and WSL. For native Windows builds, use `cargo install --path . --locked` from PowerShell or install the pre-built Windows archive.
+
+The installer:
+
+- checks Git and Rust;
+- builds `target/release/vdw`;
+- installs to `~/.local/bin/vdw` by default;
+- clears known macOS EDR/quarantine attributes; and
+- verifies the installed binary.
+
+Useful alternatives:
+
+```bash
+make install-quick                 # build and copy, with fewer checks
+./install.sh --dir /opt/vdw/bin    # custom install directory
+cargo install --path . --locked    # install to Cargo's bin directory
+```
+
+`install.sh` currently builds from local source; its pre-built download fallback is intentionally not configured. Use the GitHub release archives above when Rust is unavailable.
+
+### Verify
+
+```bash
+which vdw        # Windows: where.exe vdw
 vdw --version
 vdw --help
 ```
 
-<details>
-<summary><b>📦 Installing without Rust (via pre-built binary)</b></summary>
+If the command is missing but `~/.local/bin/vdw` exists, fix `PATH` or configure the VS Code extension with the absolute binary path.
 
-Once the project is published to GitHub and CI releases are configured, you'll be able to:
+### Upgrade or uninstall
+
+To upgrade, install the newer archive over the existing binary or pull the source repository and run `make install` again.
 
 ```bash
-# Direct download (example — configure DOWNLOAD_BASE first)
-curl -sfL https://github.com/YOUR_ORG/vdw/releases/latest/download/vdw-x86_64-unknown-linux-gnu -o /usr/local/bin/vdw
-chmod +x /usr/local/bin/vdw
+make uninstall                       # when using the default source install
+rm "$HOME/.local/bin/vdw"            # equivalent default-path removal
 ```
 
-See [`.github/workflows/release.yml`](.github/workflows/release.yml) for the CI pipeline that builds binaries for all platforms.
-</details>
+Removing the binary does not delete `~/.vdw/store` or any VDW workspace.
 
 ---
 
-## 🎮 Usage
+## 🚀 Quick Start
 
 ### 🏁 Start a workspace
 
@@ -342,7 +400,7 @@ VDW ships with a VS Code extension for visual management:
 - 📋 **Browse** all dependency files in a custom tree view
 - 🩺 **Status bar** shows workspace health
 
-The extension auto-detects the `vdw` binary — first in the repo directory (`./vdw/vdw`), then from system PATH.
+The extension invokes `vdw` from its Extension Host environment by default. If a GUI IDE does not inherit your shell `PATH`, set `vdw.cliPath` to the absolute binary path (for example, `~/.local/bin/vdw`) in VS Code/Qoder Settings JSON.
 
 ---
 

@@ -53,31 +53,125 @@ agent-vdm/
 
 ---
 
+## 📦 Installation
+
+The CLI is required. The VS Code extension is optional, but recommended for repository management and Source Control integration.
+
+Install the CLI and VSIX from the same release version whenever possible; newer extension commands may not exist in an older CLI.
+
+### 1. Install the VDW CLI
+
+#### Option A — Download a release (no Rust required)
+
+Download the archive for your platform from [GitHub Releases](https://github.com/HWH-2019/vdw/releases):
+
+| Platform | Release asset |
+|----------|---------------|
+| macOS Apple Silicon | `vdw_darwin_arm64_<version>.tar.gz` |
+| macOS Intel | `vdw_darwin_x86_64_<version>.tar.gz` |
+| Linux x86_64 | `vdw_linux_x86_64_<version>.tar.gz` |
+| Linux ARM64 | `vdw_linux_arm64_<version>.tar.gz` |
+| Windows x86_64 | `vdw_win32_x86_64_<version>.tar.gz` |
+
+On macOS or Linux:
+
+```bash
+VERSION=0.6.2            # replace with the release you downloaded
+OS=darwin                # darwin or linux
+ARCH=arm64               # arm64 or x86_64
+ASSET="vdw_${OS}_${ARCH}_${VERSION}"
+tar -xzf "${ASSET}.tar.gz"
+mkdir -p "$HOME/.local/bin"
+mv "$ASSET" "$HOME/.local/bin/vdw"
+chmod +x "$HOME/.local/bin/vdw"
+```
+
+Add the install directory to your shell if necessary:
+
+```bash
+echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc  # use ~/.bashrc for Bash
+source ~/.zshrc
+vdw --version
+```
+
+On Windows, extract the archive, rename the executable to `vdw.exe`, move it to a directory on `PATH`, and verify with `vdw --version` in PowerShell or Git Bash.
+
+#### Option B — Build and install from source
+
+Requires Git and the [Rust toolchain](https://rustup.rs).
+
+```bash
+git clone https://github.com/HWH-2019/vdw.git vdw-src
+cd vdw-src/vdw
+make install
+```
+
+The installer builds a release binary, installs it to `~/.local/bin/vdw`, handles known macOS quarantine attributes, and verifies the result. Developers who already have all prerequisites can use `make install-quick` instead. For a custom directory:
+
+```bash
+./install.sh --dir /your/install/directory
+```
+
+Use the script on macOS, Linux, or WSL. For a native Windows source build, run `cargo install --path . --locked` inside `vdw-src/vdw`, or use the pre-built Windows archive.
+
+See the [CLI installation guide](vdw/README.md#install-the-cli) for upgrades, uninstalling, and troubleshooting.
+
+### 2. Install the VS Code / Qoder extension
+
+#### Option A — Install the release VSIX
+
+1. Download `vdw_vscode_<version>.vsix` from [GitHub Releases](https://github.com/HWH-2019/vdw/releases).
+2. In VS Code or Qoder, open **Extensions**, choose **Install from VSIX...**, and select the downloaded file.
+3. If the `code` command is available, VS Code can also install it from a terminal:
+
+```bash
+VERSION=0.6.2  # replace with the downloaded VSIX version
+code --install-extension "./vdw_vscode_${VERSION}.vsix" --force
+```
+
+#### Option B — Package the extension from source
+
+Requires Node.js 20+ and npm.
+
+```bash
+cd vdw-src/vdw-vscode
+npm ci
+npm run package
+```
+
+`npm run package` runs icon generation and TypeScript compilation, then creates `vdw-vscode-<version>.vsix` in the current directory. Install that file using **Install from VSIX...** or the `code --install-extension` command above.
+
+The extension launches `vdw` from the IDE process environment. If the IDE cannot see your shell `PATH`, set an absolute path in Settings JSON:
+
+```json
+{
+  "vdw.cliPath": "/Users/your-name/.local/bin/vdw"
+}
+```
+
+Use `C:\\Users\\your-name\\.local\\bin\\vdw.exe` on Windows.
+
+### 3. Verify the installation
+
+```bash
+vdw --version
+vdw --help
+```
+
+Then open a folder containing `.vdwrc`, run **VDW: Validate Configuration** from the Command Palette, and check **View → Output → VDW** if the extension reports an error.
+
+---
+
 ## 🚀 Quick Start
 
-### 1. Install the CLI
-
-```bash
-cd vdw && make install-quick
-```
-
-> See [vdw/README.md](vdw/README.md) for full installation options including the install script and pre-built binaries.
-
-### 2. Install the VS Code Extension
-
-```bash
-cd vdw-vscode && npm install && npm run compile && npm run package
-code --install-extension vdw-vscode-*.vsix --force
-```
-
-### 3. Initialize a Workspace
+### 1. Initialize a Workspace
 
 ```bash
 cd your-project
 vdw init
 ```
 
-### 4. Add a Repository
+### 2. Add a Repository
 
 ```bash
 # Remote repo via SSH
@@ -87,7 +181,7 @@ vdw repo add git@github.com:org/api-service.git --path services/api --branch mai
 vdw repo add /path/to/local/repo --path packages/shared --branch feature/dev --editable
 ```
 
-### 5. Link Files
+### 3. Link Files
 
 ```bash
 vdw link
@@ -221,7 +315,7 @@ cd vdw && cargo build --release
 cargo test
 
 # Build VS Code extension
-cd vdw-vscode && npm install && npm run compile
+cd vdw-vscode && npm ci && npm run compile
 
 # Package VSIX
 npm run package
