@@ -57,18 +57,29 @@ pub fn execute(check_links: bool) -> Result<()> {
     match WorkspaceState::load(&cwd) {
         Ok(state) => {
             if !state.links.is_empty() {
-                let mut broken = 0;
-                for entry in &state.links {
-                    if !entry.target.exists() {
-                        broken += 1;
-                    }
-                }
-                if broken > 0 {
+                let audit = crate::link::engine::audit_links(&state.links);
+                if audit.missing_count > 0 {
                     println!(
                         "⚠️  {} broken link(s) detected. Run 'vdw link' to repair.",
-                        broken
+                        audit.missing_count
                     );
-                } else {
+                }
+                if audit.detached_equivalent_count > 0 {
+                    println!(
+                        "⚠️  {} detached HardLink target(s) have identical content and can be rebuilt safely.",
+                        audit.detached_equivalent_count
+                    );
+                }
+                if !audit.conflicts.is_empty() {
+                    println!(
+                        "❌ {} link conflict(s) contain workspace changes. Run 'vdw conflicts list'.",
+                        audit.conflicts.len()
+                    );
+                }
+                if audit.missing_count == 0
+                    && audit.detached_equivalent_count == 0
+                    && audit.conflicts.is_empty()
+                {
                     println!("✅ All {} links are valid.", state.links.len());
                 }
             } else {

@@ -56,6 +56,11 @@ enum Commands {
         #[arg(long)]
         allow_dirty: bool,
     },
+    /// Inspect and resolve workspace/Store link conflicts
+    Conflicts {
+        #[command(subcommand)]
+        command: ConflictCommands,
+    },
     /// Manage repositories in the workspace
     Repo {
         #[command(subcommand)]
@@ -142,12 +147,51 @@ enum ContextCommands {
     Stats,
 }
 
+#[derive(Subcommand)]
+enum ConflictCommands {
+    /// List files whose workspace and Store versions differ
+    List {
+        /// Only inspect the specified repository URL
+        #[arg(long)]
+        repo: Option<String>,
+        /// Print machine-readable JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Resolve conflicts by accepting one side
+    Resolve {
+        /// Accept either the Store or workspace version
+        #[arg(long, value_enum)]
+        accept: commands::conflicts::ConflictResolutionSide,
+        /// Only resolve the specified repository URL
+        #[arg(long)]
+        repo: Option<String>,
+        /// Resolve only this workspace-relative path; repeat for multiple files
+        #[arg(long = "path")]
+        paths: Vec<std::path::PathBuf>,
+        /// Print machine-readable JSON
+        #[arg(long)]
+        json: bool,
+    },
+}
+
 fn run_command(cli: Cli) -> anyhow::Result<()> {
     match cli.command {
         Commands::Init { template } => commands::init::execute(template),
         Commands::Link { repo, watch } => commands::link::execute(repo.as_deref(), watch),
         Commands::Unlink { repo } => commands::link::unlink(repo.as_deref()),
         Commands::Relink { allow_dirty } => commands::link::relink(allow_dirty),
+        Commands::Conflicts { command } => match command {
+            ConflictCommands::List { repo, json } => {
+                commands::conflicts::list(repo.as_deref(), json)
+            }
+            ConflictCommands::Resolve {
+                accept,
+                repo,
+                paths,
+                json,
+            } => commands::conflicts::resolve(repo.as_deref(), accept, &paths, json),
+        },
         Commands::Repo { command } => match command {
             RepoCommands::Add {
                 url,

@@ -178,7 +178,8 @@
         "vdw.autoOpenDelay": {
           "type": "number",
           "default": 500,
-          "description": "Delay in milliseconds between opening each Git repository to avoid concurrent conflicts"
+          "description": "Deprecated compatibility setting; repository registration now waits for Git events",
+          "deprecationMessage": "VDW now waits for exact Git repository registration instead of using a fixed delay."
         }
       }
     }

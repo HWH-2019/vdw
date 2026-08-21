@@ -11,6 +11,7 @@ import { StatusBarManager } from '../providers/statusBar';
 import * as yaml from 'js-yaml';
 import { log, logError, show as showLog } from '../utils/logger';
 import { handleAddRepo } from './addRepo';
+import { ensureLinkConflictsResolved } from './linkConflicts';
 
 export function registerCommands(
     context: vscode.ExtensionContext,
@@ -89,24 +90,46 @@ export function registerCommands(
     // vdw.unlink
     context.subscriptions.push(
         vscode.commands.registerCommand('vdw.unlink', async () => {
+            let autoOpenSuspended = false;
+            let reopenRepositories = false;
             try {
+                if (!await ensureLinkConflictsResolved(cliService)) {
+                    statusBar.update();
+                    return;
+                }
+                if (autoOpenService) {
+                    autoOpenService.suspendAutoOpen();
+                    autoOpenSuspended = true;
+                }
+                await autoOpenService?.closeEditableRepositories();
                 statusBar.showBusy('Unlinking...');
                 const result = await cliService.unlink();
 
                 if (result.exitCode === 0) {
                     vscode.window.showInformationMessage('Dependencies unlinked successfully!');
+                    configService.reload();
                     contextService.refresh();
                     fileProvider.refresh();
                     treeProvider.refresh();
                     statusBar.update(0);
                 } else {
+                    reopenRepositories = true;
                     vscode.window.showErrorMessage(`VDW unlink failed: ${result.stderr || result.stdout}`);
                     statusBar.showError('Unlink failed');
                 }
             } catch (err) {
+                reopenRepositories = true;
                 logError('Unlink command failed', err);
                 vscode.window.showErrorMessage(`VDW unlink error: ${err}`);
                 statusBar.showError('Error');
+            } finally {
+                if (autoOpenSuspended) {
+                    autoOpenService?.resumeAutoOpen();
+                }
+                if (autoOpenSuspended && reopenRepositories) {
+                    configService.reload();
+                    await autoOpenService?.openAllEditableRepositories();
+                }
             }
         })
     );
@@ -114,6 +137,7 @@ export function registerCommands(
     // vdw.relink - CLI-managed atomic relink
     context.subscriptions.push(
         vscode.commands.registerCommand('vdw.relink', async () => {
+            let autoOpenSuspended = false;
             try {
                 const proceed = await vscode.window.showWarningMessage(
                     'This will unlink all dependencies and re-link them based on the current configuration. Continue?',
@@ -125,7 +149,17 @@ export function registerCommands(
                 if (proceed !== 'Yes, Relink') {
                     return;
                 }
-                
+
+                if (!await ensureLinkConflictsResolved(cliService)) {
+                    statusBar.update();
+                    return;
+                }
+
+                if (autoOpenService) {
+                    autoOpenService.suspendAutoOpen();
+                    autoOpenSuspended = true;
+                }
+                await autoOpenService?.closeEditableRepositories();
                 statusBar.showBusy('Relinking...');
                 log('Running transactional vdw relink...');
 
@@ -138,9 +172,6 @@ export function registerCommands(
                     treeProvider.refresh();
                     const fileCount = await contextService.getFileCount();
                     statusBar.update(fileCount);
-                    
-                    // Auto-open Git repositories for editable dependencies
-                    await autoOpenService?.openAllEditableRepositories();
                 } else {
                     vscode.window.showErrorMessage(`Relink failed: ${relinkResult.stderr || relinkResult.stdout}`);
                     statusBar.showError('Relink failed');
@@ -149,6 +180,12 @@ export function registerCommands(
                 logError('Relink command failed', err);
                 vscode.window.showErrorMessage(`VDW relink error: ${err}`);
                 statusBar.showError('Error');
+            } finally {
+                if (autoOpenSuspended) {
+                    autoOpenService?.resumeAutoOpen();
+                    configService.reload();
+                    await autoOpenService?.openAllEditableRepositories();
+                }
             }
         })
     );
@@ -221,7 +258,18 @@ export function registerCommands(
                 return;
             }
 
+            let autoOpenSuspended = false;
+            let reopenRepository = false;
             try {
+                if (!await ensureLinkConflictsResolved(cliService, repoIdentifier)) {
+                    statusBar.update();
+                    return;
+                }
+                if (autoOpenService) {
+                    autoOpenService.suspendAutoOpen();
+                    autoOpenSuspended = true;
+                }
+                await autoOpenService?.closeEditableRepositories(repoIdentifier);
                 statusBar.showBusy(`Unlinking ${repoName}...`);
                 log(`Unlinking repository: ${repoName} (${repoIdentifier})`);
 
@@ -237,13 +285,23 @@ export function registerCommands(
                     const fileCount = await contextService.getFileCount();
                     statusBar.update(fileCount);
                 } else {
+                    reopenRepository = true;
                     vscode.window.showErrorMessage(`Failed to unlink ${repoName}: ${result.stderr || result.stdout}`);
                     statusBar.showError('Unlink failed');
                 }
             } catch (err) {
+                reopenRepository = true;
                 logError(`Unlink repository ${repoName} failed`, err);
                 vscode.window.showErrorMessage(`Error unlinking ${repoName}: ${err}`);
                 statusBar.showError('Error');
+            } finally {
+                if (autoOpenSuspended) {
+                    autoOpenService?.resumeAutoOpen();
+                }
+                if (autoOpenSuspended && reopenRepository) {
+                    configService.reload();
+                    await autoOpenService?.openAllEditableRepositories(repoIdentifier);
+                }
             }
         })
     );
@@ -278,7 +336,7 @@ export function registerCommands(
                     statusBar.update(fileCount);
                     
                     // Auto-open Git repository for this editable dependency
-                    await autoOpenService?.openAllEditableRepositories();
+                    await autoOpenService?.openAllEditableRepositories(repoIdentifier);
                 } else {
                     vscode.window.showErrorMessage(`Failed to link ${repoName}: ${result.stderr || result.stdout}`);
                     statusBar.showError('Link failed');
@@ -342,11 +400,35 @@ export function registerCommands(
             };
 
             // Helper: let the CLI own unlink, state, lock, store, and config updates.
-            const fullRemoval = async (): Promise<void> => {
-                log(`Removing repository through CLI: ${repoIdentifier}`);
-                const result = await cliService.removeRepo(repoIdentifier);
-                if (result.exitCode !== 0) {
-                    throw new Error(result.stderr || result.stdout || 'VDW CLI remove failed');
+            const fullRemoval = async (): Promise<boolean> => {
+                if (!await ensureLinkConflictsResolved(cliService, repoIdentifier)) {
+                    return false;
+                }
+                let autoOpenSuspended = false;
+                let reopenRepository = false;
+                try {
+                    if (autoOpenService) {
+                        autoOpenService.suspendAutoOpen();
+                        autoOpenSuspended = true;
+                    }
+                    await autoOpenService?.closeEditableRepositories(repoIdentifier);
+                    log(`Removing repository through CLI: ${repoIdentifier}`);
+                    const result = await cliService.removeRepo(repoIdentifier);
+                    if (result.exitCode !== 0) {
+                        throw new Error(result.stderr || result.stdout || 'VDW CLI remove failed');
+                    }
+                    return true;
+                } catch (error) {
+                    reopenRepository = true;
+                    throw error;
+                } finally {
+                    if (autoOpenSuspended) {
+                        autoOpenService?.resumeAutoOpen();
+                    }
+                    if (autoOpenSuspended && reopenRepository) {
+                        configService.reload();
+                        await autoOpenService?.openAllEditableRepositories(repoIdentifier);
+                    }
                 }
             };
 
@@ -394,7 +476,7 @@ export function registerCommands(
                     if (choice === 'Discard & Remove') {
                         statusBar.showBusy(`Removing ${repoName}...`);
                         log(`Discard & Remove: full removal for ${repoName}`);
-                        await fullRemoval();
+                        if (!await fullRemoval()) return;
                     } else if (choice === 'Keep Files') {
                         // Keep worktree files: remove from .vdwrc only, skip unlink
                         log(`Keep Files: removing from config only for ${repoName}`);
@@ -427,7 +509,7 @@ export function registerCommands(
 
                     statusBar.showBusy(`Removing ${repoName}...`);
                     log(`Removing repository: ${repoName} (${repoIdentifier})`);
-                    await fullRemoval();
+                    if (!await fullRemoval()) return;
                 }
 
                 // Refresh UI

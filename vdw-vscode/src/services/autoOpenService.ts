@@ -3,18 +3,21 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { ConfigService } from './configService';
 import { log, logError } from '../utils/logger';
+import { getEditableWorktreePaths } from '../utils/gitRepositories';
 
 /**
  * AutoOpenService - 在 add、link、relink 操作后以及扩展激活时，
  * 自动在 VS Code Source Control 面板中注册可编辑依赖的 Git 仓库。
  * 
- * 直接从 .vdwrc 配置中读取 dep.local 获取 worktree 路径，然后调用
- * git.openRepository 命令触发原生 Source Control 面板显示该仓库。
+ * Source Control 必须注册 dep.local 指向的完整 Store worktree。工作区内的
+ * packages/<repo> 只是 scope 裁剪后的投影，注册它会把未投影的已提交文件
+ * 误报为删除。Qoder 拒绝公开 API 打开工作区外仓库时使用内置强制命令兜底。
  */
 export class AutoOpenService implements vscode.Disposable {
     private configService: ConfigService;
     private _disposables: vscode.Disposable[] = [];
     private gitOperationQueue: Promise<void> = Promise.resolve();
+    private autoOpenSuspensionCount = 0;
 
     constructor(configService: ConfigService) {
         this.configService = configService;
@@ -43,40 +46,78 @@ export class AutoOpenService implements vscode.Disposable {
         }
         log(`AutoOpen: Git extension state is '${gitAPI.state}', waiting for initialized...`);
         return new Promise<boolean>((resolve) => {
+            let settled = false;
+            let sub: vscode.Disposable | undefined;
             const timer = setTimeout(() => {
-                sub.dispose();
+                if (settled) return;
+                settled = true;
+                sub?.dispose();
                 log('AutoOpen: Timed out waiting for Git extension to initialize');
                 resolve(false);
             }, timeoutMs);
-            const sub = gitAPI.onDidChangeState((state: string) => {
+            const finish = () => {
+                if (settled) return;
+                settled = true;
+                clearTimeout(timer);
+                sub?.dispose();
+                log('AutoOpen: Git extension initialized');
+                resolve(true);
+            };
+            sub = gitAPI.onDidChangeState((state: string) => {
                 if (state === 'initialized') {
-                    clearTimeout(timer);
-                    sub.dispose();
-                    log('AutoOpen: Git extension initialized');
-                    resolve(true);
+                    finish();
                 }
             });
+            // Avoid losing the transition if initialization completed between
+            // the first state check and listener registration.
+            if (gitAPI.state === 'initialized') {
+                finish();
+            }
         });
     }
 
     /**
-     * Open and refresh every editable dependency's managed worktree.
-     * `origin` and the workspace projection are deliberately excluded: they are not
-     * the repository that owns the files edited through VDW hardlinks.
+     * Open and refresh every linked editable dependency's complete worktree.
      */
-    async openAllEditableRepositories(): Promise<void> {
+    async openAllEditableRepositories(repoIdentifier?: string): Promise<void> {
+        if (!this.isAutoOpenEnabled()) return;
+        if (this.autoOpenSuspensionCount > 0) {
+            log('AutoOpen: Link mutation in progress, skipping watcher-triggered repository registration');
+            return;
+        }
+
+        return this.enqueueGitOperation(async () => {
+            const config = this.configService.getConfig();
+            if (!config) return;
+
+            const worktreePaths = getEditableWorktreePaths(config, repoIdentifier);
+
+            await this.syncManagedRepositories(worktreePaths);
+        });
+    }
+
+    /** Close managed worktrees before unlink/relink changes their lifecycle. */
+    async closeEditableRepositories(repoIdentifier?: string): Promise<void> {
         if (!this.isAutoOpenEnabled()) return;
 
         return this.enqueueGitOperation(async () => {
             const config = this.configService.getConfig();
             if (!config) return;
 
-            const managedWorktreePaths = config.dependencies
-                .filter(dep => dep.editable && dep.local)
-                .map(dep => dep.local);
-
-            await this.syncManagedRepositories(managedWorktreePaths);
+            const worktreePaths = getEditableWorktreePaths(config, repoIdentifier);
+            await this.closeManagedRepositories(worktreePaths);
         });
+    }
+
+    /** Prevent config watchers from reopening repositories during link mutation. */
+    suspendAutoOpen(): void {
+        this.autoOpenSuspensionCount++;
+    }
+
+    resumeAutoOpen(): void {
+        if (this.autoOpenSuspensionCount > 0) {
+            this.autoOpenSuspensionCount--;
+        }
     }
 
     /** Serialize Git API operations triggered by commands and .vdwrc watchers. */
@@ -86,7 +127,7 @@ export class AutoOpenService implements vscode.Disposable {
         return queued;
     }
 
-    private async syncManagedRepositories(managedWorktreePaths: string[]): Promise<void> {
+    private async syncManagedRepositories(worktreePaths: string[]): Promise<void> {
         try {
             const ready = await this.waitForGitReady();
             if (!ready) {
@@ -104,7 +145,7 @@ export class AutoOpenService implements vscode.Disposable {
             let refreshed = 0;
             const seen = new Set<string>();
 
-            for (const worktreePath of managedWorktreePaths) {
+            for (const worktreePath of worktreePaths) {
                 if (!worktreePath || worktreePath.trim() === '') continue;
                 if (!this.isValidGitRepository(worktreePath)) continue;
 
@@ -112,24 +153,19 @@ export class AutoOpenService implements vscode.Disposable {
                 if (seen.has(normalizedPath)) continue;
                 seen.add(normalizedPath);
 
-                // getRepository(uri) may return a containing parent repository. Match
-                // rootUri exactly so a workspace repository can never stand in for a
-                // VDW-managed worktree.
                 let repo = this.findExactRepository(gitAPI, normalizedPath);
                 if (!repo) {
                     log(`AutoOpen: Opening managed worktree: ${worktreePath}`);
                     try {
-                        if (typeof gitAPI.openRepository === 'function') {
-                            await gitAPI.openRepository(vscode.Uri.file(worktreePath));
-                        } else {
-                            await vscode.commands.executeCommand('git.openRepository', worktreePath);
-                        }
-                        await new Promise(resolve => setTimeout(resolve, this.getOpenDelay()));
+                        repo = await this.openExactRepository(
+                            gitAPI,
+                            worktreePath,
+                            normalizedPath,
+                        );
                     } catch (err) {
                         logError(`AutoOpen: Failed to open managed worktree: ${worktreePath}`, err);
                         continue;
                     }
-                    repo = this.findExactRepository(gitAPI, normalizedPath);
                     if (!repo) {
                         log(`AutoOpen: Git extension did not register the exact worktree root: ${worktreePath}`);
                         continue;
@@ -148,10 +184,146 @@ export class AutoOpenService implements vscode.Disposable {
         }
     }
 
+    private async openExactRepository(
+        gitAPI: any,
+        worktreePath: string,
+        normalizedPath: string,
+        timeoutMs: number = 10000,
+    ): Promise<any | undefined> {
+        let sub: vscode.Disposable | undefined;
+        let timer: NodeJS.Timeout | undefined;
+        let settled = false;
+        let finish: (repo: any | undefined) => void = () => undefined;
+        const registered = new Promise<any | undefined>(resolve => {
+            finish = (repo: any | undefined) => {
+                if (settled) return;
+                settled = true;
+                if (timer) clearTimeout(timer);
+                sub?.dispose();
+                resolve(repo);
+            };
+            sub = gitAPI.onDidOpenRepository((repo: any) => {
+                if (this.isExactRepository(repo, normalizedPath)) {
+                    finish(repo);
+                }
+            });
+            timer = setTimeout(() => finish(undefined), timeoutMs);
+        });
+
+        try {
+            const existing = this.findExactRepository(gitAPI, normalizedPath);
+            if (existing) finish(existing);
+
+            let current = this.findExactRepository(gitAPI, normalizedPath);
+            if (!current && !settled) {
+                const commands = await vscode.commands.getCommands(true);
+                if (commands.includes('git.forceOpenRepository')) {
+                    // Qoder's public API deliberately rejects repositories outside
+                    // the current workspace. This built-in command bypasses only
+                    // that location check and still performs normal Git validation.
+                    log(`AutoOpen: Force-opening external managed worktree: ${worktreePath}`);
+                    await vscode.commands.executeCommand('git.forceOpenRepository', worktreePath);
+                } else if (typeof gitAPI.openRepository === 'function') {
+                    const opened = await gitAPI.openRepository(vscode.Uri.file(worktreePath));
+                    if (this.isExactRepository(opened, normalizedPath)) {
+                        finish(opened);
+                    }
+                } else {
+                    await vscode.commands.executeCommand('git.openRepository', worktreePath);
+                }
+                current = this.findExactRepository(gitAPI, normalizedPath);
+            }
+            if (current) finish(current);
+            return await registered;
+        } catch (error) {
+            finish(undefined);
+            throw error;
+        }
+    }
+
+    private async closeManagedRepositories(worktreePaths: string[]): Promise<void> {
+        try {
+            const ready = await this.waitForGitReady();
+            if (!ready) return;
+
+            const gitExtension = vscode.extensions.getExtension('vscode.git')?.exports;
+            const gitAPI = gitExtension?.getAPI(1);
+            if (!gitAPI) return;
+
+            for (const worktreePath of worktreePaths) {
+                const normalizedPath = this.normalizeRepositoryPath(worktreePath);
+                const repo = this.findExactRepository(gitAPI, normalizedPath);
+                if (!repo) continue;
+
+                log(`AutoOpen: Closing managed worktree before link mutation: ${worktreePath}`);
+                const closed = await this.closeExactRepository(
+                    gitAPI,
+                    repo,
+                    normalizedPath,
+                );
+                if (!closed) {
+                    throw new Error(
+                        `Git extension did not close the exact worktree root: ${worktreePath}`,
+                    );
+                }
+            }
+        } catch (err) {
+            logError('AutoOpen: Failed to close managed Git worktrees', err);
+            throw err;
+        }
+    }
+
+    private async closeExactRepository(
+        gitAPI: any,
+        repo: any,
+        normalizedPath: string,
+        timeoutMs: number = 10000,
+    ): Promise<boolean> {
+        let sub: vscode.Disposable | undefined;
+        let timer: NodeJS.Timeout | undefined;
+        let settled = false;
+        let finish: (closed: boolean) => void = () => undefined;
+        const closed = new Promise<boolean>(resolve => {
+            finish = (result: boolean) => {
+                if (settled) return;
+                settled = true;
+                if (timer) clearTimeout(timer);
+                sub?.dispose();
+                resolve(result);
+            };
+            if (typeof gitAPI.onDidCloseRepository === 'function') {
+                sub = gitAPI.onDidCloseRepository((closedRepo: any) => {
+                    if (this.isExactRepository(closedRepo, normalizedPath)) {
+                        finish(true);
+                    }
+                });
+            }
+            timer = setTimeout(() => finish(false), timeoutMs);
+        });
+
+        try {
+            // The public Repository wrapper has no close() method. The built-in
+            // command resolves this URI to the internal repository and closes it.
+            await vscode.commands.executeCommand('git.close', repo.rootUri);
+            if (!this.findExactRepository(gitAPI, normalizedPath)) {
+                finish(true);
+            }
+            return await closed;
+        } catch (error) {
+            finish(false);
+            throw error;
+        }
+    }
+
     private findExactRepository(gitAPI: any, normalizedPath: string): any | undefined {
         return gitAPI.repositories.find((repo: any) =>
-            this.normalizeRepositoryPath(repo.rootUri.fsPath) === normalizedPath
+            this.isExactRepository(repo, normalizedPath)
         );
+    }
+
+    private isExactRepository(repo: any, normalizedPath: string): boolean {
+        return Boolean(repo?.rootUri?.fsPath)
+            && this.normalizeRepositoryPath(repo.rootUri.fsPath) === normalizedPath;
     }
 
     private normalizeRepositoryPath(repoPath: string): string {
@@ -171,14 +343,6 @@ export class AutoOpenService implements vscode.Disposable {
     private isAutoOpenEnabled(): boolean {
         return vscode.workspace.getConfiguration('vdw')
             .get<boolean>('autoOpenGitRepositories', true);
-    }
-
-    /**
-     * 获取仓库间打开延迟
-     */
-    private getOpenDelay(): number {
-        return vscode.workspace.getConfiguration('vdw')
-            .get<number>('autoOpenDelay', 500);
     }
 
     /**

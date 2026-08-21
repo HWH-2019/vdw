@@ -8,6 +8,15 @@ import { minimatch } from 'minimatch';
 // Test VDW types
 import { VDWConfig, Dependency, Scope } from '../types/vdwTypes';
 import { findConfigPath } from '../services/configPaths';
+import {
+    buildConflictListArgs,
+    buildConflictResolveArgs,
+    formatConflictReason,
+} from '../utils/linkConflicts';
+import {
+    dependencyMatchesIdentifier,
+    getEditableWorktreePaths,
+} from '../utils/gitRepositories';
 
 describe('VDW Extension Tests', () => {
     describe('Type Definitions', () => {
@@ -137,6 +146,92 @@ dependencies: []
             assert.strictEqual(minimatch('a/b/c/d.ts', '**/*.ts'), true);
             assert.strictEqual(minimatch('deep/nested/file.rs', 'src/**'), false);
             assert.strictEqual(minimatch('src/deep/nested/file.rs', 'src/**'), true);
+        });
+    });
+
+    describe('Link conflict handling', () => {
+        it('should preserve repository filtering in conflict list arguments', () => {
+            assert.deepStrictEqual(
+                buildConflictListArgs('repo'),
+                ['list', '--json', '--repo', 'repo'],
+            );
+        });
+
+        it('should pass selected paths when accepting the workspace version', () => {
+            assert.deepStrictEqual(
+                buildConflictResolveArgs(
+                    'workspace',
+                    'repo',
+                    ['packages/repo/file.ts'],
+                ),
+                [
+                    'resolve', '--accept', 'workspace', '--json',
+                    '--repo', 'repo',
+                    '--path', 'packages/repo/file.ts',
+                ],
+            );
+        });
+
+        it('should present content differences as file comparison conflicts', () => {
+            assert.strictEqual(formatConflictReason('content_differs'), '文件内容不同');
+        });
+    });
+
+    describe('Source Control managed worktree paths', () => {
+        const config: VDWConfig = {
+            workspace: { name: 'vdw-workspace', version: '1.0' },
+            dependencies: [
+                {
+                    remote: 'git@example.com:org/repo.git',
+                    origin: '',
+                    local: '/Users/test/.vdw/store/objects/repo/worktrees/main',
+                    path: './packages/repo',
+                    branch: 'main',
+                    scope: { include: ['src/**'], exclude: [] },
+                    editable: true,
+                },
+                {
+                    remote: 'git@example.com:org/readonly.git',
+                    origin: '',
+                    local: '/Users/test/.vdw/store/objects/readonly/checkout',
+                    path: './packages/readonly',
+                    branch: 'main',
+                    scope: { include: ['**/*'], exclude: [] },
+                    editable: false,
+                },
+            ],
+        };
+
+        it('should keep the complete Store worktree even when it is under .vdw', () => {
+            assert.deepStrictEqual(
+                getEditableWorktreePaths(config),
+                ['/Users/test/.vdw/store/objects/repo/worktrees/main'],
+            );
+        });
+
+        it('should filter a worktree by the canonical repository identifier', () => {
+            assert.deepStrictEqual(
+                getEditableWorktreePaths(
+                    config,
+                    'git@example.com:org/repo.git',
+                ),
+                ['/Users/test/.vdw/store/objects/repo/worktrees/main'],
+            );
+            assert.strictEqual(
+                dependencyMatchesIdentifier(config.dependencies[0], './packages/repo'),
+                true,
+            );
+        });
+
+        it('should not register unlinked editable dependencies', () => {
+            const unlinked = {
+                ...config,
+                dependencies: [{ ...config.dependencies[0], local: '' }],
+            };
+            assert.deepStrictEqual(
+                getEditableWorktreePaths(unlinked),
+                [],
+            );
         });
     });
 });

@@ -1,8 +1,15 @@
 import * as vscode from 'vscode';
 import { spawn } from 'child_process';
 import * as path from 'path';
-import { ValidationResult, RepoStatusResult } from '../types/vdwTypes';
+import {
+    LinkConflictReport,
+    LinkConflictResolutionResult,
+    LinkConflictResolutionSide,
+    RepoStatusResult,
+    ValidationResult,
+} from '../types/vdwTypes';
 import { log, logError } from '../utils/logger';
+import { buildConflictListArgs, buildConflictResolveArgs } from '../utils/linkConflicts';
 
 export interface CommandResult {
     stdout: string;
@@ -116,6 +123,30 @@ export class VDWCliService {
     /** Run transactional vdw relink */
     async relink(): Promise<CommandResult> {
         return this.executeCommand('relink');
+    }
+
+    /** Inspect workspace files that no longer match their Store hardlinks. */
+    async getLinkConflicts(repoUrl?: string): Promise<LinkConflictReport> {
+        const args = buildConflictListArgs(repoUrl);
+        const result = await this.executeCommand('conflicts', args);
+        if (result.exitCode !== 0) {
+            throw new Error(result.stderr || result.stdout || 'Failed to inspect link conflicts');
+        }
+        return JSON.parse(result.stdout) as LinkConflictReport;
+    }
+
+    /** Resolve all or selected conflicts, keeping a CLI-managed backup of both sides. */
+    async resolveLinkConflicts(
+        accepted: LinkConflictResolutionSide,
+        repoUrl?: string,
+        relativePaths: string[] = [],
+    ): Promise<LinkConflictResolutionResult> {
+        const args = buildConflictResolveArgs(accepted, repoUrl, relativePaths);
+        const result = await this.executeCommand('conflicts', args);
+        if (result.exitCode !== 0) {
+            throw new Error(result.stderr || result.stdout || 'Failed to resolve link conflicts');
+        }
+        return JSON.parse(result.stdout) as LinkConflictResolutionResult;
     }
 
     /** Run vdw unlink --repo for a specific repository */

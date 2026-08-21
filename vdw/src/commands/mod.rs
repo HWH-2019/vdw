@@ -4,3 +4,4 @@ pub mod repo;
 pub mod worktree;
 pub mod context;
 pub mod doctor;
+pub mod conflicts;

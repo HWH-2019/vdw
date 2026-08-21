@@ -15,7 +15,7 @@
 | 🔄 **Relink All** | Unlink all + re-link with updated `.vdwrc` config in one command |
 | 🩺 **Status Bar** | Real-time dependency count and file context size |
 | 🤖 **AI Context** | Filter files per dependency scope — only expose what matters to LLMs |
-| 📝 **Auto-Open Editable Repos** | Automatically registers git worktrees in VS Code Source Control |
+| 📝 **Auto-Open Editable Repos** | Registers complete managed worktrees in Source Control after Git initialization |
 | ⚡ **Config Watcher** | Auto-refresh when `.vdwrc` changes |
 
 ---
@@ -82,6 +82,8 @@ See the [VDW CLI README](../vdw/README.md) for detailed installation options.
 
 ## 🎮 Commands
 
+When unlinking, relinking, or removing a repository finds different Store and workspace versions, the extension can open the corresponding VS Code diff. Resolve files individually or batch-accept all Store/workspace versions; VDW backs up both sides under `.vdw/conflict-backups/` before rebuilding hardlinks.
+
 All commands are accessible via the **Command Palette** (`Cmd+Shift+P` / `Ctrl+Shift+P`):
 
 | Command | Tree View | Description |
@@ -103,7 +105,7 @@ All commands are accessible via the **Command Palette** (`Cmd+Shift+P` / `Ctrl+S
 |---------|---------|-------------|
 | `vdw.cliPath` | `vdw` | Path to the VDW CLI binary (auto-detected if not set) |
 | `vdw.autoOpenGitRepositories` | `true` | Auto-open editable repos in Source Control |
-| `vdw.autoOpenDelay` | `500` | Delay (ms) between opening each Git repo |
+| `vdw.autoOpenDelay` | `500` | Deprecated compatibility setting; repository registration now waits for Git events |
 
 ### CLI Binary Detection Order
 
@@ -177,7 +179,8 @@ The extension is a **thin UI layer** over the VDW Rust CLI. Every operation (lin
 - Read and cache the `.vdwrc` configuration
 - Determine which repos are linked (by checking if paths exist)
 - Present an interactive tree view with link/unlink actions
-- Auto-open Git worktrees in VS Code Source Control
+- Open complete managed worktrees after the built-in Git extension initializes, including external Store paths in Qoder
+- Close managed worktrees before unlink/relink and reopen them only after links are stable
 - Track file context statistics for AI assistance
 
 ---

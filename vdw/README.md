@@ -136,7 +136,7 @@ vdw link
 vdw link --repo git@github.com:org/ui-lib.git
 ```
 
-VDW walks each dependency's source directory, applies scope filters, and creates hardlinks (or symlinks) at the configured path. Run it anytime to refresh.
+VDW walks each dependency's source directory, applies scope filters, and creates hardlinks (or symlinks) at the configured path. Git metadata (`.git` directories and worktree pointer files) is never projected. IDE integrations register the complete managed worktree instead, so scope filtering cannot appear as deleted Git files. Run it anytime to refresh.
 
 ### ❌ Unlink
 
@@ -147,6 +147,22 @@ vdw unlink
 # Unlink a specific repo
 vdw unlink --repo git@github.com:org/ui-lib.git
 ```
+
+If an editor has replaced a hardlink and the Store/workspace contents differ, VDW stops before deleting anything. Inspect and resolve the files first:
+
+```bash
+# List only real content/metadata conflicts
+vdw conflicts list
+
+# Accept one side for every conflict (both sides are backed up first)
+vdw conflicts resolve --accept store
+vdw conflicts resolve --accept workspace
+
+# Resolve selected files only
+vdw conflicts resolve --accept workspace --path packages/ui-lib/src/button.ts
+```
+
+Backups are retained under `.vdw/conflict-backups/`. Detached files with identical content are rebuilt automatically and do not require a decision.
 
 ### 🗑️ Remove a repo
 

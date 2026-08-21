@@ -1,4 +1,8 @@
 use anyhow::{bail, Context, Result};
+use serde::Serialize;
+use std::ffi::OsStr;
+use std::fs::File;
+use std::io::{BufReader, Read};
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 
@@ -12,7 +16,7 @@ use crate::types::workspace::{LinkEntry, LinkType};
 /// On Windows: uses `GetFileInformationByHandle` to get `nFileIndexLow+High` and `dwVolumeSerialNumber`.
 /// On Unix: uses metadata's `ino()` and `dev()`.
 /// Returns `(inode, volume)` or `None` if not available.
-fn get_file_inode(path: &Path) -> Option<(u64, u64)> {
+pub(crate) fn get_file_inode(path: &Path) -> Option<(u64, u64)> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt;
@@ -76,6 +80,120 @@ fn target_exists(path: &Path) -> bool {
     std::fs::symlink_metadata(path).is_ok()
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LinkConflictReason {
+    ContentDiffers,
+    MetadataDiffers,
+    SourceMissing,
+    TargetUnreadable,
+    TargetTypeChanged,
+    LinkTargetChanged,
+}
+
+impl LinkConflictReason {
+    pub fn description(self) -> &'static str {
+        match self {
+            Self::ContentDiffers => "workspace content differs from Store",
+            Self::MetadataDiffers => "workspace file metadata differs from Store",
+            Self::SourceMissing => "Store source is missing or unreadable",
+            Self::TargetUnreadable => "workspace target is unreadable",
+            Self::TargetTypeChanged => "workspace target type changed",
+            Self::LinkTargetChanged => "workspace link points to a different source",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct LinkConflict {
+    pub source: PathBuf,
+    pub target: PathBuf,
+    pub link_type: LinkType,
+    pub dependency_repo: String,
+    pub reason: LinkConflictReason,
+    pub resolvable: bool,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+pub struct LinkAudit {
+    pub missing_count: usize,
+    pub detached_equivalent_count: usize,
+    pub conflicts: Vec<LinkConflict>,
+}
+
+enum LinkRemovalState {
+    Missing,
+    Owned,
+    DetachedEquivalent,
+    Conflict(LinkConflict),
+}
+
+fn conflict(entry: &LinkEntry, reason: LinkConflictReason, resolvable: bool) -> LinkRemovalState {
+    LinkRemovalState::Conflict(LinkConflict {
+        source: entry.source.clone(),
+        target: entry.target.clone(),
+        link_type: entry.link_type,
+        dependency_repo: entry.dependency_repo.clone(),
+        reason,
+        resolvable,
+    })
+}
+
+fn files_have_same_contents(source: &Path, target: &Path) -> Result<bool> {
+    let source_metadata = std::fs::metadata(source)?;
+    let target_metadata = std::fs::metadata(target)?;
+    if source_metadata.len() != target_metadata.len() {
+        return Ok(false);
+    }
+
+    let mut source_reader = BufReader::new(File::open(source)?);
+    let mut target_reader = BufReader::new(File::open(target)?);
+    let mut source_buffer = [0_u8; 64 * 1024];
+    let mut target_buffer = [0_u8; 64 * 1024];
+
+    loop {
+        let source_count = source_reader.read(&mut source_buffer)?;
+        let target_count = target_reader.read(&mut target_buffer)?;
+        if source_count != target_count
+            || source_buffer[..source_count] != target_buffer[..target_count]
+        {
+            return Ok(false);
+        }
+        if source_count == 0 {
+            return Ok(true);
+        }
+    }
+}
+
+fn files_have_same_permissions(source: &Path, target: &Path) -> Result<bool> {
+    let source_metadata = std::fs::metadata(source)?;
+    let target_metadata = std::fs::metadata(target)?;
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        Ok(source_metadata.permissions().mode() == target_metadata.permissions().mode())
+    }
+    #[cfg(windows)]
+    {
+        Ok(source_metadata.permissions().readonly() == target_metadata.permissions().readonly())
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = (source_metadata, target_metadata);
+        Ok(true)
+    }
+}
+
+fn hardlink_files_are_equivalent(source: &Path, target: &Path) -> Result<bool> {
+    if !std::fs::symlink_metadata(source)?.file_type().is_file()
+        || !std::fs::symlink_metadata(target)?.file_type().is_file()
+    {
+        return Ok(false);
+    }
+    Ok(files_have_same_contents(source, target)? && files_have_same_permissions(source, target)?)
+}
+
 fn canonical_link_target(target: &Path) -> Result<PathBuf> {
     let raw_target = std::fs::read_link(target)?;
     let resolved = if raw_target.is_absolute() {
@@ -89,72 +207,83 @@ fn canonical_link_target(target: &Path) -> Result<PathBuf> {
     Ok(std::fs::canonicalize(resolved)?)
 }
 
-fn verify_link_for_removal(entry: &LinkEntry) -> Result<()> {
+fn inspect_link_for_removal(entry: &LinkEntry) -> LinkRemovalState {
     if !target_exists(&entry.target) {
-        return Ok(());
+        return LinkRemovalState::Missing;
     }
 
     match entry.link_type {
         LinkType::HardLink => {
-            let source_identity = get_file_inode(&entry.source).ok_or_else(|| {
-                anyhow::anyhow!(
-                    "source is missing or its file identity cannot be read: {}",
-                    entry.source.display()
-                )
-            })?;
-            let target_identity = get_file_inode(&entry.target).ok_or_else(|| {
-                anyhow::anyhow!(
-                    "target file identity cannot be read: {}",
-                    entry.target.display()
-                )
-            })?;
+            let source_metadata = match std::fs::symlink_metadata(&entry.source) {
+                Ok(metadata) if metadata.file_type().is_file() => metadata,
+                _ => return conflict(entry, LinkConflictReason::SourceMissing, false),
+            };
+            let target_metadata = match std::fs::symlink_metadata(&entry.target) {
+                Ok(metadata) if metadata.file_type().is_file() => metadata,
+                Ok(_) => return conflict(entry, LinkConflictReason::TargetTypeChanged, false),
+                Err(_) => return conflict(entry, LinkConflictReason::TargetUnreadable, false),
+            };
 
-            if source_identity != target_identity {
-                bail!(
-                    "target is no longer the hardlink recorded by VDW: {}",
-                    entry.target.display()
-                );
+            let source_identity = match get_file_inode(&entry.source) {
+                Some(identity) => identity,
+                None => return conflict(entry, LinkConflictReason::SourceMissing, false),
+            };
+            let target_identity = match get_file_inode(&entry.target) {
+                Some(identity) => identity,
+                None => return conflict(entry, LinkConflictReason::TargetUnreadable, false),
+            };
+
+            if source_identity == target_identity {
+                return LinkRemovalState::Owned;
             }
 
-            if let (Some(inode), Some(volume)) = (entry.source_inode, entry.source_volume) {
-                if source_identity != (inode, volume) {
-                    bail!(
-                        "hardlink identity changed since state.json was written: {}",
-                        entry.target.display()
-                    );
-                }
+            let resolvable = source_metadata.is_file() && target_metadata.is_file();
+            match files_have_same_contents(&entry.source, &entry.target) {
+                Ok(false) => conflict(entry, LinkConflictReason::ContentDiffers, resolvable),
+                Err(_) => conflict(entry, LinkConflictReason::TargetUnreadable, false),
+                Ok(true) => match files_have_same_permissions(&entry.source, &entry.target) {
+                    Ok(true) => LinkRemovalState::DetachedEquivalent,
+                    Ok(false) => conflict(entry, LinkConflictReason::MetadataDiffers, resolvable),
+                    Err(_) => conflict(entry, LinkConflictReason::TargetUnreadable, false),
+                },
             }
         }
         LinkType::Symlink => {
-            let metadata = std::fs::symlink_metadata(&entry.target)?;
+            let metadata = match std::fs::symlink_metadata(&entry.target) {
+                Ok(metadata) => metadata,
+                Err(_) => return conflict(entry, LinkConflictReason::TargetUnreadable, false),
+            };
             if !metadata.file_type().is_symlink() {
-                bail!(
-                    "target is no longer a symlink owned by VDW: {}",
-                    entry.target.display()
-                );
+                return conflict(entry, LinkConflictReason::TargetTypeChanged, false);
             }
-            let actual_source = canonical_link_target(&entry.target)?;
-            let expected_source = std::fs::canonicalize(&entry.source)?;
+            let actual_source = match canonical_link_target(&entry.target) {
+                Ok(source) => source,
+                Err(_) => return conflict(entry, LinkConflictReason::LinkTargetChanged, false),
+            };
+            let expected_source = match std::fs::canonicalize(&entry.source) {
+                Ok(source) => source,
+                Err(_) => return conflict(entry, LinkConflictReason::SourceMissing, false),
+            };
             if actual_source != expected_source {
-                bail!(
-                    "symlink target changed since it was recorded by VDW: {}",
-                    entry.target.display()
-                );
+                return conflict(entry, LinkConflictReason::LinkTargetChanged, false);
             }
+            LinkRemovalState::Owned
         }
         LinkType::Junction => {
-            let actual_source = std::fs::canonicalize(&entry.target)?;
-            let expected_source = std::fs::canonicalize(&entry.source)?;
+            let actual_source = match std::fs::canonicalize(&entry.target) {
+                Ok(source) => source,
+                Err(_) => return conflict(entry, LinkConflictReason::TargetUnreadable, false),
+            };
+            let expected_source = match std::fs::canonicalize(&entry.source) {
+                Ok(source) => source,
+                Err(_) => return conflict(entry, LinkConflictReason::SourceMissing, false),
+            };
             if actual_source != expected_source {
-                bail!(
-                    "junction target changed since it was recorded by VDW: {}",
-                    entry.target.display()
-                );
+                return conflict(entry, LinkConflictReason::LinkTargetChanged, false);
             }
+            LinkRemovalState::Owned
         }
     }
-
-    Ok(())
 }
 
 fn matching_existing_link_type(
@@ -164,6 +293,17 @@ fn matching_existing_link_type(
 ) -> Option<LinkType> {
     match strategy {
         platform::LinkStrategy::HardLink => {
+            if !std::fs::symlink_metadata(source)
+                .ok()?
+                .file_type()
+                .is_file()
+                || !std::fs::symlink_metadata(target)
+                    .ok()?
+                    .file_type()
+                    .is_file()
+            {
+                return None;
+            }
             (get_file_inode(source)? == get_file_inode(target)?).then_some(LinkType::HardLink)
         }
         platform::LinkStrategy::Symlink => {
@@ -187,25 +327,52 @@ fn matching_existing_link_type(
 /// independent file or points somewhere else. This protects files produced by
 /// editors that implement atomic save by replacing a hardlink with a new inode.
 pub fn verify_links_for_removal(entries: &[LinkEntry]) -> Result<()> {
-    let conflicts: Vec<String> = entries
-        .iter()
-        .filter_map(|entry| {
-            verify_link_for_removal(entry)
-                .err()
-                .map(|error| format!("{}: {}", entry.target.display(), error))
-        })
-        .collect();
+    let audit = audit_links(entries);
 
-    if !conflicts.is_empty() {
+    if !audit.conflicts.is_empty() {
+        const MAX_CONFLICTS_TO_PRINT: usize = 20;
+        let preview = audit
+            .conflicts
+            .iter()
+            .take(MAX_CONFLICTS_TO_PRINT)
+            .map(|conflict| {
+                format!(
+                    "{}: {}",
+                    conflict.target.display(),
+                    conflict.reason.description()
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n  - ");
+        let omitted = audit.conflicts.len().saturating_sub(MAX_CONFLICTS_TO_PRINT);
+        let omitted_message = if omitted > 0 {
+            format!("\n  ... and {} more conflict(s)", omitted)
+        } else {
+            String::new()
+        };
         bail!(
-            "Refusing to remove {} target(s) that are no longer owned by VDW:\n  - {}\n\
-             Preserve or reconcile these files, then run link again.",
-            conflicts.len(),
-            conflicts.join("\n  - ")
+            "Refusing to remove {} target(s) with workspace changes:\n  - {}{}\n\
+             Run `vdw conflicts list` to inspect them, then resolve by accepting Store or workspace.",
+            audit.conflicts.len(),
+            preview,
+            omitted_message
         );
     }
 
     Ok(())
+}
+
+pub fn audit_links(entries: &[LinkEntry]) -> LinkAudit {
+    let mut audit = LinkAudit::default();
+    for entry in entries {
+        match inspect_link_for_removal(entry) {
+            LinkRemovalState::DetachedEquivalent => audit.detached_equivalent_count += 1,
+            LinkRemovalState::Conflict(conflict) => audit.conflicts.push(conflict),
+            LinkRemovalState::Missing => audit.missing_count += 1,
+            LinkRemovalState::Owned => {}
+        }
+    }
+    audit
 }
 
 /// Create links for a single dependency from source_dir to target_dir
@@ -230,7 +397,10 @@ pub fn create_dependency_links(
     let base_strategy = platform::determine_strategy(source_dir, target_dir);
 
     // Walk the source directory and link files matching scope
-    for entry in WalkDir::new(source_dir).into_iter().filter_map(|e| e.ok()) {
+    let walker = WalkDir::new(source_dir)
+        .into_iter()
+        .filter_entry(|entry| entry.depth() == 0 || entry.file_name() != OsStr::new(".git"));
+    for entry in walker.filter_map(|e| e.ok()) {
         if !entry.file_type().is_file() {
             continue;
         }
@@ -253,11 +423,29 @@ pub fn create_dependency_links(
             match matching_existing_link_type(&source_path, &target_path, strategy) {
                 Some(link_type) => link_type,
                 None => {
-                    let _ = remove_links(&entries);
-                    bail!(
-                        "Refusing to overwrite an untracked workspace file: {}",
-                        target_path.display()
-                    );
+                    if strategy == platform::LinkStrategy::HardLink
+                        && hardlink_files_are_equivalent(&source_path, &target_path)
+                            .unwrap_or(false)
+                    {
+                        match create_single_link(&source_path, &target_path, strategy) {
+                            Ok(link_type) => link_type,
+                            Err(error) => {
+                                let _ = remove_links(&entries);
+                                return Err(error).with_context(|| {
+                                    format!(
+                                        "Failed to restore equivalent workspace link {}",
+                                        target_path.display()
+                                    )
+                                });
+                            }
+                        }
+                    } else {
+                        let _ = remove_links(&entries);
+                        bail!(
+                            "Refusing to overwrite an untracked workspace file: {}",
+                            target_path.display()
+                        );
+                    }
                 }
             }
         } else {
@@ -378,12 +566,21 @@ pub fn remove_links(entries: &[LinkEntry]) -> Result<()> {
 pub fn restore_links(entries: &[LinkEntry]) -> Result<()> {
     for entry in entries {
         if target_exists(&entry.target) {
-            verify_link_for_removal(entry).with_context(|| {
-                format!(
-                    "Refusing to overwrite a file while rolling back: {}",
-                    entry.target.display()
-                )
-            })?;
+            match inspect_link_for_removal(entry) {
+                LinkRemovalState::Owned => continue,
+                LinkRemovalState::DetachedEquivalent => match entry.link_type {
+                    LinkType::HardLink => hardlink::create_hardlink(&entry.source, &entry.target)?,
+                    LinkType::Symlink | LinkType::Junction => unreachable!(),
+                },
+                LinkRemovalState::Missing => {}
+                LinkRemovalState::Conflict(conflict) => {
+                    bail!(
+                        "Refusing to overwrite a file while rolling back: {}: {}",
+                        entry.target.display(),
+                        conflict.reason.description()
+                    );
+                }
+            }
             continue;
         }
 
@@ -504,6 +701,54 @@ mod tests {
     }
 
     #[test]
+    fn test_create_dependency_links_never_projects_git_metadata() {
+        let source_dir = tempfile::tempdir().expect("Failed to create source temp dir");
+        let target_dir = tempfile::tempdir().expect("Failed to create target temp dir");
+        setup_source_dir(source_dir.path());
+        std::fs::create_dir_all(source_dir.path().join(".git/objects"))
+            .expect("Failed to create .git directory");
+        std::fs::write(source_dir.path().join(".git/HEAD"), "ref: refs/heads/main")
+            .expect("Failed to write .git/HEAD");
+        std::fs::write(
+            source_dir.path().join(".git/objects/object"),
+            "git metadata",
+        )
+        .expect("Failed to write git object");
+        let scope = Scope {
+            include: vec!["**/*".to_string()],
+            exclude: vec![],
+        };
+
+        let entries = create_dependency_links(source_dir.path(), target_dir.path(), &scope, "repo")
+            .expect("Failed to create dependency links");
+
+        assert!(entries.iter().all(|entry| !entry.target.ends_with(".git")));
+        assert!(!target_dir.path().join(".git").exists());
+    }
+
+    #[test]
+    fn test_create_dependency_links_never_records_worktree_git_pointer() {
+        let source_dir = tempfile::tempdir().expect("Failed to create source temp dir");
+        let target_dir = tempfile::tempdir().expect("Failed to create target temp dir");
+        setup_source_dir(source_dir.path());
+        std::fs::write(
+            source_dir.path().join(".git"),
+            "gitdir: /store/repo/bare.git/worktrees/main\n",
+        )
+        .expect("Failed to write worktree .git pointer");
+        let scope = Scope {
+            include: vec!["**/*".to_string()],
+            exclude: vec![],
+        };
+
+        let entries = create_dependency_links(source_dir.path(), target_dir.path(), &scope, "repo")
+            .expect("Failed to create dependency links");
+
+        assert!(entries.iter().all(|entry| !entry.target.ends_with(".git")));
+        assert!(!target_dir.path().join(".git").exists());
+    }
+
+    #[test]
     fn test_create_dependency_links_missing_source() {
         let target_dir = tempfile::tempdir().expect("Failed to create target temp dir");
 
@@ -547,6 +792,28 @@ mod tests {
         );
         assert!(!target_dir.path().join("src/lib.rs").exists());
         assert!(!target_dir.path().join("src/utils/mod.rs").exists());
+    }
+
+    #[test]
+    fn test_create_dependency_links_repairs_equivalent_existing_target() {
+        let source_dir = tempfile::tempdir().expect("Failed to create source temp dir");
+        let target_dir = tempfile::tempdir().expect("Failed to create target temp dir");
+        setup_source_dir(source_dir.path());
+        std::fs::create_dir_all(target_dir.path().join("src"))
+            .expect("Failed to create target src dir");
+        let source = source_dir.path().join("src/main.rs");
+        let target = target_dir.path().join("src/main.rs");
+        std::fs::copy(&source, &target).expect("Failed to create equivalent target");
+        assert_ne!(get_file_inode(&source), get_file_inode(&target));
+        let scope = Scope {
+            include: vec!["src/main.rs".to_string()],
+            exclude: vec![],
+        };
+
+        create_dependency_links(source_dir.path(), target_dir.path(), &scope, "repo")
+            .expect("Equivalent target should be repaired");
+
+        assert_eq!(get_file_inode(&source), get_file_inode(&target));
     }
 
     #[test]
@@ -622,10 +889,63 @@ mod tests {
         };
 
         let error = verify_links_for_removal(&[entry]).expect_err("Replacement must be rejected");
-        assert!(error.to_string().contains("no longer owned by VDW"));
+        assert!(error.to_string().contains("workspace changes"));
         assert_eq!(
             std::fs::read_to_string(target).expect("Replacement was deleted"),
             "independent edit"
+        );
+    }
+
+    #[test]
+    fn test_verify_allows_equivalent_atomic_save_replacement() {
+        let dir = tempfile::tempdir().expect("Failed to create temp dir");
+        let source = dir.path().join("source.txt");
+        let target = dir.path().join("target.txt");
+        std::fs::write(&source, "managed").expect("Failed to write source");
+        std::fs::hard_link(&source, &target).expect("Failed to create hardlink");
+        let (inode, volume) = get_file_inode(&source).expect("Missing file identity");
+        std::fs::remove_file(&target).expect("Failed to replace target");
+        std::fs::copy(&source, &target).expect("Failed to copy equivalent replacement");
+        let entry = LinkEntry {
+            source,
+            target,
+            link_type: LinkType::HardLink,
+            dependency_repo: "repo".to_string(),
+            source_inode: Some(inode),
+            source_volume: Some(volume),
+        };
+
+        let audit = audit_links(&[entry.clone()]);
+        assert_eq!(audit.detached_equivalent_count, 1);
+        assert!(audit.conflicts.is_empty());
+        verify_links_for_removal(&[entry]).expect("Equivalent replacement must be removable");
+    }
+
+    #[test]
+    fn test_audit_reports_only_real_content_conflicts() {
+        let dir = tempfile::tempdir().expect("Failed to create temp dir");
+        let source = dir.path().join("source.txt");
+        let equivalent = dir.path().join("equivalent.txt");
+        let changed = dir.path().join("changed.txt");
+        std::fs::write(&source, "managed").expect("Failed to write source");
+        std::fs::copy(&source, &equivalent).expect("Failed to copy equivalent file");
+        std::fs::write(&changed, "workspace edit").expect("Failed to write changed file");
+        let entries = [equivalent, changed].map(|target| LinkEntry {
+            source: source.clone(),
+            target,
+            link_type: LinkType::HardLink,
+            dependency_repo: "repo".to_string(),
+            source_inode: None,
+            source_volume: None,
+        });
+
+        let audit = audit_links(&entries);
+
+        assert_eq!(audit.detached_equivalent_count, 1);
+        assert_eq!(audit.conflicts.len(), 1);
+        assert_eq!(
+            audit.conflicts[0].reason,
+            LinkConflictReason::ContentDiffers
         );
     }
 
