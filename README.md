@@ -76,7 +76,7 @@ Download the archive for your platform from [GitHub Releases](https://github.com
 On macOS or Linux:
 
 ```bash
-VERSION=0.7.0            # replace with the release you downloaded
+VERSION=0.7.1            # replace with the release you downloaded
 OS=darwin                # darwin or linux
 ARCH=arm64               # arm64 or x86_64
 ASSET="vdw_${OS}_${ARCH}_${VERSION}"
@@ -125,7 +125,7 @@ See the [CLI installation guide](vdw/README.md#install-the-cli) for upgrades, un
 3. If the `code` command is available, VS Code can also install it from a terminal:
 
 ```bash
-VERSION=0.7.0  # replace with the downloaded VSIX version
+VERSION=0.7.1  # replace with the downloaded VSIX version
 code --install-extension "./vdw_vscode_${VERSION}.vsix" --force
 ```
 

@@ -69,7 +69,7 @@ Download the matching archive from [GitHub Releases](https://github.com/HWH-2019
 macOS/Linux example:
 
 ```bash
-VERSION=0.7.0            # replace with the release you downloaded
+VERSION=0.7.1            # replace with the release you downloaded
 OS=darwin                # darwin or linux
 ARCH=arm64               # arm64 or x86_64
 ASSET="vdw_${OS}_${ARCH}_${VERSION}"

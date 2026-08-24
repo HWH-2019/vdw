@@ -82,7 +82,7 @@ Use the same release version for the CLI and VSIX whenever possible. The extensi
 If the VS Code `code` command is installed, the equivalent terminal command is:
 
 ```bash
-VERSION=0.7.0  # replace with the downloaded VSIX version
+VERSION=0.7.1  # replace with the downloaded VSIX version
 code --install-extension "./vdw_vscode_${VERSION}.vsix" --force
 ```
 
@@ -131,7 +131,7 @@ Open **Preferences: Open Settings (JSON)** from the Command Palette to set it. T
 
 ### Upgrade or uninstall
 
-- Upgrade: install the newer VSIX with **Install from VSIX...** again, or rerun `code --install-extension "./vdw_vscode_0.7.0.vsix" --force` with the new filename.
+- Upgrade: install the newer VSIX with **Install from VSIX...** again, or rerun `code --install-extension "./vdw_vscode_0.7.1.vsix" --force` with the new filename.
 - Uninstall: remove **VDW - Virtual Dev Workspace** from the Extensions view, or run:
 
 ```bash
