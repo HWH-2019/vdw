@@ -84,6 +84,12 @@ enum Commands {
     },
     /// Validate workspace configuration
     Validate,
+    /// Show aggregate workspace topology status
+    Status {
+        /// Print machine-readable JSON
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -221,13 +227,14 @@ fn run_command(cli: Cli) -> anyhow::Result<()> {
         },
         Commands::Doctor { check_links } => commands::doctor::execute(check_links),
         Commands::Validate => commands::doctor::validate(),
+        Commands::Status { json } => commands::status::show(json),
     }
 }
 
 fn main() {
     // Tag debug builds at runtime: print a banner to stderr so it is obvious a
     // debug binary is running. Kept on stderr to avoid polluting command stdout
-    // (e.g. `repo status` JSON parsed by the VS Code extension).
+    // (e.g. `status --json` parsed by the VS Code extension).
     #[cfg(debug_assertions)]
     eprintln!("\x1b[33m[vdw {} — debug build]\x1b[0m", VERSION);
 

@@ -7,6 +7,7 @@ import {
     LinkConflictResolutionSide,
     RepoStatusResult,
     ValidationResult,
+    WorkspaceTopologyStatusResult,
 } from '../types/vdwTypes';
 import { log, logError } from '../utils/logger';
 import { buildConflictListArgs, buildConflictResolveArgs } from '../utils/linkConflicts';
@@ -221,6 +222,20 @@ export class VDWCliService {
             }
         } catch {
             // Graceful degradation: CLI may not support repo status (old version)
+        }
+        return null;
+    }
+
+    /** Read all VDW topology and ownership diagnostics in one CLI invocation. */
+    async getWorkspaceStatus(): Promise<WorkspaceTopologyStatusResult | null> {
+        try {
+            const result = await this.executeCommand('status', ['--json']);
+            if (result.exitCode === 0) {
+                return JSON.parse(result.stdout) as WorkspaceTopologyStatusResult;
+            }
+        } catch (error) {
+            // Graceful degradation keeps the extension compatible with older CLI versions.
+            log(`Aggregate workspace status is unavailable: ${error}`);
         }
         return null;
     }

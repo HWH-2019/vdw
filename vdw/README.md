@@ -196,6 +196,17 @@ vdw link --repo git@github.com:org/ui-lib.git
 
 Editable dependencies become complete native Git worktrees at their configured `path`; their `.git` pointer is real, and `scope` only filters AI context. Read-only dependencies still use scope-filtered hardlinks or symlinks. Run `vdw link` anytime to refresh without replacing an existing native editable worktree.
 
+### 🩺 Inspect workspace topology
+
+```bash
+vdw status
+vdw status --json
+```
+
+`vdw status` audits every dependency in one read-only pass. It reports missing or invalid editable worktrees, Git directories that are not owned by the expected VDW Store object, read-only projection conflicts, and equivalent files whose hardlink identity was detached. Each JSON repository entry includes a `topology_state` and `recommended_action` so IDE clients can offer link, relink, or conflict-resolution actions without inferring ownership from directory existence.
+
+The command reads `.vdwrc` and the existing read-only ownership entries in `.vdw/state.json`; it never persists runtime or Git status. Editable dependencies therefore still require no per-file state entries.
+
 ### Upgrade legacy editable projections to 0.7
 
 On the first 0.7 `link` or `relink`, VDW moves the old Store worktree into the workspace with `git worktree move`. The branch, index, dirty changes, and untracked Store files are preserved. Workspace-only files are copied into the new worktree and backed up under `.vdw/migration-backups/`.

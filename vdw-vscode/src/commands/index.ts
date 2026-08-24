@@ -558,6 +558,20 @@ export function registerCommands(
         })
     );
 
+    // vdw.resolveRepoConflicts - Inspect, compare, and resolve one repository's topology conflicts.
+    context.subscriptions.push(
+        vscode.commands.registerCommand('vdw.resolveRepoConflicts', async (treeItem: any) => {
+            const dependency = treeItem?.dependency as Dependency | undefined;
+            if (!dependency) return;
+
+            const identifier = dependency.remote || dependency.origin || dependency.local || dependency.path;
+            if (await ensureLinkConflictsResolved(cliService, identifier)) {
+                treeProvider.refresh();
+                statusBar.update();
+            }
+        })
+    );
+
     // vdw.revealInExplorer - Reveal the repository root in the native Explorer.
     context.subscriptions.push(
         vscode.commands.registerCommand('vdw.revealInExplorer', async (treeItem: any) => {
@@ -637,7 +651,9 @@ export function registerCommands(
             const treeItem = { dependency: selected.dependency, status: selected.status };
             if (selected.status?.state === 'missing') {
                 await vscode.commands.executeCommand('vdw.linkRepo', treeItem);
-            } else if (selected.status?.state === 'invalidWorktree') {
+            } else if (selected.status?.state === 'topologyConflict') {
+                await vscode.commands.executeCommand('vdw.resolveRepoConflicts', treeItem);
+            } else if (['invalidWorktree', 'unowned', 'detachedLink'].includes(selected.status?.state ?? '')) {
                 await vscode.commands.executeCommand('vdw.relink');
             } else if (selected.dependency.editable) {
                 await vscode.commands.executeCommand('vdw.openSourceControl', treeItem);
@@ -656,7 +672,7 @@ export function registerCommands(
                 fileProvider.refresh();
                 treeProvider.refresh();
                 await autoOpenService?.openAllEditableRepositories();
-                const snapshot = await workspaceStatusService.refresh();
+                const snapshot = await workspaceStatusService.refresh({ forceTopology: true });
                 statusBar.update();
 
                 vscode.window.showInformationMessage(
@@ -685,7 +701,10 @@ function getQuickPickIcon(status?: RepositoryRuntimeStatus): string {
     switch (status?.state) {
         case 'missing':
         case 'invalidWorktree':
+        case 'unowned':
+        case 'topologyConflict':
             return '$(error)';
+        case 'detachedLink':
         case 'scmMissing':
         case 'branchDrift':
             return '$(warning)';

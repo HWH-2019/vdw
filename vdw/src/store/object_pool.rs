@@ -17,6 +17,13 @@ pub fn compute_repo_hash(repo_url: &str) -> String {
     format!("{:x}", result)[..8].to_string()
 }
 
+/// Resolve the stable Store object directory for a repository identifier.
+pub fn repo_store_dir(repo_url: &str, store_path: &Path) -> PathBuf {
+    let repo_hash = compute_repo_hash(repo_url);
+    let repo_name = extract_repo_name(repo_url);
+    store_path.join(format!("objects/{}-{}", repo_name, repo_hash))
+}
+
 /// Clone a repository to the Content Store as a bare repo
 /// Returns the path to the bare repo in the store
 pub fn clone_to_store(
@@ -25,9 +32,7 @@ pub fn clone_to_store(
     branch: Option<&str>,
     reference_path: Option<&Path>,
 ) -> Result<PathBuf> {
-    let repo_hash = compute_repo_hash(repo_url);
-    let repo_name = extract_repo_name(repo_url);
-    let repo_dir = store_path.join(format!("objects/{}-{}", repo_name, repo_hash));
+    let repo_dir = repo_store_dir(repo_url, store_path);
     let bare_git_path = repo_dir.join("bare.git");
 
     // If already exists, ensure the requested branch is fetched, then return

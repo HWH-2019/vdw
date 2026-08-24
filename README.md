@@ -189,6 +189,15 @@ vdw link
 
 For an editable dependency, VDW creates a complete native Git worktree directly at its configured workspace path. For a read-only dependency, VDW applies the scope and creates hardlinks (or symlinks). `scope` filters AI context in both modes but never removes files from an editable worktree.
 
+Inspect the whole workspace without changing it:
+
+```bash
+vdw status
+vdw status --json   # stable aggregate contract for IDE/tooling integrations
+```
+
+The status command checks declared paths, editable-worktree Store ownership, and read-only link integrity in one pass. Runtime status is computed on demand; it is not appended to `.vdw/state.json`.
+
 ### Upgrading an existing workspace to 0.7
 
 The first `vdw link` or `vdw relink` moves each legacy editable Store worktree into `dependency.path` with `git worktree move`. This preserves the branch, index, dirty changes, and untracked Store files. Workspace-only files are copied into the native worktree and retained under `.vdw/migration-backups/`.

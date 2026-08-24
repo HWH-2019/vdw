@@ -9,7 +9,7 @@
 
 | Feature | Description |
 |---------|-------------|
-| 📂 **Repository Status View** | Compact repository rows in Source Control with missing, dirty, branch drift, and SCM registration status |
+| 📂 **Repository Status View** | Compact Source Control rows combining VDW topology with live Git status |
 | ➕ **Add Repo Wizard** | Interactive dialog to add remote or local repos with branch selection and scope configuration |
 | 🔗 **One-Click Link / Unlink** | Link or unlink individual repos directly from the tree |
 | 🔄 **Reconcile Workspace** | Refresh read-only projections and migrate legacy editable repos without replacing native worktrees |
@@ -32,10 +32,10 @@ VDW REPOSITORIES
 └── ✕ protos         v2.0.0 · missing
 ```
 
-- Healthy repositories stay quiet; missing worktrees, branch drift, and repositories not loaded by SCM are highlighted.
+- Healthy repositories stay quiet; missing/foreign worktrees, projection conflicts, detached links, branch drift, and repositories not loaded by SCM are highlighted.
 - Repository names and branches are separate, so long branch names do not hide repository identity.
-- **Inline actions**: open Source Control, open a terminal, or reveal the repository in Explorer.
-- Link appears inline only for a missing repository. Unlink, remove, and reconcile remain in menus because they modify workspace state.
+- **Inline actions**: open Source Control, inspect Store/workspace diffs, reconcile topology, open a terminal, or reveal the repository in Explorer.
+- Link appears inline for a missing repository, conflict inspection for a divergent projection, and reconcile for repairable topology drift. Unlink and remove remain in menus.
 - Path, source, mode, and non-default AI scope remain available in the tooltip without consuming tree rows.
 
 ### Status Bar
@@ -154,12 +154,13 @@ All commands are accessible via the **Command Palette** (`Cmd+Shift+P` / `Ctrl+S
 | `VDW: Initialize Workspace` | — | Create a `.vdwrc` in the current folder |
 | `VDW: Reconcile Workspace` | menu | Refresh read-only links and migrate legacy editable projections; keep native editable worktrees in place |
 | `VDW: Validate Configuration` | — | Check `.vdwrc` for errors |
-| `VDW: Refresh Workspace Status` | 🔃 | Refresh configuration, AI context, and runtime Git status without changing workspace files |
+| `VDW: Refresh Workspace Status` | 🔃 | Refresh configuration, aggregate VDW topology, AI context, and live Git status without changing workspace files |
 | `VDW: Open Repository` | status bar | Pick a repository and navigate to Source Control or Explorer |
 | `Open in Source Control` | inline | Register and reveal an editable worktree in Source Control |
 | `Open in Terminal` | inline | Start a terminal at the repository root |
 | `Reveal in Explorer` | inline | Reveal the repository root in the native Explorer |
 | `Link Repository` | inline when missing | Link a specific missing repository |
+| `Inspect and Resolve VDW Conflicts` | inline on conflict | Compare Store/workspace files and accept either side individually or in bulk |
 | `Unlink Repository` | context menu | Unlink a specific available repository |
 | `Remove Repository` | 🗑️ (context menu) | Unlink + remove from `.vdwrc` |
 
@@ -240,14 +241,16 @@ Each dependency appears as one compact repository row. Dynamic Git and IDE statu
 └───────────────────────────────────────┘
 ```
 
-The extension is a **thin UI layer** over the VDW Rust CLI. Every operation (link, unlink, validate, init) spawns the CLI binary and parses its output. Since VDW 0.7, editable dependencies are complete Git worktrees at `dependency.path`; `scope` filters AI context rather than the physical editable checkout. The extension's job is to:
+The extension is a **thin UI layer** over the VDW Rust CLI. Mutating operations remain CLI-owned. `vdw status --json` supplies all topology and ownership diagnostics in one invocation, while the built-in Git API supplies live branch, change, and ahead/behind data. Since VDW 0.7, editable dependencies are complete Git worktrees at `dependency.path`; `scope` filters AI context rather than the physical editable checkout. The extension's job is to:
 
 - Read and cache the `.vdwrc` configuration
-- Determine which repos are linked (by checking if paths exist)
+- Merge aggregate CLI topology with live Git state in memory
 - Present an interactive tree view with link/unlink actions
 - Let the built-in Git extension discover nested workspace repositories and request a public-API refresh after Git initializes
 - Close a native worktree only when unlink/remove is about to delete it; relink leaves the repository registered
 - Track file context statistics for AI assistance
+
+Git change events reuse a short-lived topology cache; explicit refresh and link/relink operations force a new aggregate audit. No dynamic UI or Git status is written to `.vdw/state.json`.
 
 ---
 

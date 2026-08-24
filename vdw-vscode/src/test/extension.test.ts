@@ -9,6 +9,7 @@ import { minimatch } from 'minimatch';
 import {
     VDWConfig,
     Dependency,
+    RepositoryTopologyStatus,
     RepositoryRuntimeStatus,
     Scope,
 } from '../types/vdwTypes';
@@ -276,6 +277,10 @@ dependencies: []
             changeCount: 0,
             ahead: 0,
             behind: 0,
+            trackedLinkCount: 0,
+            conflictCount: 0,
+            missingLinkCount: 0,
+            detachedEquivalentCount: 0,
         };
 
         it('should keep the repository name separate from the long branch', () => {
@@ -395,6 +400,39 @@ dependencies: []
                 fs.rmSync(workspacePath, { recursive: true, force: true });
             }
         });
+
+        it('should prioritize CLI topology conflicts over Git working tree state', () => {
+            const topology: RepositoryTopologyStatus = {
+                repo: dependency.remote,
+                path: dependency.path,
+                full_path: '/workspace/packages/example',
+                editable: false,
+                declared_revision: 'feature/workspace',
+                topology_state: 'conflict',
+                recommended_action: 'resolve_conflicts',
+                tracked_link_count: 10,
+                conflict_count: 2,
+                missing_count: 0,
+                detached_equivalent_count: 0,
+                message: '2 tracked targets differ',
+            };
+            const workspacePath = fs.mkdtempSync(path.join(os.tmpdir(), 'vdw-topology-test-'));
+            try {
+                fs.mkdirSync(path.join(workspacePath, 'packages', 'example'), { recursive: true });
+                const status = collectRepositoryRuntimeStatus(
+                    { ...dependency, editable: false },
+                    workspacePath,
+                    undefined,
+                    topology,
+                );
+                assert.strictEqual(status.state, 'topologyConflict');
+                assert.strictEqual(status.conflictCount, 2);
+                assert.strictEqual(status.recommendedAction, 'resolve_conflicts');
+                assert.strictEqual(status.topologyMessage, '2 tracked targets differ');
+            } finally {
+                fs.rmSync(workspacePath, { recursive: true, force: true });
+            }
+        });
     });
 
     describe('Repository view contributions', () => {
@@ -417,6 +455,18 @@ dependencies: []
             assert.ok(reconcileMenu);
             assert.notStrictEqual(reconcileMenu.group, 'navigation');
             assert.strictEqual(reconcileMenu.group, '1_workspace@1');
+        });
+
+        it('should contribute a repository conflict resolution action', () => {
+            const command = packageJson.contributes.commands.find(
+                (entry: any) => entry.command === 'vdw.resolveRepoConflicts',
+            );
+            const menu = packageJson.contributes.menus['view/item/context'].find(
+                (entry: any) => entry.command === 'vdw.resolveRepoConflicts',
+            );
+            assert.ok(command);
+            assert.ok(menu);
+            assert.ok(menu.when.includes('vdwRepoConflict'));
         });
     });
 });

@@ -32,7 +32,7 @@ export function activate(context: vscode.ExtensionContext) {
     const cliService = new VDWCliService(workspacePath);
     const configService = new ConfigService(workspacePath);
     const hasConfig = configService.loadConfig() !== null;
-    workspaceStatusService = new WorkspaceStatusService(configService, workspacePath);
+    workspaceStatusService = new WorkspaceStatusService(configService, cliService, workspacePath);
     void vscode.commands.executeCommand('setContext', 'vdw.hasConfig', hasConfig);
 
     if (!hasConfig) {
@@ -170,7 +170,7 @@ export function activate(context: vscode.ExtensionContext) {
     // 10. Auto-open and refresh exact VDW-managed worktrees on activation
     (async () => {
         await autoOpenService.openAllEditableRepositories();
-        await workspaceStatusService?.refresh();
+        await workspaceStatusService?.refresh({ forceTopology: true });
         log('Auto-open Git repositories completed');
     })();
 

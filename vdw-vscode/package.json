@@ -100,6 +100,11 @@
         "icon": "$(source-control)"
       },
       {
+        "command": "vdw.resolveRepoConflicts",
+        "title": "Inspect and Resolve VDW Conflicts",
+        "icon": "$(diff)"
+      },
+      {
         "command": "vdw.revealInExplorer",
         "title": "Reveal in Explorer",
         "icon": "$(folder-opened)"
@@ -159,18 +164,28 @@
           "group": "inline@1"
         },
         {
+          "command": "vdw.resolveRepoConflicts",
+          "when": "view == vdwWorkspace && viewItem == vdwRepoConflict",
+          "group": "inline@1"
+        },
+        {
+          "command": "vdw.relink",
+          "when": "view == vdwWorkspace && (viewItem == vdwRepoInvalid || viewItem == vdwRepoUnowned || viewItem == vdwRepoDetached)",
+          "group": "inline@1"
+        },
+        {
           "command": "vdw.openInTerminal",
-          "when": "view == vdwWorkspace && (viewItem == vdwRepoEditable || viewItem == vdwRepoReadOnly || viewItem == vdwRepoInvalid)",
+          "when": "view == vdwWorkspace && (viewItem == vdwRepoEditable || viewItem == vdwRepoReadOnly || viewItem == vdwRepoInvalid || viewItem == vdwRepoUnowned || viewItem == vdwRepoConflict || viewItem == vdwRepoDetached)",
           "group": "inline@2"
         },
         {
           "command": "vdw.revealInExplorer",
-          "when": "view == vdwWorkspace && (viewItem == vdwRepoEditable || viewItem == vdwRepoReadOnly || viewItem == vdwRepoInvalid)",
+          "when": "view == vdwWorkspace && (viewItem == vdwRepoEditable || viewItem == vdwRepoReadOnly || viewItem == vdwRepoInvalid || viewItem == vdwRepoUnowned || viewItem == vdwRepoConflict || viewItem == vdwRepoDetached)",
           "group": "inline@3"
         },
         {
           "command": "vdw.unlinkRepo",
-          "when": "view == vdwWorkspace && (viewItem == vdwRepoEditable || viewItem == vdwRepoReadOnly || viewItem == vdwRepoInvalid)",
+          "when": "view == vdwWorkspace && (viewItem == vdwRepoEditable || viewItem == vdwRepoReadOnly || viewItem == vdwRepoInvalid || viewItem == vdwRepoUnowned || viewItem == vdwRepoConflict || viewItem == vdwRepoDetached)",
           "group": "1_manage@1"
         },
         {
@@ -180,7 +195,7 @@
         },
         {
           "command": "vdw.removeRepo",
-          "when": "view == vdwWorkspace && (viewItem == vdwRepoEditable || viewItem == vdwRepoReadOnly || viewItem == vdwRepoInvalid || viewItem == vdwRepoMissing)",
+          "when": "view == vdwWorkspace && (viewItem == vdwRepoEditable || viewItem == vdwRepoReadOnly || viewItem == vdwRepoInvalid || viewItem == vdwRepoUnowned || viewItem == vdwRepoConflict || viewItem == vdwRepoDetached || viewItem == vdwRepoMissing)",
           "group": "2_remove@1"
         }
       ]

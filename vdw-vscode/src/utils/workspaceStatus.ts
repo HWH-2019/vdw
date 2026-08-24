@@ -2,6 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import {
     Dependency,
+    RepositoryTopologyStatus,
     RepositoryRuntimeStatus,
     RepositoryRuntimeState,
     WorkspaceRuntimeStatus,
@@ -10,6 +11,9 @@ import {
 const ISSUE_STATES = new Set<RepositoryRuntimeState>([
     'missing',
     'invalidWorktree',
+    'unowned',
+    'topologyConflict',
+    'detachedLink',
     'scmMissing',
     'branchDrift',
 ]);
@@ -18,6 +22,7 @@ export function collectRepositoryRuntimeStatus(
     dependency: Dependency,
     workspaceRoot: string,
     gitApi?: any,
+    topology?: RepositoryTopologyStatus,
 ): RepositoryRuntimeStatus {
     const fullPath = path.resolve(workspaceRoot, dependency.path);
     const desiredRevision = getDesiredRevision(dependency);
@@ -36,7 +41,15 @@ export function collectRepositoryRuntimeStatus(
     const behind = numberOrZero(head?.behind);
 
     let state: RepositoryRuntimeStatus['state'];
-    if (!exists) {
+    if (topology?.topology_state === 'conflict') {
+        state = 'topologyConflict';
+    } else if (topology?.topology_state === 'unowned') {
+        state = 'unowned';
+    } else if (topology?.topology_state === 'detached') {
+        state = 'detachedLink';
+    } else if (topology?.topology_state === 'invalid_worktree') {
+        state = 'invalidWorktree';
+    } else if (topology?.topology_state === 'missing' || !exists) {
         state = 'missing';
     } else if (dependency.editable && !hasGitMetadata) {
         state = 'invalidWorktree';
@@ -62,6 +75,13 @@ export function collectRepositoryRuntimeStatus(
         changeCount,
         ahead,
         behind,
+        topologyState: topology?.topology_state,
+        recommendedAction: topology?.recommended_action,
+        trackedLinkCount: topology?.tracked_link_count ?? 0,
+        conflictCount: topology?.conflict_count ?? 0,
+        missingLinkCount: topology?.missing_count ?? 0,
+        detachedEquivalentCount: topology?.detached_equivalent_count ?? 0,
+        topologyMessage: topology?.message,
     };
 }
 
@@ -113,6 +133,12 @@ export function formatRepositoryDescription(
             return `${status.desiredRevision} · missing`;
         case 'invalidWorktree':
             return `${status.desiredRevision} · invalid worktree`;
+        case 'unowned':
+            return `${status.desiredRevision} · not owned by VDW`;
+        case 'topologyConflict':
+            return `${status.desiredRevision} · ${status.conflictCount} conflict${status.conflictCount === 1 ? '' : 's'}`;
+        case 'detachedLink':
+            return `${status.desiredRevision} · ${status.detachedEquivalentCount} detached link${status.detachedEquivalentCount === 1 ? '' : 's'}`;
         case 'scmMissing':
             return `${revision} · SCM not loaded`;
         case 'branchDrift':

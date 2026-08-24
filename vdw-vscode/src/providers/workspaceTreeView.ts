@@ -28,7 +28,7 @@ export class WorkspaceTreeProvider implements vscode.TreeDataProvider<WorkspaceT
 
     refresh(): void {
         this._onDidChangeTreeData.fire();
-        void this.statusService.refresh();
+        void this.statusService.refresh({ forceTopology: true });
     }
 
     getTreeItem(element: WorkspaceTreeItem): vscode.TreeItem {
@@ -95,13 +95,7 @@ function createRepositoryItem(
     dependency: Dependency,
     status: RepositoryRuntimeStatus,
 ): WorkspaceTreeItem {
-    const contextValue = status.state === 'missing'
-        ? 'vdwRepoMissing'
-        : status.state === 'invalidWorktree'
-            ? 'vdwRepoInvalid'
-            : dependency.editable
-                ? 'vdwRepoEditable'
-                : 'vdwRepoReadOnly';
+    const contextValue = getContextValue(dependency, status);
     const item = new WorkspaceTreeItem(
         getDependencyName(dependency),
         contextValue,
@@ -117,19 +111,7 @@ function createRepositoryItem(
         label: `${getDependencyName(dependency)}, ${item.description}`,
     };
 
-    if (status.exists && status.state !== 'invalidWorktree') {
-        item.command = dependency.editable
-            ? {
-                command: 'vdw.openSourceControl',
-                title: 'Open in Source Control',
-                arguments: [item],
-            }
-            : {
-                command: 'vdw.revealInExplorer',
-                title: 'Reveal in Explorer',
-                arguments: [item],
-            };
-    }
+    item.command = getDefaultCommand(dependency, status, item);
 
     return item;
 }
@@ -143,7 +125,11 @@ function getStatusIcon(
             return new vscode.ThemeIcon('sync~spin');
         case 'missing':
         case 'invalidWorktree':
+        case 'unowned':
             return new vscode.ThemeIcon('error', new vscode.ThemeColor('problemsErrorIcon.foreground'));
+        case 'topologyConflict':
+            return new vscode.ThemeIcon('diff', new vscode.ThemeColor('problemsErrorIcon.foreground'));
+        case 'detachedLink':
         case 'scmMissing':
         case 'branchDrift':
             return new vscode.ThemeIcon('warning', new vscode.ThemeColor('problemsWarningIcon.foreground'));
@@ -171,6 +157,9 @@ function buildTooltip(
     tooltip.appendMarkdown(`$(folder) Path: \`${dependency.path}\`\n\n`);
     tooltip.appendMarkdown(`Mode: **${dependency.editable ? 'Editable worktree' : 'Read-only projection'}**\n\n`);
     tooltip.appendMarkdown(`Status: **${formatRepositoryDescription(dependency, status)}**`);
+    if (status.topologyMessage) {
+        tooltip.appendMarkdown(`\n\n$(warning) ${status.topologyMessage}`);
+    }
 
     if (!isDefaultScope(dependency)) {
         tooltip.appendMarkdown(`\n\n$(filter) AI scope: \`${dependency.scope.include.join(', ')}\``);
@@ -197,5 +186,43 @@ function createCheckingStatus(
         changeCount: 0,
         ahead: 0,
         behind: 0,
+        trackedLinkCount: 0,
+        conflictCount: 0,
+        missingLinkCount: 0,
+        detachedEquivalentCount: 0,
     };
+}
+
+function getContextValue(
+    dependency: Dependency,
+    status: RepositoryRuntimeStatus,
+): string {
+    switch (status.state) {
+        case 'missing': return 'vdwRepoMissing';
+        case 'invalidWorktree': return 'vdwRepoInvalid';
+        case 'unowned': return 'vdwRepoUnowned';
+        case 'topologyConflict': return 'vdwRepoConflict';
+        case 'detachedLink': return 'vdwRepoDetached';
+        default: return dependency.editable ? 'vdwRepoEditable' : 'vdwRepoReadOnly';
+    }
+}
+
+function getDefaultCommand(
+    dependency: Dependency,
+    status: RepositoryRuntimeStatus,
+    item: WorkspaceTreeItem,
+): vscode.Command | undefined {
+    if (status.state === 'missing') {
+        return { command: 'vdw.linkRepo', title: 'Link Repository', arguments: [item] };
+    }
+    if (status.state === 'topologyConflict') {
+        return { command: 'vdw.resolveRepoConflicts', title: 'Inspect Link Conflicts', arguments: [item] };
+    }
+    if (['invalidWorktree', 'unowned', 'detachedLink'].includes(status.state)) {
+        return { command: 'vdw.relink', title: 'Reconcile Workspace' };
+    }
+    if (!status.exists) return undefined;
+    return dependency.editable
+        ? { command: 'vdw.openSourceControl', title: 'Open in Source Control', arguments: [item] }
+        : { command: 'vdw.revealInExplorer', title: 'Reveal in Explorer', arguments: [item] };
 }

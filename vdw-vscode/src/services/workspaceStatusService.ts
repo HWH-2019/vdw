@@ -1,8 +1,10 @@
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { ConfigService } from './configService';
+import { VDWCliService } from './vdwCliService';
 import {
     Dependency,
+    WorkspaceTopologyStatusResult,
     RepositoryRuntimeStatus,
     WorkspaceRuntimeStatus,
 } from '../types/vdwTypes';
@@ -18,6 +20,12 @@ const EMPTY_STATUS: WorkspaceRuntimeStatus = {
     dirtyCount: 0,
 };
 
+const TOPOLOGY_CACHE_MS = 5_000;
+
+interface RefreshOptions {
+    forceTopology?: boolean;
+}
+
 /**
  * Builds a runtime-only snapshot from the workspace and VS Code Git model.
  * Dynamic UI state deliberately stays out of VDW's persisted state.json.
@@ -29,6 +37,9 @@ export class WorkspaceStatusService implements vscode.Disposable {
     private snapshot: WorkspaceRuntimeStatus = EMPTY_STATUS;
     private refreshPromise: Promise<WorkspaceRuntimeStatus> | undefined;
     private refreshRequested = false;
+    private forceTopologyRequested = false;
+    private topologySnapshot: WorkspaceTopologyStatusResult | undefined;
+    private topologyRefreshedAt = 0;
     private gitApi: any | undefined;
     private gitApiSubscriptions: vscode.Disposable[] = [];
     private repositorySubscriptions: vscode.Disposable[] = [];
@@ -36,6 +47,7 @@ export class WorkspaceStatusService implements vscode.Disposable {
 
     constructor(
         private readonly configService: ConfigService,
+        private readonly cliService: VDWCliService,
         private readonly workspaceRoot: string,
     ) {}
 
@@ -47,17 +59,20 @@ export class WorkspaceStatusService implements vscode.Disposable {
         return this.snapshot.repositories.find(status => status.dependencyPath === dependency.path);
     }
 
-    refresh(): Promise<WorkspaceRuntimeStatus> {
+    refresh(options: RefreshOptions = {}): Promise<WorkspaceRuntimeStatus> {
         if (this.refreshPromise) {
             this.refreshRequested = true;
+            this.forceTopologyRequested ||= options.forceTopology === true;
             return this.refreshPromise.then(() => {
                 if (!this.refreshRequested) return this.snapshot;
                 this.refreshRequested = false;
-                return this.refresh();
+                const forceTopology = this.forceTopologyRequested;
+                this.forceTopologyRequested = false;
+                return this.refresh({ forceTopology });
             });
         }
 
-        this.refreshPromise = this.collectSnapshot()
+        this.refreshPromise = this.collectSnapshot(options.forceTopology === true)
             .then(snapshot => {
                 this.snapshot = snapshot;
                 this.bindRepositoryListeners();
@@ -75,15 +90,38 @@ export class WorkspaceStatusService implements vscode.Disposable {
         return this.refreshPromise;
     }
 
-    private async collectSnapshot(): Promise<WorkspaceRuntimeStatus> {
+    private async collectSnapshot(forceTopology: boolean): Promise<WorkspaceRuntimeStatus> {
         const config = this.configService.getConfig();
         if (!config) return EMPTY_STATUS;
 
-        const gitApi = await this.getGitApi();
+        const [gitApi, topology] = await Promise.all([
+            this.getGitApi(),
+            this.getTopologyStatus(forceTopology),
+        ]);
+        const topologyByPath = new Map(
+            topology?.repositories.map(repository => [repository.path, repository]) ?? [],
+        );
         const repositories = config.dependencies.map(dependency =>
-            collectRepositoryRuntimeStatus(dependency, this.workspaceRoot, gitApi),
+            collectRepositoryRuntimeStatus(
+                dependency,
+                this.workspaceRoot,
+                gitApi,
+                topologyByPath.get(dependency.path),
+            ),
         );
         return summarizeWorkspaceStatus(repositories);
+    }
+
+    private async getTopologyStatus(force: boolean): Promise<WorkspaceTopologyStatusResult | undefined> {
+        const cacheFresh = Date.now() - this.topologyRefreshedAt < TOPOLOGY_CACHE_MS;
+        if (!force && cacheFresh) return this.topologySnapshot;
+
+        const topology = await this.cliService.getWorkspaceStatus();
+        this.topologyRefreshedAt = Date.now();
+        if (topology) {
+            this.topologySnapshot = topology;
+        }
+        return topology ?? this.topologySnapshot;
     }
 
     private async getGitApi(): Promise<any | undefined> {

@@ -53,10 +53,51 @@ export interface RepoStatusResult {
     worktree_path: string | null;
 }
 
+export type VDWTopologyState =
+    | 'ready'
+    | 'missing'
+    | 'invalid_worktree'
+    | 'unowned'
+    | 'conflict'
+    | 'detached';
+
+export type VDWRecommendedAction =
+    | 'none'
+    | 'link'
+    | 'relink'
+    | 'resolve_conflicts';
+
+export interface RepositoryTopologyStatus {
+    repo: string;
+    path: string;
+    full_path: string;
+    editable: boolean;
+    declared_revision: string;
+    topology_state: VDWTopologyState;
+    recommended_action: VDWRecommendedAction;
+    tracked_link_count: number;
+    conflict_count: number;
+    missing_count: number;
+    detached_equivalent_count: number;
+    message?: string;
+}
+
+export interface WorkspaceTopologyStatusResult {
+    workspace_root: string;
+    workspace_name: string;
+    healthy: boolean;
+    issue_count: number;
+    conflict_count: number;
+    repositories: RepositoryTopologyStatus[];
+}
+
 export type RepositoryRuntimeState =
     | 'checking'
     | 'missing'
     | 'invalidWorktree'
+    | 'unowned'
+    | 'topologyConflict'
+    | 'detachedLink'
     | 'scmMissing'
     | 'branchDrift'
     | 'dirty'
@@ -75,6 +116,13 @@ export interface RepositoryRuntimeStatus {
     changeCount: number;
     ahead: number;
     behind: number;
+    topologyState?: VDWTopologyState;
+    recommendedAction?: VDWRecommendedAction;
+    trackedLinkCount: number;
+    conflictCount: number;
+    missingLinkCount: number;
+    detachedEquivalentCount: number;
+    topologyMessage?: string;
 }
 
 export interface WorkspaceRuntimeStatus {
