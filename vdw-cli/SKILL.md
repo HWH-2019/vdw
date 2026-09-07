@@ -28,13 +28,14 @@ Each step is a discrete, reusable operation. Scenarios chain them together.
 | **G** | Remove repo | `vdw repo remove {name}` |
 | **H** | List repos | `vdw repo list` |
 | **I** | Validate config | `vdw validate` |
-| **J** | Doctor | `vdw doctor` |
-| **K** | AI context preview | `vdw context preview` |
-| **L** | AI context stats | `vdw context stats` |
-| **M** | Worktree list | `vdw worktree list` |
-| **N** | Worktree create | `vdw worktree create {repo} {branch}` |
-| **O** | Worktree delete | `vdw worktree delete {repo} {branch} [--force]` |
-| **P** | Launch IDE | `bash {skill_dir}/scripts/open-workspace.sh {path}` |
+| **J** | Check topology | `vdw status --json` |
+| **K** | Doctor | `vdw doctor` |
+| **L** | AI context preview | `vdw context preview` |
+| **M** | AI context stats | `vdw context stats` |
+| **N** | Worktree list | `vdw worktree list` |
+| **O** | Worktree create | `vdw worktree create {repo} {branch}` |
+| **P** | Worktree delete | `vdw worktree delete {repo} {branch} [--force]` |
+| **Q** | Launch IDE | `bash {skill_dir}/scripts/open-workspace.sh {path}` |
 
 Full command syntax: [reference.md](reference.md)
 
@@ -46,13 +47,13 @@ Determine the user's situation, then follow the corresponding chain:
 
 | Scenario | When to Use | Chain |
 |----------|-------------|-------|
-| **全流程** | Workspace dir doesn't exist yet, setting up from scratch | **A → B → C/D → P** |
-| **工作空间构建** | `.vdwrc` exists but repos not linked | **A → C/D** |
-| **添加单个仓库** | Adding a new dep to existing workspace | **H → A → C/D → E --repo** |
+| **全流程** | Workspace dir doesn't exist yet, setting up from scratch | **A → B → C/D → E → I → J → L/M → Q** |
+| **工作空间构建** | `.vdwrc` exists but repos not linked | **A → C/D → E → I → J** |
+| **添加单个仓库** | Adding a new dep to existing workspace | **H → A → C/D → E --repo → I → J** |
 | **移除仓库** | Removing a dep from workspace | **H → G** |
-| **诊断排查** | Something is broken | **I → J** |
-| **AI 上下文** | Review/preview AI context | **K → L** |
-| **Worktree 管理** | Create/delete branches for editable repos | **M → N/O** |
+| **诊断排查** | Something is broken | **I → J → K** |
+| **AI 上下文** | Review/preview AI context | **L → M** |
+| **Worktree 管理** | Create/delete branches for editable repos | **N → O/P** |
 | **清理空间** | Remove all links, keep config | **F → E** (if re-link desired) |
 
 ---
@@ -75,7 +76,7 @@ Determine the user's situation, then follow the corresponding chain:
 | ui-lib | /Users/dev/projects/ui-lib | feat-x | yes |
 ```
 
-4. Ask user to confirm or provide missing URLs
+4. Ask user to confirm or provide missing URLs and branches. Never infer an unknown branch as `main`.
 
 ### B — Init Workspace
 
@@ -103,7 +104,7 @@ cd {workspace_path} && vdw repo add "{url}" --path "./packages/{name}" --branch 
 
 **Editable flag**: `--editable` if modifying; omit for read-only reference. If unsure, ask.
 
-**After `vdw repo add`**: check `~/.vdw/store/objects/{name}-*/metadata.json` — `commit_hash` must be non-empty and `size_bytes > 0`, otherwise fetch silently failed.
+`vdw repo add` updates the Store and `.vdwrc`; it does not materialize the configured workspace path. Always run capability E afterward.
 
 **Editable lock conflict**: `--editable` may auto-downgrade to read-only if the same branch is already editable in another workspace. This is expected.
 
@@ -115,7 +116,9 @@ cd {workspace_path} && vdw link
 
 Wait for completion. Verify output: `✅ Workspace linked successfully!` with correct editable/read-only count.
 
-### P — Launch IDE
+Then run `vdw validate` and `vdw status --json`. For every editable dependency, also read back its actual `git branch --show-current`, `git rev-parse HEAD`, and `git remote get-url origin` from the configured workspace path. Treat these values as authoritative; Store metadata alone is not proof of the linked branch or commit.
+
+### Q — Launch IDE
 
 ```bash
 bash {skill_dir}/scripts/open-workspace.sh "{workspace_path}"
@@ -128,6 +131,8 @@ Auto-detects: Qoder → VS Code → Cursor → Trae → Windsurf → Finder.
 ## Important Notes
 
 - **`vdw` in PATH** — if not found, try `~/.local/bin/vdw`
-- **Branch required** — always `--branch`, default `main` if unknown
-- **Cleanup on failure** — `rm -rf` the workspace dir and retry
+- **Branch required** — always pass the confirmed branch; stop and ask if it is unknown
+- **Preserve work** — before unlinking, removing, relinking, or moving a workspace, inspect `vdw status --json` and every editable repository's Git status
+- **Cleanup on failure** — do not recursively delete the workspace. Diagnose with `vdw status`, `vdw conflicts list`, and `vdw doctor`; use VDW cleanup commands only after confirming their targets and dirty state
+- **AI scope** — `vdw context preview` is a context-selection contract, not a filesystem security boundary for editable worktrees
 - **Full CLI reference** — see [reference.md](reference.md) for all commands and options
