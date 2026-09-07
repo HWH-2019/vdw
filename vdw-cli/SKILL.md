@@ -30,8 +30,8 @@ Each step is a discrete, reusable operation. Scenarios chain them together.
 | **I** | Validate config | `vdw validate` |
 | **J** | Check topology | `vdw status --json` |
 | **K** | Doctor | `vdw doctor` |
-| **L** | AI context preview | `vdw context preview` |
-| **M** | AI context stats | `vdw context stats` |
+| **L** | AI context preview | `vdw context preview --json` |
+| **M** | AI context stats | `vdw context stats --json` |
 | **N** | Worktree list | `vdw worktree list` |
 | **O** | Worktree create | `vdw worktree create {repo} {branch}` |
 | **P** | Worktree delete | `vdw worktree delete {repo} {branch} [--force]` |
@@ -134,5 +134,5 @@ Auto-detects: Qoder → VS Code → Cursor → Trae → Windsurf → Finder.
 - **Branch required** — always pass the confirmed branch; stop and ask if it is unknown
 - **Preserve work** — before unlinking, removing, relinking, or moving a workspace, inspect `vdw status --json` and every editable repository's Git status
 - **Cleanup on failure** — do not recursively delete the workspace. Diagnose with `vdw status`, `vdw conflicts list`, and `vdw doctor`; use VDW cleanup commands only after confirming their targets and dirty state
-- **AI scope** — `vdw context preview` is a context-selection contract, not a filesystem security boundary for editable worktrees
+- **AI scope** — read `vdw context preview --json` before broad code discovery and use its workspace-relative `files` as the default read/search boundary. Expand beyond it only when the task requires related files, and report that expansion. This contract is not a filesystem security boundary for editable worktrees
 - **Full CLI reference** — see [reference.md](reference.md) for all commands and options

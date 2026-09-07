@@ -175,7 +175,10 @@ List files that would be included in AI context (scoped by `.vdwrc` include/excl
 
 ```bash
 vdw context preview
+vdw context preview --json   # stable machine-readable contract for AI agents
 ```
+
+JSON output contains the workspace root/name, total file count, and one entry per repository with `linked` state and workspace-relative `files`.
 
 ---
 
@@ -185,6 +188,7 @@ Show file count and total size per dependency in the AI context.
 
 ```bash
 vdw context stats
+vdw context stats --json
 ```
 
 ---

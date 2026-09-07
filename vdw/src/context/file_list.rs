@@ -3,12 +3,13 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 use parking_lot::RwLock;
+use serde::Serialize;
 
 use crate::context::filter;
 use crate::types::config::VDWConfig;
 
 /// Context statistics for display
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct ContextStats {
     pub total_files: usize,
     pub total_size_bytes: u64,
@@ -16,7 +17,7 @@ pub struct ContextStats {
 }
 
 /// Statistics for a single dependency
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct DependencyStats {
     pub repo: String,
     pub path: String,

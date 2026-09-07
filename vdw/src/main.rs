@@ -151,9 +151,17 @@ enum WorktreeCommands {
 #[derive(Subcommand)]
 enum ContextCommands {
     /// Preview the AI context for the workspace
-    Preview,
+    Preview {
+        /// Print machine-readable JSON
+        #[arg(long)]
+        json: bool,
+    },
     /// Show context statistics
-    Stats,
+    Stats {
+        /// Print machine-readable JSON
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -222,8 +230,8 @@ fn run_command(cli: Cli) -> anyhow::Result<()> {
             } => commands::worktree::delete(repo, branch, force),
         },
         Commands::Context { command } => match command {
-            ContextCommands::Preview => commands::context::preview(),
-            ContextCommands::Stats => commands::context::stats(),
+            ContextCommands::Preview { json } => commands::context::preview(json),
+            ContextCommands::Stats { json } => commands::context::stats(json),
         },
         Commands::Doctor { check_links } => commands::doctor::execute(check_links),
         Commands::Validate => commands::doctor::validate(),

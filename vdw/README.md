@@ -296,10 +296,14 @@ vdw validate
 ```bash
 # Preview files that will be included in AI context
 vdw context preview
+vdw context preview --json   # machine-readable workspace-relative file list
 
 # Show statistics (file count, total size by dependency)
 vdw context stats
+vdw context stats --json
 ```
+
+The JSON preview is the context-selection contract for AI integrations. It does not hide files from an editable worktree or act as a filesystem security boundary.
 
 ### 🌿 Worktrees (for editable repos)
 
