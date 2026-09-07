@@ -28,6 +28,7 @@ Think of it as **`npm link` but for any language**, combined with **AI-aware fil
 agent-vdm/
 ├── vdw/                    # 🦀 Rust CLI — core engine
 ├── vdw-vscode/             # 🧩 VS Code Extension — GUI frontend
+├── vdw-cli/                # 🤖 AI agent Skill — workspace setup workflows
 ├── vdw-test/               # 🧪 Test workspace with sample .vdwrc
 ├── ai_workspace/           # 📋 PRD & technical design documents
 ├── .github/workflows/      # ⚙️ CI/CD pipeline
@@ -40,6 +41,7 @@ agent-vdm/
 |---------|-------------|---------------|
 | 🦀 **[vdw](vdw/)** | Rust CLI — clone, link, worktree, context filtering | [vdw/README.md](vdw/README.md) |
 | 🧩 **[vdw-vscode](vdw-vscode/)** | VS Code extension — tree view, add repo wizard, status bar | [vdw-vscode/README.md](vdw-vscode/README.md) |
+| 🤖 **[vdw-cli](vdw-cli/)** | AI agent Skill — guided workspace initialization, repository setup, and IDE launch | [vdw-cli/SKILL.md](vdw-cli/SKILL.md) |
 
 ### Design Documents
 
@@ -55,9 +57,9 @@ agent-vdm/
 
 ## 📦 Installation
 
-The CLI is required. The VS Code extension is optional, but recommended for repository management and Source Control integration.
+The CLI is required. The VS Code extension and AI agent Skill are optional companion components.
 
-Install the CLI and VSIX from the same release version whenever possible; newer extension commands may not exist in an older CLI.
+Install the CLI, VSIX, and Skill from the same release version whenever possible; newer extension or Skill commands may not exist in an older CLI.
 
 ### 1. Install the VDW CLI
 
@@ -151,7 +153,21 @@ The extension launches `vdw` from the IDE process environment. If the IDE cannot
 
 Use `C:\\Users\\your-name\\.local\\bin\\vdw.exe` on Windows.
 
-### 3. Verify the installation
+### 3. Install the AI agent Skill
+
+Download `vdw_cli_skill_<version>.tar.gz` from the same [GitHub Release](https://github.com/HWH-2019/vdw/releases), then extract it into your agent's Skill directory:
+
+```bash
+VERSION=0.7.1
+SKILL_HOME="$HOME/.qoder/skills"  # use $HOME/.codex/skills for Codex
+mkdir -p "$SKILL_HOME"
+tar -xzf "vdw_cli_skill_${VERSION}.tar.gz" -C "$SKILL_HOME"
+test -f "$SKILL_HOME/vdw-cli/SKILL.md"
+```
+
+To install directly from a source checkout instead, copy the top-level `vdw-cli/` directory into the same Skill directory.
+
+### 4. Verify the installation
 
 ```bash
 vdw --version
@@ -312,7 +328,7 @@ See [vdw-vscode/README.md](vdw-vscode/README.md) for full documentation.
 
 ### 🤖 AI Agent Skill
 
-VDW also ships with a **Qoder skill** ([vdw-cli](.qoder/skills/vdw-cli/SKILL.md)) that lets AI coding agents automatically set up workspaces:
+VDW also ships with an **AI agent Skill** ([vdw-cli](vdw-cli/SKILL.md)) that lets compatible coding agents automatically set up workspaces:
 
 - 🏁 Initialize `.vdwrc` after requirements analysis
 - 📥 Add repos with `--editable` or read-only mode
@@ -346,6 +362,9 @@ cd vdw-vscode && npm ci && npm run compile
 
 # Package VSIX
 npm run package
+
+# Package the AI agent Skill
+cd .. && make package-skill
 ```
 
 ---

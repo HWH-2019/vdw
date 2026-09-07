@@ -12,6 +12,7 @@ This script:
   - macOS: builds a DMG for the CLI
   - Linux: builds a tar.gz for the CLI
   - Always packages the VS Code extension as a VSIX
+  - Always packages the vdw-cli AI agent Skill as a tar.gz
   - Checks version consistency between CLI and VSIX
   - Prints a summary of all generated artifacts
 
@@ -45,9 +46,11 @@ log_info "Detected platform: ${OS_NAME} / ${ARCH}"
 # ─── Version Consistency Check ────────────────────────────────────────────────
 VDW_VERSION="$(get_vdw_version)"
 VSCODE_VERSION="$(get_vscode_version)"
+SKILL_VERSION="$(get_skill_version)"
 
 log_info "CLI version:    ${VDW_VERSION}"
 log_info "VSIX version:   ${VSCODE_VERSION}"
+log_info "Skill version:  ${SKILL_VERSION}"
 
 if [[ "${VDW_VERSION}" != "${VSCODE_VERSION}" ]]; then
     log_warn "Version mismatch! CLI=${VDW_VERSION}, VSIX=${VSCODE_VERSION}"
@@ -75,6 +78,10 @@ esac
 log_info "Packaging VS Code extension..."
 VSIX_ARTIFACT="$("${SCRIPT_DIR}/package_vscode.sh")"
 
+# ─── Package AI Agent Skill ──────────────────────────────────────────────────
+log_info "Packaging vdw-cli AI agent Skill..."
+SKILL_ARTIFACT="$("${SCRIPT_DIR}/package_skill.sh")"
+
 # ─── Summary ──────────────────────────────────────────────────────────────────
 echo ""
 echo "═══════════════════════════════════════════════════════"
@@ -83,10 +90,12 @@ echo "════════════════════════�
 echo "  Platform:    ${OS_NAME} / ${ARCH}"
 echo "  CLI version: ${VDW_VERSION}"
 echo "  VSIX version: ${VSCODE_VERSION}"
+echo "  Skill version: ${SKILL_VERSION}"
 echo "───────────────────────────────────────────────────────"
 if [[ -n "${CLI_ARTIFACT}" ]]; then
     echo "  CLI:  ${CLI_ARTIFACT}"
 fi
 echo "  VSIX: ${VSIX_ARTIFACT}"
+echo "  Skill: ${SKILL_ARTIFACT}"
 echo "═══════════════════════════════════════════════════════"
 echo ""

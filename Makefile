@@ -1,4 +1,4 @@
-.PHONY: package package-vdw package-vdw-dmg package-vscode
+.PHONY: package package-vdw package-vdw-dmg package-vscode package-skill
 
 package:
 	bash scripts/package_all.sh
@@ -11,3 +11,6 @@ package-vdw-dmg:
 
 package-vscode:
 	bash scripts/package_vscode.sh
+
+package-skill:
+	bash scripts/package_skill.sh

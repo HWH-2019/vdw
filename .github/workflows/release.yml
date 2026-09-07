@@ -114,9 +114,20 @@ jobs:
           name: vdw-vscode-vsix
           path: vdw_vscode_*.vsix
 
+  build-skill:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Package vdw-cli Skill
+        run: bash scripts/package_skill.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: skill-vdw-cli
+          path: dist/vdw_cli_skill_*.tar.gz
+
   release:
     name: Create Release
-    needs: [build, build-vsix]
+    needs: [build, build-vsix, build-skill]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -136,6 +147,7 @@ jobs:
           files: |
             vdw-*/*.tar.gz
             vdw-vscode-vsix/*.vsix
+            skill-vdw-cli/*.tar.gz
             checksums.txt
           generate_release_notes: true
           draft: false

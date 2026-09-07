@@ -38,6 +38,11 @@ get_vscode_version() {
     sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\(.*\)".*/\1/p' "${PROJECT_ROOT}/vdw-vscode/package.json" | head -1
 }
 
+get_skill_version() {
+    # The Skill is released in lockstep with the CLI and uses the CLI version.
+    get_vdw_version
+}
+
 # ─── Artifact Naming ──────────────────────────────────────────────────────────
 # Usage: get_artifact_name <name> <os> <arch> <version> <ext>
 # Example: get_artifact_name vdw darwin arm64 0.5.0 tar.gz
