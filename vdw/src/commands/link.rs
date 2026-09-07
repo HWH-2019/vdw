@@ -197,8 +197,9 @@ pub fn execute(repo_filter: Option<&str>, watch: bool) -> Result<()> {
             editable_count += 1;
             println!("  Editable worktree: {}", target_dir.display());
         } else {
-            let checkout_dir = repo_dir.join("checkout");
-            try_link_step!(checkout_from_bare(&bare_git_path, &checkout_dir, dep));
+            let checkouts_dir = repo_dir.join("checkouts");
+            let checkout_dir =
+                try_link_step!(checkout_from_bare(&bare_git_path, &checkouts_dir, dep));
             let entries = try_link_step!(engine::create_dependency_links(
                 &checkout_dir,
                 &target_dir,
@@ -692,83 +693,128 @@ fn rollback_link_transaction(
     }
 }
 
-/// Checkout files from a bare repo to a directory
-/// For read-only mode: we need to extract the working tree from the bare repo
+/// Checkout files from a bare repo into an immutable, commit-keyed directory.
+///
+/// Resolving the declared revision before choosing the directory prevents two
+/// workspaces that use different revisions of the same repository from sharing
+/// stale files.
 fn checkout_from_bare(
     bare_git_path: &Path,
-    checkout_dir: &Path,
+    checkouts_dir: &Path,
     dep: &crate::types::config::Dependency,
-) -> Result<()> {
-    // If checkout already exists and is non-empty, ensure files are read-only
-    // (handles upgrade from older VDW versions that didn't set read-only)
-    if checkout_dir.exists() && std::fs::read_dir(checkout_dir)?.next().is_some() {
-        make_dir_readonly_recursive(checkout_dir)?;
-        return Ok(());
-    }
-
-    std::fs::create_dir_all(checkout_dir)?;
-
-    let branch = dep
+) -> Result<PathBuf> {
+    let revision = dep
         .branch
         .as_deref()
         .or(dep.tag.as_deref())
         .or(dep.commit.as_deref())
         .unwrap_or("main");
 
-    // Use git2 to checkout the tree into checkout_dir
-    let repo = match git2::Repository::open_bare(bare_git_path) {
-        Ok(r) => r,
-        Err(e) => {
-            tracing::warn!(
-                "Cannot open bare repo at {}: {}",
-                bare_git_path.display(),
-                e
-            );
-            return Ok(());
-        }
-    };
+    let repo = git2::Repository::open_bare(bare_git_path)
+        .with_context(|| format!("Cannot open bare repo at {}", bare_git_path.display()))?;
+    let commit = find_commit_for_ref(&repo, revision)?;
+    let commit_id = commit.id();
+    let checkout_dir = checkouts_dir.join(commit_id.to_string());
 
-    // Try to find the branch/commit reference and get the tree
-    let tree = find_tree_for_ref(&repo, branch);
-
-    match tree {
-        Ok(tree) => {
-            write_tree_to_dir(&repo, &tree, checkout_dir)?;
-        }
-        Err(e) => {
-            // If we can't find the branch, it might not have been fetched
-            tracing::warn!("Cannot find branch/commit '{}' in bare repo: {}", branch, e);
-        }
+    if checkout_dir.exists() && std::fs::read_dir(&checkout_dir)?.next().is_some() {
+        make_dir_readonly_recursive(&checkout_dir)?;
+        return Ok(checkout_dir);
     }
 
-    Ok(())
+    std::fs::create_dir_all(checkouts_dir)?;
+    if checkout_dir.exists() {
+        std::fs::remove_dir(&checkout_dir).with_context(|| {
+            format!(
+                "Cannot replace incomplete read-only checkout {}",
+                checkout_dir.display()
+            )
+        })?;
+    }
+
+    let staging_dir = checkouts_dir.join(format!(
+        ".tmp-{}-{}-{}",
+        commit_id,
+        std::process::id(),
+        Utc::now().timestamp_nanos_opt().unwrap_or_default()
+    ));
+    std::fs::create_dir(&staging_dir)?;
+
+    let tree = commit.tree()?;
+    if let Err(error) = write_tree_to_dir(&repo, &tree, &staging_dir) {
+        let _ = remove_checkout_staging(&staging_dir);
+        return Err(error.context(format!(
+            "Failed to materialize revision '{}' ({})",
+            revision, commit_id
+        )));
+    }
+
+    match std::fs::rename(&staging_dir, &checkout_dir) {
+        Ok(()) => Ok(checkout_dir),
+        Err(_) if checkout_dir.exists() && std::fs::read_dir(&checkout_dir)?.next().is_some() => {
+            remove_checkout_staging(&staging_dir)?;
+            make_dir_readonly_recursive(&checkout_dir)?;
+            Ok(checkout_dir)
+        }
+        Err(error) => {
+            let _ = remove_checkout_staging(&staging_dir);
+            Err(error).with_context(|| {
+                format!(
+                    "Cannot publish read-only checkout for revision '{}' ({})",
+                    revision, commit_id
+                )
+            })
+        }
+    }
 }
 
-/// Find the git tree for a given branch/tag/commit reference
-fn find_tree_for_ref<'a>(repo: &'a git2::Repository, reference: &str) -> Result<git2::Tree<'a>> {
-    // Try local branch first
-    if let Ok(branch_ref) = repo.find_branch(reference, git2::BranchType::Local) {
-        let commit = branch_ref.get().peel_to_commit()?;
-        return Ok(commit.tree()?);
+/// Resolve a declared branch, tag, or commit to the exact commit to cache.
+fn find_commit_for_ref<'a>(
+    repo: &'a git2::Repository,
+    reference: &str,
+) -> Result<git2::Commit<'a>> {
+    let candidates = [
+        format!("refs/remotes/origin/{}", reference),
+        format!("refs/heads/{}", reference),
+        format!("refs/tags/{}", reference),
+        reference.to_string(),
+    ];
+
+    for candidate in candidates {
+        if let Ok(object) = repo.revparse_single(&candidate) {
+            if let Ok(commit) = object.peel_to_commit() {
+                return Ok(commit);
+            }
+        }
     }
 
-    // Try remote branch (origin/<reference>)
-    let remote_name = format!("origin/{}", reference);
-    if let Ok(branch_ref) = repo.find_branch(&remote_name, git2::BranchType::Remote) {
-        let commit = branch_ref.get().peel_to_commit()?;
-        return Ok(commit.tree()?);
-    }
-
-    // Try as a commit OID
     if let Ok(oid) = git2::Oid::from_str(reference) {
-        let commit = repo.find_commit(oid)?;
-        return Ok(commit.tree()?);
+        return Ok(repo.find_commit(oid)?);
     }
 
     Err(anyhow::anyhow!(
         "Cannot find reference '{}' in repository",
         reference
     ))
+}
+
+fn remove_checkout_staging(path: &Path) -> Result<()> {
+    if !path.exists() {
+        return Ok(());
+    }
+
+    for entry in WalkDir::new(path)
+        .into_iter()
+        .filter_map(|entry| entry.ok())
+    {
+        if entry.file_type().is_file() {
+            let mut permissions = std::fs::metadata(entry.path())?.permissions();
+            #[allow(clippy::permissions_set_readonly_false)]
+            permissions.set_readonly(false);
+            std::fs::set_permissions(entry.path(), permissions)?;
+        }
+    }
+    std::fs::remove_dir_all(path)?;
+    Ok(())
 }
 
 /// Recursively write a git tree to a directory.
@@ -1389,42 +1435,147 @@ mod tests {
         }
     }
 
-    /// Test that checkout_from_bare skips when checkout already exists
-    #[test]
-    fn test_checkout_from_bare_skips_existing() {
+    fn create_bare_repo_with_revisions() -> (tempfile::TempDir, git2::Oid, git2::Oid) {
         let dir = tempfile::tempdir().expect("Failed to create temp dir");
-        let checkout_dir = dir.path().join("checkout");
-        fs::create_dir_all(&checkout_dir).expect("Failed to create checkout dir");
+        let bare_path = dir.path().join("bare.git");
+        let repo = git2::Repository::init_bare(&bare_path).expect("Failed to initialize bare repo");
+        let signature = git2::Signature::now("VDW Test", "vdw@example.com")
+            .expect("Failed to create signature");
 
-        // Put a file in checkout to make it non-empty
-        fs::write(checkout_dir.join("existing.txt"), "content").expect("Failed to write file");
+        let main_blob = repo.blob(b"main").expect("Failed to create main blob");
+        let mut main_builder = repo
+            .treebuilder(None)
+            .expect("Failed to create tree builder");
+        main_builder
+            .insert("tracked.txt", main_blob, 0o100644)
+            .expect("Failed to insert main blob");
+        let main_tree_id = main_builder.write().expect("Failed to write main tree");
+        let main_tree = repo
+            .find_tree(main_tree_id)
+            .expect("Failed to find main tree");
+        let main_id = repo
+            .commit(
+                Some("refs/heads/main"),
+                &signature,
+                &signature,
+                "main",
+                &main_tree,
+                &[],
+            )
+            .expect("Failed to create main commit");
+        let main_commit = repo
+            .find_commit(main_id)
+            .expect("Failed to find main commit");
 
-        // Create a minimal dep config
-        let dep = crate::types::config::Dependency {
+        let feature_blob = repo
+            .blob(b"feature")
+            .expect("Failed to create feature blob");
+        let mut feature_builder = repo
+            .treebuilder(None)
+            .expect("Failed to create feature tree builder");
+        feature_builder
+            .insert("tracked.txt", feature_blob, 0o100644)
+            .expect("Failed to insert feature blob");
+        let feature_tree_id = feature_builder
+            .write()
+            .expect("Failed to write feature tree");
+        let feature_tree = repo
+            .find_tree(feature_tree_id)
+            .expect("Failed to find feature tree");
+        let feature_id = repo
+            .commit(
+                Some("refs/heads/feature"),
+                &signature,
+                &signature,
+                "feature",
+                &feature_tree,
+                &[&main_commit],
+            )
+            .expect("Failed to create feature commit");
+        repo.reference("refs/tags/v1", main_id, false, "test tag")
+            .expect("Failed to create tag");
+
+        drop(feature_tree);
+        drop(feature_builder);
+        drop(main_commit);
+        drop(main_tree);
+        drop(main_builder);
+        drop(repo);
+        (dir, main_id, feature_id)
+    }
+
+    fn readonly_dependency(
+        branch: Option<&str>,
+        tag: Option<&str>,
+        commit: Option<&str>,
+    ) -> Dependency {
+        Dependency {
             remote: "https://github.com/test/repo.git".to_string(),
             origin: String::new(),
             local: String::new(),
             repo: String::new(),
             path: "libs/repo".to_string(),
-            branch: Some("main".to_string()),
-            tag: None,
-            commit: None,
+            branch: branch.map(str::to_string),
+            tag: tag.map(str::to_string),
+            commit: commit.map(str::to_string),
             scope: Scope::default(),
             editable: false,
-        };
+        }
+    }
 
-        // Should skip (no bare.git exists, but that's ok because it skips before opening)
+    /// Different declared revisions of one repository must never reuse a checkout.
+    #[test]
+    fn test_readonly_checkouts_are_isolated_by_resolved_commit() {
+        let (dir, main_id, feature_id) = create_bare_repo_with_revisions();
         let bare_git_path = dir.path().join("bare.git");
-        let result = checkout_from_bare(&bare_git_path, &checkout_dir, &dep);
-        assert!(
-            result.is_ok(),
-            "Should succeed when checkout already exists"
+        let checkouts_dir = dir.path().join("checkouts");
+
+        let main_checkout = checkout_from_bare(
+            &bare_git_path,
+            &checkouts_dir,
+            &readonly_dependency(Some("main"), None, None),
+        )
+        .expect("Failed to checkout main");
+        let feature_checkout = checkout_from_bare(
+            &bare_git_path,
+            &checkouts_dir,
+            &readonly_dependency(Some("feature"), None, None),
+        )
+        .expect("Failed to checkout feature");
+
+        assert_eq!(main_checkout, checkouts_dir.join(main_id.to_string()));
+        assert_eq!(feature_checkout, checkouts_dir.join(feature_id.to_string()));
+        assert_ne!(main_checkout, feature_checkout);
+        assert_eq!(
+            fs::read_to_string(main_checkout.join("tracked.txt")).unwrap(),
+            "main"
+        );
+        assert_eq!(
+            fs::read_to_string(feature_checkout.join("tracked.txt")).unwrap(),
+            "feature"
         );
 
-        // Existing file should still be there
-        assert!(
-            checkout_dir.join("existing.txt").exists(),
-            "Existing file should not be touched"
-        );
+        let reused_main = checkout_from_bare(
+            &bare_git_path,
+            &checkouts_dir,
+            &readonly_dependency(None, Some("v1"), None),
+        )
+        .expect("Failed to reuse tagged main commit");
+        assert_eq!(reused_main, main_checkout);
+    }
+
+    #[test]
+    fn test_readonly_checkout_rejects_unknown_revision() {
+        let (dir, _, _) = create_bare_repo_with_revisions();
+        let error = checkout_from_bare(
+            &dir.path().join("bare.git"),
+            &dir.path().join("checkouts"),
+            &readonly_dependency(Some("missing"), None, None),
+        )
+        .expect_err("Unknown revision should fail");
+
+        assert!(error
+            .to_string()
+            .contains("Cannot find reference 'missing'"));
     }
 }

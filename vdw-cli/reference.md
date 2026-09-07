@@ -118,14 +118,14 @@ Total: 2 repository(ies)
 
 ## `vdw link`
 
-Create hardlinks/symlinks from the content store into the workspace.
+Materialize dependencies from the shared Store into the workspace.
 
 ```bash
 vdw link                    # Link all dependencies
 vdw link --repo git@github.com:org/ui-lib.git   # Link single repo
 ```
 
-Walks each dependency's source files, applies scope filters, creates links at configured paths.
+Editable dependencies become complete native Git worktrees at their configured workspace path. Read-only dependencies resolve the declared branch/tag/commit into an immutable Store checkout at `checkouts/<commit-sha>`, apply scope filters, then create links at the configured path.
 
 **Link strategies** (auto-selected):
 

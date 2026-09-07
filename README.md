@@ -203,7 +203,7 @@ vdw repo add /path/to/local/repo --path packages/shared --branch feature/dev --e
 vdw link
 ```
 
-For an editable dependency, VDW creates a complete native Git worktree directly at its configured workspace path. For a read-only dependency, VDW applies the scope and creates hardlinks (or symlinks). `scope` filters AI context in both modes but never removes files from an editable worktree.
+For an editable dependency, VDW creates a complete native Git worktree directly at its configured workspace path. For a read-only dependency, VDW resolves the declared revision into an immutable `checkouts/<commit-sha>` tree, applies the scope, and creates hardlinks (or symlinks). `scope` filters AI context in both modes but never removes files from an editable worktree.
 
 Inspect the whole workspace without changing it:
 

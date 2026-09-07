@@ -194,7 +194,7 @@ vdw link
 vdw link --repo git@github.com:org/ui-lib.git
 ```
 
-Editable dependencies become complete native Git worktrees at their configured `path`; their `.git` pointer is real, and `scope` only filters AI context. Read-only dependencies still use scope-filtered hardlinks or symlinks. Run `vdw link` anytime to refresh without replacing an existing native editable worktree.
+Editable dependencies become complete native Git worktrees at their configured `path`; their `.git` pointer is real, and `scope` only filters AI context. Read-only dependencies resolve the declared branch/tag/commit, cache an immutable tree under `checkouts/<commit-sha>`, then expose scope-filtered hardlinks or symlinks. Different revisions of one repository therefore cannot reuse the same checkout. Run `vdw link` anytime to refresh without replacing an existing native editable worktree.
 
 ### 🩺 Inspect workspace topology
 
