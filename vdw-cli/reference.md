@@ -82,7 +82,7 @@ cat ~/.vdw/store/objects/{repo_name}-*/metadata.json
 
 ## `vdw repo remove`
 
-Remove a dependency from the workspace. Unlinks files, deletes worktree, and removes from `.vdwrc`.
+Remove a dependency from the current workspace. It unlinks managed files, removes the current workspace's editable worktree, and updates `.vdwrc`. The shared Store entry is retained for reuse by other workspaces.
 
 ```bash
 # By URL

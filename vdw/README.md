@@ -262,6 +262,8 @@ vdw repo remove ui-lib
 vdw repo remove ui-lib --force
 ```
 
+Removing a repository affects only the current workspace. VDW retains the shared Store entry so other workspaces and future links can continue using it.
+
 ### 📋 List repositories
 
 ```bash

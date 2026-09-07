@@ -345,63 +345,18 @@ pub fn remove(name: String, force: bool) -> Result<()> {
 
     // Step 3: Remove from .vdwrc configuration
     let config_removed = remove_from_config(&name)?;
-
-    // Also try to remove from the Content Store (best-effort, non-blocking)
-    if let Ok(store_path) = ensure_store() {
-        if is_remote_url(&name) {
-            // Direct URL match - remove from store
-            if object_pool::remove_from_store(&store_path, &name).is_ok() {
-                println!("\x1b[32m✓\x1b[0m Repository removed from store: {}", name);
-            }
-        } else {
-            // Search by name in the store
-            if let Ok(repos) = object_pool::list_store_repos(&store_path) {
-                let matched: Vec<_> = repos
-                    .iter()
-                    .filter(|(dir_name, metadata)| {
-                        dir_name.starts_with(&name)
-                            || dir_name.contains(&name)
-                            || metadata.repo_url.contains(&name)
-                    })
-                    .collect();
-
-                match matched.len() {
-                    0 => {
-                        if !config_removed {
-                            anyhow::bail!(
-                                "No repository found matching '{}'. Use `vdw repo list` to see available repositories.",
-                                name
-                            );
-                        }
-                    }
-                    1 => {
-                        let (_, metadata) = &matched[0];
-                        if object_pool::remove_from_store(&store_path, &metadata.repo_url).is_ok() {
-                            println!(
-                                "\x1b[32m✓\x1b[0m Repository removed from store: {}",
-                                metadata.repo_url
-                            );
-                        }
-                    }
-                    _ => {
-                        println!(
-                            "\x1b[33mMultiple repositories match '{}' in store:\x1b[0m",
-                            name
-                        );
-                        for (dir_name, metadata) in matched {
-                            println!("  {} -> {}", dir_name, metadata.repo_url);
-                        }
-                        println!("\nPlease provide a more specific name or use the full URL.");
-                    }
-                }
-            }
-        }
-    } else if !config_removed {
+    if !config_removed {
         anyhow::bail!(
             "No repository found matching '{}'. Use `vdw repo list` to see available repositories.",
             name
         );
     }
+
+    // The Store is shared by all VDW workspaces. Removing one workspace's
+    // dependency must not delete the shared bare repository or invalidate
+    // worktrees owned by another workspace. Store cleanup belongs to a future
+    // reference-aware GC command.
+    println!("  Shared Store entry retained for reuse.");
 
     Ok(())
 }
