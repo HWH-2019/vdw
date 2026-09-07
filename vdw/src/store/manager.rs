@@ -37,7 +37,7 @@ pub fn get_store_path() -> Result<PathBuf> {
 /// Initialize the VDW store directory structure
 ///
 /// Creates:
-/// - ~/.vdw/store/objects/   (content-addressable storage)
+/// - ~/.vdw/store/objects/   (repository-keyed bare Git storage)
 /// - ~/.vdw/store/cache/     (cached repo data)
 /// - ~/.vdw/logs/            (operational logs)
 /// - ~/.vdw/config.json      (global configuration, only if not exists)

@@ -13,7 +13,7 @@
 
 Modern development doesn't live in a single repo. VDW solves this by giving you:
 
-1. 🗄️ A **content-addressable store** on your machine that deduplicates repos
+1. 🗄️ A **repository-keyed Store** that reuses one bare repo for matching repository identifiers
 2. 🔗 **Declarative multi-repo orchestration** — editable repos are native workspace worktrees; read-only deps use scoped links
 3. 🤖 **AI context filtering** — generate a clean file list for LLM-based coding assistants
 4. 📝 **Editable dependencies** — repos added with `--editable` use git worktrees so you can modify code with full git support

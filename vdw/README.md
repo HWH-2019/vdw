@@ -21,7 +21,7 @@ You need them all in one place during development. But cloning them manually, ke
 
 **VDW solves this.** It gives you:
 
-1. 🗄️ A **content-addressable store** on your machine that deduplicates repos
+1. 🗄️ A **repository-keyed Store** that reuses one bare repo for matching repository identifiers
 2. 🔗 **Declarative orchestration** — native workspace worktrees for editable repos and scoped links for read-only deps
 3. 🤖 **AI context filtering** — generate a clean file list for LLM-based coding assistants
 4. 📝 **Editable dependencies** — repos added with `--editable` use git worktrees so you can modify code with full git support
@@ -34,7 +34,7 @@ Think of it as **`npm link` but for any language**, combined with **AI-aware fil
 
 | Feature | Description |
 |---------|-------------|
-| 📦 **Content Store** | Bare git repos in `~/.vdw/store/objects/` — automatic dedup via SHA256 |
+| 📦 **Repository Store** | Bare Git repos in `~/.vdw/store/objects/`, keyed by a SHA-256 digest of the repository identifier |
 | 🔗 **Read-only Projection** | Hardlinks on same filesystem, symlinks cross-filesystem (or junctions on Windows) |
 | 🎯 **Scope Filtering** | Glob patterns for AI context and read-only projections |
 | ✏️ **Editable Mode** | Complete native Git worktrees directly at each workspace path |
