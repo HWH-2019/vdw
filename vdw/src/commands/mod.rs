@@ -5,5 +5,6 @@ pub mod init;
 pub mod link;
 pub mod repo;
 pub mod status;
+pub mod store;
 pub mod sync;
 pub mod worktree;

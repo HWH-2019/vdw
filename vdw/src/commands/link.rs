@@ -64,7 +64,7 @@ pub fn execute(repo_filter: Option<&str>, watch: bool, frozen: bool) -> Result<(
 
     // 2. Ensure store is initialized
     let store_path = store_manager::get_store_path()?;
-    if !store_path.exists() {
+    if !store_path.join("objects").is_dir() {
         store_manager::init_store()?;
     }
 
@@ -290,6 +290,9 @@ pub fn execute(repo_filter: Option<&str>, watch: bool, frozen: bool) -> Result<(
             );
         }
     }
+    crate::store::registry::register_workspace(&cwd)
+        .context("Workspace was linked but could not be registered")?;
+
     // 6. Print summary
     println!("\n✅ Workspace linked successfully!");
     println!("   {} file(s) linked", linked_count);

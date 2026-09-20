@@ -105,6 +105,11 @@ enum Commands {
         #[arg(long)]
         json: bool,
     },
+    /// Inspect the shared Content Store and plan safe garbage collection
+    Store {
+        #[command(subcommand)]
+        command: StoreCommands,
+    },
 }
 
 #[derive(Subcommand)]
@@ -207,6 +212,25 @@ enum ConflictCommands {
     },
 }
 
+#[derive(Subcommand)]
+enum StoreCommands {
+    /// Show Store objects, references, size, and retention state
+    Status {
+        /// Print machine-readable JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Plan garbage collection without deleting Store content
+    Gc {
+        /// Required safety flag; v0.9.0 never deletes Store content
+        #[arg(long)]
+        dry_run: bool,
+        /// Print machine-readable JSON
+        #[arg(long)]
+        json: bool,
+    },
+}
+
 fn run_command(cli: Cli) -> anyhow::Result<()> {
     match cli.command {
         Commands::Init { template } => commands::init::execute(template),
@@ -260,6 +284,10 @@ fn run_command(cli: Cli) -> anyhow::Result<()> {
             update_lock,
             json,
         } => commands::sync::execute(dry_run, update_lock, json),
+        Commands::Store { command } => match command {
+            StoreCommands::Status { json } => commands::store::status(json),
+            StoreCommands::Gc { dry_run, json } => commands::store::gc_dry_run(dry_run, json),
+        },
     }
 }
 

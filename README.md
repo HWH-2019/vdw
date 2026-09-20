@@ -13,7 +13,7 @@
 
 Modern development doesn't live in a single repo. VDW solves this by giving you:
 
-1. 🗄️ A **repository-keyed Store** that reuses one bare repo for matching repository identifiers
+1. 🗄️ A **repository-keyed Store** with configurable placement, workspace reference inventory, and safe lifecycle inspection
 2. 🔗 **Declarative multi-repo orchestration** — editable repos are native workspace worktrees; read-only deps use scoped links
 3. 🤖 **AI context filtering** — generate a clean file list for LLM-based coding assistants
 4. 📝 **Editable dependencies** — repos added with `--editable` use git worktrees so you can modify code with full git support
@@ -78,7 +78,7 @@ Download the archive for your platform from [GitHub Releases](https://github.com
 On macOS or Linux:
 
 ```bash
-VERSION=0.8.0            # replace with the release you downloaded
+VERSION=0.9.0            # replace with the release you downloaded
 OS=darwin                # darwin or linux
 ARCH=arm64               # arm64 or x86_64
 ASSET="vdw_${OS}_${ARCH}_${VERSION}"
@@ -127,7 +127,7 @@ See the [CLI installation guide](vdw/README.md#install-the-cli) for upgrades, un
 3. If the `code` command is available, VS Code can also install it from a terminal:
 
 ```bash
-VERSION=0.8.0  # replace with the downloaded VSIX version
+VERSION=0.9.0  # replace with the downloaded VSIX version
 code --install-extension "./vdw_vscode_${VERSION}.vsix" --force
 ```
 
@@ -158,7 +158,7 @@ Use `C:\\Users\\your-name\\.local\\bin\\vdw.exe` on Windows.
 Download `vdw_cli_skill_<version>.tar.gz` from the same [GitHub Release](https://github.com/HWH-2019/vdw/releases), then extract it into your agent's Skill directory:
 
 ```bash
-VERSION=0.8.0
+VERSION=0.9.0
 SKILL_HOME="$HOME/.qoder/skills"  # use $HOME/.codex/skills for Codex
 mkdir -p "$SKILL_HOME"
 tar -xzf "vdw_cli_skill_${VERSION}.tar.gz" -C "$SKILL_HOME"
@@ -216,6 +216,17 @@ vdw status --json   # stable aggregate contract for IDE/tooling integrations
 ```
 
 The status command checks declared paths, editable-worktree Store ownership, and read-only link integrity in one pass. Runtime status is computed on demand; it is not appended to `.vdw/state.json`.
+
+Inspect the shared Store independently of any one workspace:
+
+```bash
+vdw store status --json
+vdw store gc --dry-run --json
+```
+
+VDW registers a workspace after `init`, repository config changes, a successful `link`, or `sync --update-lock`. Store status then joins every readable registered `.vdwrc`, `.vdw.lock`, and native Git worktree with the repository objects. GC in 0.9 is deliberately plan-only: an object is listed only when the registered reference inventory is complete, no config/lock/worktree references remain, and `gc_threshold_days` has elapsed. It never deletes files.
+
+The effective Store location comes from `~/.vdw/config.json`. `store_path` accepts an absolute path, `~/...`, or a path relative to `~/.vdw`; `max_store_size_gb` and `gc_threshold_days` drive status and retention reporting.
 
 ### Upgrading an existing workspace to 0.7
 

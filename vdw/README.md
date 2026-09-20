@@ -21,7 +21,7 @@ You need them all in one place during development. But cloning them manually, ke
 
 **VDW solves this.** It gives you:
 
-1. 🗄️ A **repository-keyed Store** that reuses one bare repo for matching repository identifiers
+1. 🗄️ A **repository-keyed Store** with configurable placement, workspace reference inventory, and safe lifecycle inspection
 2. 🔗 **Declarative orchestration** — native workspace worktrees for editable repos and scoped links for read-only deps
 3. 🤖 **AI context filtering** — generate a clean file list for LLM-based coding assistants
 4. 📝 **Editable dependencies** — repos added with `--editable` use git worktrees so you can modify code with full git support
@@ -34,7 +34,7 @@ Think of it as **`npm link` but for any language**, combined with **AI-aware fil
 
 | Feature | Description |
 |---------|-------------|
-| 📦 **Repository Store** | Bare Git repos in `~/.vdw/store/objects/`, keyed by a SHA-256 digest of the repository identifier |
+| 📦 **Repository Store** | Bare Git repos under the configured Store path, keyed by a SHA-256 digest of the repository identifier |
 | 🔗 **Read-only Projection** | Hardlinks on same filesystem, symlinks cross-filesystem (or junctions on Windows) |
 | 🎯 **Scope Filtering** | Glob patterns for AI context and read-only projections |
 | ✏️ **Editable Mode** | Complete native Git worktrees directly at each workspace path |
@@ -69,7 +69,7 @@ Download the matching archive from [GitHub Releases](https://github.com/HWH-2019
 macOS/Linux example:
 
 ```bash
-VERSION=0.8.0            # replace with the release you downloaded
+VERSION=0.9.0            # replace with the release you downloaded
 OS=darwin                # darwin or linux
 ARCH=arm64               # arm64 or x86_64
 ASSET="vdw_${OS}_${ARCH}_${VERSION}"
@@ -209,6 +209,18 @@ vdw status --json
 `vdw status` audits every dependency in one read-only pass. It reports missing or invalid editable worktrees, Git directories that are not owned by the expected VDW Store object, read-only projection conflicts, and equivalent files whose hardlink identity was detached. Each JSON repository entry includes a `topology_state` and `recommended_action` so IDE clients can offer link, relink, or conflict-resolution actions without inferring ownership from directory existence.
 
 The command reads `.vdwrc` and the existing read-only ownership entries in `.vdw/state.json`; it never persists runtime or Git status. Editable dependencies therefore still require no per-file state entries.
+
+### 🗄️ Inspect the shared Store
+
+```bash
+vdw store status
+vdw store status --json
+vdw store gc --dry-run --json
+```
+
+`vdw init`, repository config changes, successful linking, and `vdw sync --update-lock` maintain `~/.vdw/workspaces.json`. Store inspection joins each readable registered `.vdwrc`, `.vdw.lock`, and native Git worktree with Store objects, reports actual disk usage, and applies the configured retention threshold. The 0.9 GC command is plan-only and never deletes Store content; an incomplete registry, missing workspace, invalid metadata, or uninspectable bare repository prevents eligibility.
+
+Configure the effective Store in `~/.vdw/config.json`. `store_path` supports an absolute path, `~/...`, or a path relative to `~/.vdw`; the default remains `~/.vdw/store`.
 
 ### Upgrade legacy editable projections to 0.7
 

@@ -101,7 +101,10 @@ mod tests {
 
         let alternates_file = repo_git_path.join("objects/info/alternates");
         let content = fs::read_to_string(alternates_file).unwrap();
-        let expected = other_reference.join("objects").to_string_lossy().to_string();
+        let expected = other_reference
+            .join("objects")
+            .to_string_lossy()
+            .to_string();
         assert_eq!(content, expected);
     }
 

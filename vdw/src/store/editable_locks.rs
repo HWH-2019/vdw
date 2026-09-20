@@ -6,8 +6,8 @@ use anyhow::{Context, Result};
 use fs2::FileExt;
 use tracing::{info, warn};
 
-use crate::types::config::{EditableLock, EditableLockRegistry};
 use super::manager::get_vdw_home;
+use crate::types::config::{EditableLock, EditableLockRegistry};
 
 /// Get the path to the global editable locks file
 fn get_locks_path() -> Result<PathBuf> {
@@ -21,8 +21,7 @@ pub fn load_editable_locks() -> Result<EditableLockRegistry> {
         return Ok(EditableLockRegistry::new());
     }
 
-    let content = fs::read_to_string(&path)
-        .context("Failed to read editable_locks.json")?;
+    let content = fs::read_to_string(&path).context("Failed to read editable_locks.json")?;
 
     match serde_json::from_str::<EditableLockRegistry>(&content) {
         Ok(registry) => Ok(registry),
@@ -57,7 +56,8 @@ pub fn save_editable_locks(registry: &EditableLockRegistry) -> Result<()> {
         .context("Failed to serialize editable lock registry")?;
 
     // Write content
-    (&file).write_all(content.as_bytes())
+    (&file)
+        .write_all(content.as_bytes())
         .context("Failed to write editable_locks.json")?;
 
     // Lock is released when file is dropped
@@ -97,7 +97,10 @@ pub fn check_editable_lock(
     if !stale_indices.is_empty() {
         for i in stale_indices.into_iter().rev() {
             let removed = registry.locks.remove(i);
-            info!("Cleaned up stale editable lock: {} branch '{}'", removed.repo_id, removed.branch);
+            info!(
+                "Cleaned up stale editable lock: {} branch '{}'",
+                removed.repo_id, removed.branch
+            );
         }
         save_editable_locks(&registry)?;
     }
@@ -118,9 +121,11 @@ pub fn acquire_editable_lock(
     let wt = worktree_path.to_string_lossy().to_string();
 
     // Check if lock already exists for this workspace (update it)
-    if let Some(existing) = registry.locks.iter_mut().find(|l| {
-        l.repo_id == repo_id && l.branch == branch && l.workspace_path == ws
-    }) {
+    if let Some(existing) = registry
+        .locks
+        .iter_mut()
+        .find(|l| l.repo_id == repo_id && l.branch == branch && l.workspace_path == ws)
+    {
         existing.worktree_path = wt;
         existing.created_at = chrono::Utc::now().to_rfc3339();
     } else {
@@ -134,27 +139,29 @@ pub fn acquire_editable_lock(
     }
 
     save_editable_locks(&registry)?;
-    info!("Acquired editable lock: {} branch '{}' for workspace {:?}", repo_id, branch, workspace_path);
+    info!(
+        "Acquired editable lock: {} branch '{}' for workspace {:?}",
+        repo_id, branch, workspace_path
+    );
     Ok(())
 }
 
 /// Release the editable lock for the given repo+branch held by the current workspace.
-pub fn release_editable_lock(
-    repo_id: &str,
-    branch: &str,
-    workspace_path: &Path,
-) -> Result<()> {
+pub fn release_editable_lock(repo_id: &str, branch: &str, workspace_path: &Path) -> Result<()> {
     let mut registry = load_editable_locks()?;
     let ws = workspace_path.to_string_lossy().to_string();
 
     let before_len = registry.locks.len();
-    registry.locks.retain(|l| {
-        !(l.repo_id == repo_id && l.branch == branch && l.workspace_path == ws)
-    });
+    registry
+        .locks
+        .retain(|l| !(l.repo_id == repo_id && l.branch == branch && l.workspace_path == ws));
 
     if registry.locks.len() < before_len {
         save_editable_locks(&registry)?;
-        info!("Released editable lock: {} branch '{}' for workspace {:?}", repo_id, branch, workspace_path);
+        info!(
+            "Released editable lock: {} branch '{}' for workspace {:?}",
+            repo_id, branch, workspace_path
+        );
     }
 
     Ok(())
@@ -177,7 +184,10 @@ pub fn cleanup_stale_locks() -> Result<Vec<EditableLock>> {
     if !stale.is_empty() {
         save_editable_locks(&registry)?;
         for lock in &stale {
-            info!("Cleaned stale lock: {} branch '{}'", lock.repo_id, lock.branch);
+            info!(
+                "Cleaned stale lock: {} branch '{}'",
+                lock.repo_id, lock.branch
+            );
         }
     }
 

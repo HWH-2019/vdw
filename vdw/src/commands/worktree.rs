@@ -19,10 +19,7 @@ pub fn list() -> Result<()> {
 
     println!("VDW Worktrees:");
     println!("{}", "-".repeat(80));
-    println!(
-        "{:<25} {:<20} {:<10} PATH",
-        "REPO", "BRANCH", "EDITABLE"
-    );
+    println!("{:<25} {:<20} {:<10} PATH", "REPO", "BRANCH", "EDITABLE");
     println!("{}", "-".repeat(80));
 
     let mut total_count = 0;
@@ -102,7 +99,12 @@ pub fn delete(repo: String, branch: String, force: bool) -> Result<()> {
     // Release editable lock before removing worktree
     let workspace_path = std::env::current_dir()?;
     if let Err(e) = release_editable_lock(&repo, &branch, &workspace_path) {
-        tracing::warn!("Failed to release editable lock for {} branch '{}': {}", repo, branch, e);
+        tracing::warn!(
+            "Failed to release editable lock for {} branch '{}': {}",
+            repo,
+            branch,
+            e
+        );
     }
 
     // Find the bare repo in the store
@@ -175,7 +177,7 @@ fn find_bare_repo_path(store_path: &Path, repo: &str) -> Result<PathBuf> {
 fn ensure_store() -> Result<PathBuf> {
     let store_path = get_store_path()?;
 
-    if !store_path.exists() {
+    if !store_path.join("objects").is_dir() {
         tracing::info!("Store not found, initializing...");
         init_store()?;
     }

@@ -175,6 +175,34 @@ vdw validate
 
 ---
 
+## `vdw store status`
+
+Inspect the effective shared Store path, registered workspace health, object disk usage, and live config/lock/worktree references.
+
+```bash
+vdw store status
+vdw store status --json
+```
+
+VDW maintains `~/.vdw/workspaces.json` after `init`, repository config changes, successful `link`, and `sync --update-lock`. `reference_inventory_complete: false` means one or more references could not be verified, so no object is considered eligible for GC.
+
+The effective Store path is read from `~/.vdw/config.json`. Absolute paths and `~/...` are supported; relative values are anchored at `~/.vdw`.
+
+---
+
+## `vdw store gc`
+
+Generate a garbage-collection plan without deleting Store data.
+
+```bash
+vdw store gc --dry-run
+vdw store gc --dry-run --json
+```
+
+In 0.9.0, `--dry-run` is required and `deletion_performed` is always `false`. A candidate must be older than `gc_threshold_days`, have valid metadata and a readable bare repository, and have no registered `.vdwrc`, `.vdw.lock`, or Git worktree references. Never remove Store object directories manually from an AI workflow.
+
+---
+
 ## `vdw doctor`
 
 Run diagnostics on the workspace — checks store health, link integrity, and config consistency.

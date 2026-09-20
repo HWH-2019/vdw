@@ -1,6 +1,6 @@
 ---
 name: vdw-cli
-description: Set up reproducible VDW development workspaces with vdw init, repo add, sync, lock, and frozen link. Use when preparing or refreshing a development workspace after requirements analysis, before coding begins. Triggered by user confirmation after development requirements are understood. Creates workspace directories, initializes .vdwrc, resolves .vdw.lock, materializes repository dependencies, and offers IDE launch.
+description: Set up reproducible VDW development workspaces and inspect the shared Store with vdw init, repo add, sync, lock, frozen link, Store status, and plan-only GC. Use when preparing or refreshing a development workspace after requirements analysis, before coding begins, or when auditing VDW Store usage. Triggered by user confirmation after development requirements are understood. Creates workspace directories, initializes .vdwrc, resolves .vdw.lock, materializes repository dependencies, and offers IDE launch.
 ---
 
 # VDW CLI Workspace Setup
@@ -38,6 +38,8 @@ Each step is a discrete, reusable operation. Scenarios chain them together.
 | **Q** | Launch IDE | `bash {skill_dir}/scripts/open-workspace.sh {path}` |
 | **R** | Inspect revision drift | `vdw sync --dry-run --json` |
 | **S** | Update dependency lock | `vdw sync --update-lock [--json]` |
+| **T** | Inspect shared Store | `vdw store status --json` |
+| **U** | Plan Store GC | `vdw store gc --dry-run --json` |
 
 Full command syntax: [reference.md](reference.md)
 
@@ -58,6 +60,7 @@ Determine the user's situation, then follow the corresponding chain:
 | **AI 上下文** | Review/preview AI context | **L → M** |
 | **Worktree 管理** | Create/delete branches for editable repos | **N → O/P** |
 | **清理空间** | Remove all links, keep config | **F → E** (if re-link desired) |
+| **Store 审计** | Inspect global usage and safe cleanup candidates | **T → U** |
 
 ---
 
@@ -127,6 +130,12 @@ Run `vdw sync --dry-run --json` first for an existing workspace. Present added, 
 
 Dry-run may fetch Store refs but does not edit `.vdw.lock` or workspace projections. If an editable worktree does not contain a newly locked commit, stop and ask the user to reconcile that branch; never reset it.
 
+### T/U — Inspect Store and Plan GC
+
+Run `vdw store status --json` to read the effective Store path, registered workspace health, actual object sizes, and config/lock/worktree references. If `reference_inventory_complete` is false, resolve missing or invalid registered workspaces before treating any object as unreferenced.
+
+`vdw store gc --dry-run --json` is plan-only in 0.9.0. It lists an object only after the configured retention period and only when no registered `.vdwrc`, `.vdw.lock`, or native Git worktree references remain. It never deletes files. Do not bypass the required `--dry-run` flag or delete Store directories manually.
+
 ### Q — Launch IDE
 
 ```bash
@@ -143,6 +152,7 @@ Auto-detects: Qoder → VS Code → Cursor → Trae → Windsurf → Finder.
 - **Branch required** — always pass the confirmed branch; stop and ask if it is unknown
 - **Declarative config** — `.vdwrc` contains source intent only; never write managed worktree paths into `local` or `origin`
 - **Reproducible linking** — prefer `vdw link --frozen` whenever `.vdw.lock` exists; use `vdw sync --dry-run --json` before changing pins
+- **Store safety** — inspect `vdw store status --json` first; 0.9.0 GC is plan-only, and an incomplete workspace registry means no object is eligible
 - **Preserve work** — before unlinking, removing, relinking, or moving a workspace, inspect `vdw status --json` and every editable repository's Git status
 - **Cleanup on failure** — do not recursively delete the workspace. Diagnose with `vdw status`, `vdw conflicts list`, and `vdw doctor`; use VDW cleanup commands only after confirming their targets and dirty state
 - **AI scope** — read `vdw context preview --json` before broad code discovery and use its workspace-relative `files` as the default read/search boundary. Expand beyond it only when the task requires related files, and report that expansion. This contract is not a filesystem security boundary for editable worktrees

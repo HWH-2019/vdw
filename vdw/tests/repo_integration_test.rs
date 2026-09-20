@@ -74,5 +74,10 @@ dependencies:
         .expect("updated lock")
         .dependencies
         .is_empty());
+    let registry: serde_json::Value = serde_json::from_slice(
+        &fs::read(home.join(".vdw/workspaces.json")).expect("workspace registry"),
+    )
+    .expect("valid workspace registry");
+    assert_eq!(registry["workspaces"].as_array().unwrap().len(), 1);
     assert!(String::from_utf8_lossy(&output.stdout).contains("Shared Store entry retained"));
 }

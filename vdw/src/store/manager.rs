@@ -2,7 +2,7 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use anyhow::Result;
+use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 
 /// Global VDW configuration stored at ~/.vdw/config.json
@@ -29,9 +29,40 @@ pub fn get_vdw_home() -> Result<PathBuf> {
     Ok(home.join(".vdw"))
 }
 
-/// Get the store path (~/.vdw/store/)
+/// Get the effective Store path from ~/.vdw/config.json.
 pub fn get_store_path() -> Result<PathBuf> {
-    Ok(get_vdw_home()?.join("store"))
+    let config = load_global_config()?;
+    let home = home_dir().ok_or_else(|| anyhow::anyhow!("Cannot determine home directory"))?;
+    resolve_store_path(&config.store_path, &home)
+}
+
+/// Resolve a configured Store path. Relative paths are anchored at ~/.vdw so
+/// that global configuration never depends on the caller's working directory.
+pub fn resolve_store_path(configured_path: &str, home: &Path) -> Result<PathBuf> {
+    let configured_path = configured_path.trim();
+    if configured_path.is_empty() {
+        bail!("store_path in ~/.vdw/config.json must not be empty");
+    }
+
+    if configured_path == "~" {
+        return Ok(home.to_path_buf());
+    }
+    if let Some(relative) = configured_path.strip_prefix("~/") {
+        return Ok(home.join(relative));
+    }
+    if configured_path.starts_with('~') {
+        bail!(
+            "Unsupported store_path '{}': only '~' and '~/' home expansion are supported",
+            configured_path
+        );
+    }
+
+    let path = PathBuf::from(configured_path);
+    if path.is_absolute() {
+        Ok(path)
+    } else {
+        Ok(home.join(".vdw").join(path))
+    }
 }
 
 /// Initialize the VDW store directory structure
@@ -44,9 +75,9 @@ pub fn get_store_path() -> Result<PathBuf> {
 pub fn init_store() -> Result<PathBuf> {
     let vdw_home = get_vdw_home()?;
 
-    // Create directory structure
-    fs::create_dir_all(vdw_home.join("store/objects"))?;
-    fs::create_dir_all(vdw_home.join("store/cache"))?;
+    // Create the home-owned directory structure first so configuration can be
+    // read before the effective Store path is materialized.
+    fs::create_dir_all(&vdw_home)?;
     fs::create_dir_all(vdw_home.join("logs"))?;
 
     // Write default global config if not exists
@@ -56,6 +87,20 @@ pub fn init_store() -> Result<PathBuf> {
         let content = serde_json::to_string_pretty(&config)?;
         fs::write(&config_path, content)?;
     }
+
+    let store_path = get_store_path()?;
+    fs::create_dir_all(store_path.join("objects")).with_context(|| {
+        format!(
+            "Failed to create Store objects directory at {}",
+            store_path.display()
+        )
+    })?;
+    fs::create_dir_all(store_path.join("cache")).with_context(|| {
+        format!(
+            "Failed to create Store cache directory at {}",
+            store_path.display()
+        )
+    })?;
 
     Ok(vdw_home)
 }
@@ -80,8 +125,8 @@ pub fn init_store_at(base_path: &Path) -> Result<PathBuf> {
 
 /// Check if the store is initialized
 pub fn is_store_initialized() -> bool {
-    get_vdw_home()
-        .map(|p| p.join("store/objects").exists())
+    get_store_path()
+        .map(|p| p.join("objects").exists())
         .unwrap_or(false)
 }
 
@@ -133,6 +178,41 @@ mod tests {
         assert_eq!(parsed.store_path, config.store_path);
         assert_eq!(parsed.max_store_size_gb, config.max_store_size_gb);
         assert_eq!(parsed.gc_threshold_days, config.gc_threshold_days);
+    }
+
+    #[test]
+    fn test_resolve_store_path_expands_home() {
+        let home = Path::new("/Users/example");
+        assert_eq!(
+            resolve_store_path("~/.vdw/custom-store", home).unwrap(),
+            home.join(".vdw/custom-store")
+        );
+        assert_eq!(resolve_store_path("~", home).unwrap(), home);
+    }
+
+    #[test]
+    fn test_resolve_store_path_preserves_absolute_path() {
+        let home = Path::new("/Users/example");
+        assert_eq!(
+            resolve_store_path("/Volumes/vdw-store", home).unwrap(),
+            PathBuf::from("/Volumes/vdw-store")
+        );
+    }
+
+    #[test]
+    fn test_resolve_store_path_anchors_relative_path_at_vdw_home() {
+        let home = Path::new("/Users/example");
+        assert_eq!(
+            resolve_store_path("stores/team", home).unwrap(),
+            home.join(".vdw/stores/team")
+        );
+    }
+
+    #[test]
+    fn test_resolve_store_path_rejects_empty_and_named_home() {
+        let home = Path::new("/Users/example");
+        assert!(resolve_store_path("   ", home).is_err());
+        assert!(resolve_store_path("~someone/store", home).is_err());
     }
 
     #[test]

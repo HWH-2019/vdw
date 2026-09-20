@@ -4,28 +4,32 @@ use crate::store::manager;
 
 pub fn execute(template: Option<String>) -> Result<()> {
     let cwd = std::env::current_dir()?;
-    let vdwrc_path = cwd.join(".vdwrc");
-
-    // Check if .vdwrc already exists
-    if vdwrc_path.exists() {
+    manager::init_store()?;
+    let created = create_workspace_config(&cwd, template.as_deref())?;
+    crate::store::registry::register_workspace(&cwd)?;
+    if !created {
         println!("\u{26a0}\u{fe0f}  .vdwrc already exists in this directory.");
         println!("  Use 'vdw validate' to check configuration.");
         return Ok(());
     }
 
-    // Initialize the global store
-    let store_path = manager::init_store()?;
+    let store_path = manager::get_store_path()?;
     println!("\u{2705} Store initialized at: {}", store_path.display());
-
-    // Create .vdwrc template
-    let template_content = get_template(template.as_deref());
-    std::fs::write(&vdwrc_path, template_content)?;
     println!("\u{2705} Created .vdwrc in {}", cwd.display());
     println!("\nNext steps:");
     println!("  1. Edit .vdwrc to add your dependencies");
     println!("  2. Run 'vdw link' to create workspace links");
 
     Ok(())
+}
+
+fn create_workspace_config(cwd: &std::path::Path, template: Option<&str>) -> Result<bool> {
+    let vdwrc_path = cwd.join(".vdwrc");
+    if vdwrc_path.exists() || cwd.join(".vdwrc.yml").exists() {
+        return Ok(false);
+    }
+    std::fs::write(vdwrc_path, get_template(template))?;
+    Ok(true)
 }
 
 fn get_template(template_name: Option<&str>) -> String {
@@ -81,7 +85,10 @@ mod tests {
     fn test_default_template_is_valid_yaml() {
         let content = default_template();
         let result = serde_yaml::from_str::<crate::types::config::VDWConfig>(&content);
-        assert!(result.is_ok(), "Default template should produce valid YAML config");
+        assert!(
+            result.is_ok(),
+            "Default template should produce valid YAML config"
+        );
 
         let config = result.unwrap();
         assert_eq!(config.workspace.name, "my-workspace");
@@ -93,7 +100,10 @@ mod tests {
     fn test_fullstack_template_is_valid_yaml() {
         let content = fullstack_template();
         let result = serde_yaml::from_str::<crate::types::config::VDWConfig>(&content);
-        assert!(result.is_ok(), "Fullstack template should produce valid YAML config");
+        assert!(
+            result.is_ok(),
+            "Fullstack template should produce valid YAML config"
+        );
 
         let config = result.unwrap();
         assert_eq!(config.workspace.name, "my-fullstack-workspace");
@@ -119,41 +129,34 @@ mod tests {
     }
 
     #[test]
-    fn test_execute_creates_vdwrc() {
+    fn test_create_workspace_config_creates_vdwrc() {
         let dir = tempfile::tempdir().unwrap();
-        let original = std::env::current_dir().unwrap();
+        let created = create_workspace_config(dir.path(), None).unwrap();
 
-        // Change to temp dir
-        std::env::set_current_dir(dir.path()).unwrap();
-
-        // Execute init
-        let result = execute(None);
-        assert!(result.is_ok());
-
-        // Verify .vdwrc was created
+        assert!(created);
         assert!(dir.path().join(".vdwrc").exists());
-
-        // Cleanup: restore original dir
-        std::env::set_current_dir(&original).unwrap();
     }
 
     #[test]
-    fn test_execute_warns_on_existing_vdwrc() {
+    fn test_create_workspace_config_preserves_existing_vdwrc() {
         let dir = tempfile::tempdir().unwrap();
-        let original = std::env::current_dir().unwrap();
-
-        // Create existing .vdwrc
         std::fs::write(dir.path().join(".vdwrc"), "existing").unwrap();
 
-        std::env::set_current_dir(dir.path()).unwrap();
+        let created = create_workspace_config(dir.path(), None).unwrap();
 
-        let result = execute(None);
-        assert!(result.is_ok()); // Should not error, just warn
-
-        // Content should remain unchanged
+        assert!(!created);
         let content = std::fs::read_to_string(dir.path().join(".vdwrc")).unwrap();
         assert_eq!(content, "existing");
+    }
 
-        std::env::set_current_dir(&original).unwrap();
+    #[test]
+    fn test_create_workspace_config_preserves_existing_vdwrc_yml() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join(".vdwrc.yml"), "existing").unwrap();
+
+        let created = create_workspace_config(dir.path(), None).unwrap();
+
+        assert!(!created);
+        assert!(!dir.path().join(".vdwrc").exists());
     }
 }

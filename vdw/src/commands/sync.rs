@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 
-use anyhow::{bail, Result};
+use anyhow::{bail, Context, Result};
 use serde::Serialize;
 
 use crate::config::{env_resolver, parser, validator};
@@ -56,7 +56,7 @@ pub fn execute(dry_run: bool, update_lock: bool, json: bool) -> Result<()> {
     }
 
     let store_path = store_manager::get_store_path()?;
-    if !store_path.exists() {
+    if !store_path.join("objects").is_dir() {
         store_manager::init_store()?;
     }
 
@@ -112,6 +112,8 @@ pub fn execute(dry_run: bool, update_lock: bool, json: bool) -> Result<()> {
         || !removed_dependencies.is_empty();
     if update_lock {
         next_lock.save(&workspace_root)?;
+        crate::store::registry::register_workspace(&workspace_root)
+            .context("Lock file was updated but the workspace could not be registered")?;
     }
 
     let report = SyncReport {

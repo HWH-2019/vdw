@@ -7,6 +7,7 @@ use crate::lockfile::WorkspaceLock;
 use crate::store::editable_locks::{
     acquire_editable_lock, check_editable_lock, release_editable_lock,
 };
+use crate::store::registry::register_workspace;
 use crate::store::{get_store_path, init_store, object_pool};
 use crate::types::config::{Dependency, Scope, VDWConfig};
 
@@ -125,6 +126,7 @@ fn update_config(
         same_repo && same_branch
     });
     if is_dup {
+        register_workspace(&workspace_dir)?;
         println!("\x1b[33m\x1b[0m Repository already exists in configuration");
         return Ok(());
     }
@@ -195,6 +197,8 @@ fn update_config(
             tracing::warn!("Failed to acquire editable lock: {}", e);
         }
     }
+    register_workspace(&workspace_dir)?;
+
     println!(
         "\x1b[32m✓\x1b[0m Configuration updated: {}",
         config_path.display()
@@ -386,6 +390,8 @@ fn remove_from_config(name: &str) -> Result<bool> {
             workspace_lock.retain_paths(config.dependencies.iter().map(|dep| dep.path.as_str()));
             workspace_lock.save(&workspace_dir)?;
         }
+        register_workspace(&workspace_dir)?;
+
         // Release editable locks only after the configuration update succeeds.
         for dep in &deps_to_remove {
             let dep_id = dep.dep_id().to_string();
@@ -535,7 +541,7 @@ pub fn status(name: String) -> Result<()> {
 fn ensure_store() -> Result<std::path::PathBuf> {
     let store_path = get_store_path()?;
 
-    if !store_path.exists() {
+    if !store_path.join("objects").is_dir() {
         tracing::info!("Store not found, initializing...");
         init_store()?;
     }
