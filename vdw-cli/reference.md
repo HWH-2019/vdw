@@ -36,7 +36,7 @@ dependencies:
 |-------|----------|-------------|
 | `remote` | ✅ (if no local) | Git URL: `https://`, `git@`, or `http://` |
 | `local` | ✅ (if no remote) | Absolute path to local git repo |
-| `origin` | ❌ | Original source path preserved when `local` overwritten by worktree |
+| `origin` | ❌ | Legacy migration field; new configurations must not set it |
 | `path` | ✅ | Relative workspace path to link into |
 | `branch` / `tag` / `commit` | ✅ (pick one) | Version specifier |
 | `scope.include` | ✅ | Glob patterns for files to expose |
@@ -82,7 +82,7 @@ cat ~/.vdw/store/objects/{repo_name}-*/metadata.json
 
 ## `vdw repo remove`
 
-Remove a dependency from the current workspace. It unlinks managed files, removes the current workspace's editable worktree, and updates `.vdwrc`. The shared Store entry is retained for reuse by other workspaces.
+Remove a dependency from the current workspace. It unlinks managed files, removes the current workspace's editable worktree, and updates `.vdwrc` and `.vdw.lock`. The shared Store entry is retained for reuse by other workspaces.
 
 ```bash
 # By URL
@@ -123,9 +123,12 @@ Materialize dependencies from the shared Store into the workspace.
 ```bash
 vdw link                    # Link all dependencies
 vdw link --repo git@github.com:org/ui-lib.git   # Link single repo
+vdw link --frozen           # Use only matching, locally available locked commits
 ```
 
 Editable dependencies become complete native Git worktrees at their configured workspace path. Read-only dependencies resolve the declared branch/tag/commit into an immutable Store checkout at `checkouts/<commit-sha>`, apply scope filters, then create links at the configured path.
+
+A normal link creates missing or config-stale `.vdw.lock` entries but preserves an existing matching pin. `--frozen` performs a complete preflight before changing projections, never fetches, and fails if the lock does not match `.vdwrc` or its commit is absent from the Store. Editable HEAD may contain local commits on top of the lock, but must include the locked commit in its history.
 
 **Link strategies** (auto-selected):
 
@@ -140,12 +143,25 @@ Editable dependencies become complete native Git worktrees at their configured w
 
 ## `vdw unlink`
 
-Remove all hardlinks/symlinks from the workspace. Store and `.vdwrc` are preserved.
+Remove all hardlinks/symlinks from the workspace. Store, `.vdwrc`, and `.vdw.lock` are preserved.
 
 ```bash
 vdw unlink                  # Unlink all
 vdw unlink --repo git@github.com:org/ui-lib.git   # Unlink single repo
 ```
+
+---
+
+## `vdw sync`
+
+Fetch declared revisions and compare their resolved commits with `.vdw.lock`.
+
+```bash
+vdw sync --dry-run --json   # report drift; do not change the lock
+vdw sync --update-lock      # accept all current resolutions
+```
+
+Dry-run is the default when `--update-lock` is omitted. It may update the shared Store's fetched refs, but it never changes `.vdw.lock` or workspace projections. Review `added`, `updated`, `config_changed`, and removed entries before accepting changes. For an editable dependency, reconcile a worktree that is behind or unrelated to the newly locked commit before linking.
 
 ---
 

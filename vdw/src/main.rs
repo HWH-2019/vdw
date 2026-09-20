@@ -40,6 +40,9 @@ enum Commands {
         /// Only link the specified repository URL
         #[arg(long)]
         repo: Option<String>,
+        /// Require a matching lock file and avoid network/ref updates
+        #[arg(long)]
+        frozen: bool,
         /// Watch for broken HardLinks after linking
         #[arg(long)]
         watch: bool,
@@ -86,6 +89,18 @@ enum Commands {
     Validate,
     /// Show aggregate workspace topology status
     Status {
+        /// Print machine-readable JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Resolve declared revisions and inspect or update .vdw.lock
+    Sync {
+        /// Fetch and report drift without changing .vdw.lock (default)
+        #[arg(long, conflicts_with = "update_lock")]
+        dry_run: bool,
+        /// Accept resolved revisions and write .vdw.lock
+        #[arg(long)]
+        update_lock: bool,
         /// Print machine-readable JSON
         #[arg(long)]
         json: bool,
@@ -195,7 +210,11 @@ enum ConflictCommands {
 fn run_command(cli: Cli) -> anyhow::Result<()> {
     match cli.command {
         Commands::Init { template } => commands::init::execute(template),
-        Commands::Link { repo, watch } => commands::link::execute(repo.as_deref(), watch),
+        Commands::Link {
+            repo,
+            frozen,
+            watch,
+        } => commands::link::execute(repo.as_deref(), watch, frozen),
         Commands::Unlink { repo } => commands::link::unlink(repo.as_deref()),
         Commands::Relink { allow_dirty } => commands::link::relink(allow_dirty),
         Commands::Conflicts { command } => match command {
@@ -236,6 +255,11 @@ fn run_command(cli: Cli) -> anyhow::Result<()> {
         Commands::Doctor { check_links } => commands::doctor::execute(check_links),
         Commands::Validate => commands::doctor::validate(),
         Commands::Status { json } => commands::status::show(json),
+        Commands::Sync {
+            dry_run,
+            update_lock,
+            json,
+        } => commands::sync::execute(dry_run, update_lock, json),
     }
 }
 

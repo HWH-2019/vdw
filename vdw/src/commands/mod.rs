@@ -1,8 +1,9 @@
+pub mod conflicts;
+pub mod context;
+pub mod doctor;
 pub mod init;
 pub mod link;
 pub mod repo;
 pub mod status;
+pub mod sync;
 pub mod worktree;
-pub mod context;
-pub mod doctor;
-pub mod conflicts;

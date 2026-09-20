@@ -1,6 +1,7 @@
 pub mod config;
 pub mod store;
 pub mod link;
+pub mod lockfile;
 pub mod worktree;
 pub mod context;
 pub mod commands;

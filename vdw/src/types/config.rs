@@ -25,13 +25,15 @@ pub struct Dependency {
     #[serde(default)]
     pub remote: String,
 
-    /// Original source path for local-only repos.
-    /// Preserved when `local` is overwritten with a VDW-managed worktree path.
+    /// Legacy migration field used by older VDW versions when `local` was
+    /// overwritten with a managed worktree path. New configurations do not
+    /// write this field.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub origin: String,
 
-    /// Local repository path on disk (worktree or local git repo)
-    /// This replaces the need for state.json worktree lookup
+    /// Declarative source path for a local-only repository.
+    /// Runtime worktree locations are derived from `path` and never persisted
+    /// here.
     #[serde(default)]
     pub local: String,
 
@@ -67,14 +69,14 @@ pub struct Scope {
 
 impl Dependency {
     /// Get the canonical identifier for this dependency.
-    /// Priority: remote > origin > local
+    /// Priority: remote > local > origin (legacy fallback)
     pub fn dep_id(&self) -> &str {
         if !self.remote.is_empty() {
             &self.remote
-        } else if !self.origin.is_empty() {
-            &self.origin
-        } else {
+        } else if !self.local.is_empty() {
             &self.local
+        } else {
+            &self.origin
         }
     }
 
@@ -349,6 +351,16 @@ dependencies:
         // Same local path should produce same id
         let id2 = dep.repo_id();
         assert_eq!(id, id2);
+    }
+
+    #[test]
+    fn test_repo_id_prefers_declarative_local_over_legacy_origin() {
+        let mut dep = sample_dependency();
+        dep.remote.clear();
+        dep.local = "/repos/current".to_string();
+        dep.origin = "/repos/legacy".to_string();
+
+        assert_eq!(dep.dep_id(), "/repos/current");
     }
 
     #[test]

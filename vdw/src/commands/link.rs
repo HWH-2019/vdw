@@ -7,26 +7,13 @@ use walkdir::WalkDir;
 
 use crate::config::{env_resolver, parser, validator};
 use crate::link::engine;
+use crate::lockfile::{LockedDependency, WorkspaceLock, LOCK_FILE_NAME};
 use crate::store::editable_locks::{acquire_editable_lock, release_editable_lock};
 use crate::store::{manager as store_manager, object_pool};
 use crate::types::workspace::{LinkEntry, WorkspaceState};
 use crate::worktree::manager as worktree_manager;
 
-/// Record the VDW-managed worktree path on the dependency.
-///
-/// This must run for both newly-created and reused worktrees. In particular,
-/// `unlink` clears `dep.local`, so a subsequent relink that discovers the
-/// conventional worktree path must restore it before saving `.vdwrc`.
-fn record_managed_worktree(dep: &mut crate::types::config::Dependency, worktree_path: &Path) {
-    // For local-only dependencies, preserve the original checkout before
-    // replacing `local` with the VDW-managed worktree path.
-    if dep.remote.is_empty() && dep.origin.is_empty() && !dep.local.is_empty() {
-        dep.origin = dep.local.clone();
-    }
-    dep.local = worktree_path.to_string_lossy().to_string();
-}
-
-pub fn execute(repo_filter: Option<&str>, watch: bool) -> Result<()> {
+pub fn execute(repo_filter: Option<&str>, watch: bool, frozen: bool) -> Result<()> {
     let cwd = std::env::current_dir()?;
 
     // 0. On Windows, check symlink privilege and guide user if missing
@@ -52,8 +39,14 @@ pub fn execute(repo_filter: Option<&str>, watch: bool) -> Result<()> {
     }
 
     // 1. Load and validate config
-    let mut config = parser::load_config(&cwd)?;
-    let original_config = config.clone();
+    let mut declared_config = parser::load_config(&cwd)?;
+    let normalized_legacy_sources = normalize_declarative_sources(&mut declared_config);
+    if normalized_legacy_sources && frozen {
+        bail!(
+            ".vdwrc contains legacy managed worktree paths; run `vdw link` once to migrate the configuration before using --frozen"
+        );
+    }
+    let mut config = declared_config.clone();
     env_resolver::resolve_env_vars(&mut config)?;
     if let Err(errors) = validator::validate_config(&config) {
         for e in &errors {
@@ -64,11 +57,34 @@ pub fn execute(repo_filter: Option<&str>, watch: bool) -> Result<()> {
             errors.len()
         ));
     }
+    if normalized_legacy_sources {
+        parser::save_config(&cwd, &declared_config)?;
+        println!("Normalized legacy managed paths in .vdwrc.");
+    }
 
     // 2. Ensure store is initialized
     let store_path = store_manager::get_store_path()?;
     if !store_path.exists() {
         store_manager::init_store()?;
+    }
+
+    let mut workspace_lock = if frozen {
+        WorkspaceLock::load_required(&cwd)?
+    } else {
+        WorkspaceLock::load(&cwd)?.unwrap_or_else(WorkspaceLock::empty)
+    };
+    preflight_lock(
+        &config.dependencies,
+        &workspace_lock,
+        &store_path,
+        repo_filter,
+        frozen,
+    )?;
+    let mut lock_changed = false;
+    if !frozen && repo_filter.is_none() {
+        let previous_len = workspace_lock.dependencies.len();
+        workspace_lock.retain_paths(config.dependencies.iter().map(|dep| dep.path.as_str()));
+        lock_changed = workspace_lock.dependencies.len() != previous_len;
     }
 
     // 3. Process each dependency (optionally filtered by repo URL)
@@ -147,7 +163,7 @@ pub fn execute(repo_filter: Option<&str>, watch: bool) -> Result<()> {
         };
     }
 
-    for dep in &mut config.dependencies {
+    for dep in &config.dependencies {
         // Skip if repo_filter is specified and doesn't match
         if let Some(filter) = repo_filter {
             if dep.dep_id() != filter {
@@ -158,13 +174,16 @@ pub fn execute(repo_filter: Option<&str>, watch: bool) -> Result<()> {
         let dep_id = dep.dep_id().to_string();
         println!("Processing: {} ...", dep_id);
 
-        // a. Ensure repo is in store
-        let repo_dir = try_link_step!(object_pool::clone_to_store(
-            &dep_id,
+        let (repo_dir, resolved_commit, new_lock_entry) = try_link_step!(resolve_link_commit(
+            dep,
+            &workspace_lock,
             &store_path,
-            dep.branch.as_deref(),
-            None, // no reference for MVP
+            frozen,
         ));
+        if let Some(entry) = new_lock_entry {
+            workspace_lock.upsert(entry);
+            lock_changed = true;
+        }
 
         let bare_git_path = repo_dir.join("bare.git");
         let target_dir = cwd.join(&dep.path);
@@ -192,14 +211,20 @@ pub fn execute(repo_filter: Option<&str>, watch: bool) -> Result<()> {
                 &dep_links,
             ));
             editable_migrations.push(migration);
-            record_managed_worktree(dep, &target_dir);
+            try_link_step!(ensure_editable_contains_locked_commit(
+                &target_dir,
+                resolved_commit,
+            ));
             editable_locks_to_acquire.push((dep_id.clone(), branch, target_dir.clone()));
             editable_count += 1;
             println!("  Editable worktree: {}", target_dir.display());
         } else {
             let checkouts_dir = repo_dir.join("checkouts");
-            let checkout_dir =
-                try_link_step!(checkout_from_bare(&bare_git_path, &checkouts_dir, dep));
+            let checkout_dir = try_link_step!(checkout_from_bare(
+                &bare_git_path,
+                &checkouts_dir,
+                resolved_commit,
+            ));
             let entries = try_link_step!(engine::create_dependency_links(
                 &checkout_dir,
                 &target_dir,
@@ -214,14 +239,14 @@ pub fn execute(repo_filter: Option<&str>, watch: bool) -> Result<()> {
         }
     }
 
-    // 4. Save updated config with local paths filled in
-    if let Err(error) = parser::save_config(&cwd, &config) {
+    // 4. Save workspace state
+    if let Err(error) = state.save() {
         let rollback_result = rollback_link_transaction(
             &created_links,
             &previous_readonly_links,
             &editable_migrations,
         );
-        let _ = parser::save_config(&cwd, &original_config);
+        let _ = original_state.save();
         return match rollback_result {
             Ok(()) => Err(error),
             Err(rollback_error) => Err(error.context(format!(
@@ -231,22 +256,23 @@ pub fn execute(repo_filter: Option<&str>, watch: bool) -> Result<()> {
         };
     }
 
-    // 5. Save workspace state
-    if let Err(error) = state.save() {
-        let rollback_result = rollback_link_transaction(
-            &created_links,
-            &previous_readonly_links,
-            &editable_migrations,
-        );
-        let _ = parser::save_config(&cwd, &original_config);
-        let _ = original_state.save();
-        return match rollback_result {
-            Ok(()) => Err(error),
-            Err(rollback_error) => Err(error.context(format!(
-                "Additionally failed to restore the previous workspace links: {}",
-                rollback_error
-            ))),
-        };
+    // 5. Publish the lock only after workspace materialization succeeds.
+    if lock_changed && !frozen {
+        if let Err(error) = workspace_lock.save(&cwd) {
+            let rollback_result = rollback_link_transaction(
+                &created_links,
+                &previous_readonly_links,
+                &editable_migrations,
+            );
+            let _ = original_state.save();
+            return match rollback_result {
+                Ok(()) => Err(error),
+                Err(rollback_error) => Err(error.context(format!(
+                    "Additionally failed to restore the previous workspace links: {}",
+                    rollback_error
+                ))),
+            };
+        }
     }
 
     for migration in &editable_migrations {
@@ -264,7 +290,6 @@ pub fn execute(repo_filter: Option<&str>, watch: bool) -> Result<()> {
             );
         }
     }
-
     // 6. Print summary
     println!("\n✅ Workspace linked successfully!");
     println!("   {} file(s) linked", linked_count);
@@ -272,6 +297,11 @@ pub fn execute(repo_filter: Option<&str>, watch: bool) -> Result<()> {
         "   {} editable, {} read-only dependencies",
         editable_count, readonly_count
     );
+    if frozen {
+        println!("   frozen from {}", LOCK_FILE_NAME);
+    } else if lock_changed {
+        println!("   {} updated", LOCK_FILE_NAME);
+    }
 
     // 7. Show tips on Windows
     #[cfg(windows)]
@@ -290,6 +320,186 @@ pub fn execute(repo_filter: Option<&str>, watch: bool) -> Result<()> {
     }
 
     Ok(())
+}
+
+fn normalize_declarative_sources(config: &mut crate::types::config::VDWConfig) -> bool {
+    let mut changed = false;
+    for dependency in &mut config.dependencies {
+        if !dependency.remote.is_empty() {
+            if !dependency.local.is_empty() {
+                dependency.local.clear();
+                changed = true;
+            }
+            if !dependency.origin.is_empty() {
+                dependency.origin.clear();
+                changed = true;
+            }
+        } else if !dependency.origin.is_empty() {
+            dependency.local = std::mem::take(&mut dependency.origin);
+            changed = true;
+        }
+    }
+    changed
+}
+
+fn preflight_lock(
+    dependencies: &[crate::types::config::Dependency],
+    workspace_lock: &WorkspaceLock,
+    store_path: &Path,
+    repo_filter: Option<&str>,
+    frozen: bool,
+) -> Result<()> {
+    if !frozen {
+        return Ok(());
+    }
+
+    if repo_filter.is_none() && workspace_lock.dependencies.len() != dependencies.len() {
+        bail!(
+            "{} does not contain the same dependency set as .vdwrc; run `vdw sync --update-lock`",
+            LOCK_FILE_NAME
+        );
+    }
+
+    for dependency in dependencies {
+        if repo_filter.is_some_and(|filter| dependency.dep_id() != filter) {
+            continue;
+        }
+        let entry = workspace_lock
+            .entry_for_path(&dependency.path)
+            .with_context(|| {
+                format!(
+                    "{} has no entry for '{}'; run `vdw sync --update-lock`",
+                    LOCK_FILE_NAME, dependency.path
+                )
+            })?;
+        if !entry.matches(dependency) {
+            bail!(
+                "{} entry for '{}' no longer matches .vdwrc; run `vdw sync --update-lock`",
+                LOCK_FILE_NAME,
+                dependency.path
+            );
+        }
+        let oid = git2::Oid::from_str(&entry.resolved_commit).with_context(|| {
+            format!(
+                "{} contains an invalid commit for '{}'",
+                LOCK_FILE_NAME, dependency.path
+            )
+        })?;
+        let bare_git_path =
+            object_pool::repo_store_dir(dependency.dep_id(), store_path).join("bare.git");
+        let repo = git2::Repository::open_bare(&bare_git_path).with_context(|| {
+            format!(
+                "Frozen dependency '{}' is unavailable in the Store; run `vdw sync --update-lock` first",
+                dependency.path
+            )
+        })?;
+        repo.find_commit(oid).with_context(|| {
+            format!(
+                "Frozen commit {} for '{}' is unavailable in the Store",
+                oid, dependency.path
+            )
+        })?;
+    }
+    Ok(())
+}
+
+fn resolve_link_commit(
+    dependency: &crate::types::config::Dependency,
+    workspace_lock: &WorkspaceLock,
+    store_path: &Path,
+    frozen: bool,
+) -> Result<(PathBuf, git2::Oid, Option<LockedDependency>)> {
+    if let Some(entry) = workspace_lock.matching_entry(dependency) {
+        let repo_dir = object_pool::repo_store_dir(dependency.dep_id(), store_path);
+        let bare_git_path = repo_dir.join("bare.git");
+        if !bare_git_path.exists() {
+            if frozen {
+                bail!(
+                    "Frozen dependency '{}' is unavailable in the Store",
+                    dependency.path
+                );
+            }
+            object_pool::clone_to_store(
+                dependency.dep_id(),
+                store_path,
+                dependency.branch.as_deref(),
+                None,
+            )?;
+        }
+
+        let oid = git2::Oid::from_str(&entry.resolved_commit).with_context(|| {
+            format!(
+                "{} contains an invalid commit for '{}'",
+                LOCK_FILE_NAME, dependency.path
+            )
+        })?;
+        let repo = git2::Repository::open_bare(&bare_git_path)?;
+        if repo.find_commit(oid).is_err() {
+            if frozen {
+                bail!(
+                    "Frozen commit {} for '{}' is unavailable in the Store",
+                    oid,
+                    dependency.path
+                );
+            }
+            object_pool::refresh_dependency_revision(&bare_git_path, dependency)?;
+            repo.find_commit(oid).with_context(|| {
+                format!(
+                    "Locked commit {} for '{}' could not be recovered; inspect the remote history before updating the lock",
+                    oid, dependency.path
+                )
+            })?;
+        }
+        return Ok((repo_dir, oid, None));
+    }
+
+    if frozen {
+        if workspace_lock.entry_for_path(&dependency.path).is_some() {
+            bail!(
+                "{} entry for '{}' no longer matches .vdwrc; run `vdw sync --update-lock`",
+                LOCK_FILE_NAME,
+                dependency.path
+            );
+        }
+        bail!(
+            "{} has no entry for '{}'; run `vdw sync --update-lock`",
+            LOCK_FILE_NAME,
+            dependency.path
+        );
+    }
+
+    let repo_dir = object_pool::clone_to_store(
+        dependency.dep_id(),
+        store_path,
+        dependency.branch.as_deref(),
+        None,
+    )?;
+    let resolved_commit =
+        object_pool::refresh_dependency_revision(&repo_dir.join("bare.git"), dependency)?;
+    let entry = LockedDependency::from_dependency(dependency, resolved_commit.to_string())?;
+    Ok((repo_dir, resolved_commit, Some(entry)))
+}
+
+fn ensure_editable_contains_locked_commit(
+    worktree_path: &Path,
+    locked_commit: git2::Oid,
+) -> Result<()> {
+    let repo = git2::Repository::open(worktree_path).with_context(|| {
+        format!(
+            "Cannot inspect editable worktree {}",
+            worktree_path.display()
+        )
+    })?;
+    let head = repo.head()?.peel_to_commit()?.id();
+    if head == locked_commit || repo.graph_descendant_of(head, locked_commit)? {
+        return Ok(());
+    }
+    bail!(
+        "Editable worktree {} is at {}, which is not based on locked commit {}. Reconcile the branch before linking.",
+        worktree_path.display(),
+        head,
+        locked_commit
+    )
 }
 
 #[derive(Debug)]
@@ -701,19 +911,17 @@ fn rollback_link_transaction(
 fn checkout_from_bare(
     bare_git_path: &Path,
     checkouts_dir: &Path,
-    dep: &crate::types::config::Dependency,
+    commit_id: git2::Oid,
 ) -> Result<PathBuf> {
-    let revision = dep
-        .branch
-        .as_deref()
-        .or(dep.tag.as_deref())
-        .or(dep.commit.as_deref())
-        .unwrap_or("main");
-
     let repo = git2::Repository::open_bare(bare_git_path)
         .with_context(|| format!("Cannot open bare repo at {}", bare_git_path.display()))?;
-    let commit = find_commit_for_ref(&repo, revision)?;
-    let commit_id = commit.id();
+    let commit = repo.find_commit(commit_id).with_context(|| {
+        format!(
+            "Cannot find locked commit {} in {}",
+            commit_id,
+            bare_git_path.display()
+        )
+    })?;
     let checkout_dir = checkouts_dir.join(commit_id.to_string());
 
     if checkout_dir.exists() && std::fs::read_dir(&checkout_dir)?.next().is_some() {
@@ -742,10 +950,7 @@ fn checkout_from_bare(
     let tree = commit.tree()?;
     if let Err(error) = write_tree_to_dir(&repo, &tree, &staging_dir) {
         let _ = remove_checkout_staging(&staging_dir);
-        return Err(error.context(format!(
-            "Failed to materialize revision '{}' ({})",
-            revision, commit_id
-        )));
+        return Err(error.context(format!("Failed to materialize locked commit {}", commit_id)));
     }
 
     match std::fs::rename(&staging_dir, &checkout_dir) {
@@ -759,42 +964,12 @@ fn checkout_from_bare(
             let _ = remove_checkout_staging(&staging_dir);
             Err(error).with_context(|| {
                 format!(
-                    "Cannot publish read-only checkout for revision '{}' ({})",
-                    revision, commit_id
+                    "Cannot publish read-only checkout for locked commit {}",
+                    commit_id
                 )
             })
         }
     }
-}
-
-/// Resolve a declared branch, tag, or commit to the exact commit to cache.
-fn find_commit_for_ref<'a>(
-    repo: &'a git2::Repository,
-    reference: &str,
-) -> Result<git2::Commit<'a>> {
-    let candidates = [
-        format!("refs/remotes/origin/{}", reference),
-        format!("refs/heads/{}", reference),
-        format!("refs/tags/{}", reference),
-        reference.to_string(),
-    ];
-
-    for candidate in candidates {
-        if let Ok(object) = repo.revparse_single(&candidate) {
-            if let Ok(commit) = object.peel_to_commit() {
-                return Ok(commit);
-            }
-        }
-    }
-
-    if let Ok(oid) = git2::Oid::from_str(reference) {
-        return Ok(repo.find_commit(oid)?);
-    }
-
-    Err(anyhow::anyhow!(
-        "Cannot find reference '{}' in repository",
-        reference
-    ))
 }
 
 fn remove_checkout_staging(path: &Path) -> Result<()> {
@@ -1018,39 +1193,6 @@ fn unlink_internal(repo_filter: Option<&str>, force_editable: bool) -> Result<()
         };
     }
 
-    let dep_ids_to_clear: Vec<String> = if let Some(repo) = repo_filter {
-        vec![repo.to_string()]
-    } else {
-        // Full unlink: clear local for all editable deps that have a managed worktree
-        config
-            .dependencies
-            .iter()
-            .filter(|d| d.editable && (!d.remote.is_empty() || !d.origin.is_empty()))
-            .map(|d| d.dep_id().to_string())
-            .collect()
-    };
-    for dep in &mut config.dependencies {
-        // Old-format local-only deps: dep.local IS the identity, don't clear
-        if dep.remote.is_empty() && dep.origin.is_empty() {
-            continue;
-        }
-        let dep_id = dep.dep_id().to_string();
-        if dep_ids_to_clear.contains(&dep_id) && dep.editable {
-            dep.local = String::new();
-        }
-    }
-    if let Err(error) = parser::save_config(&cwd, &config) {
-        let rollback_result = engine::restore_links(&links_to_remove);
-        let _ = state.save();
-        return match rollback_result {
-            Ok(()) => Err(error),
-            Err(rollback_error) => Err(error.context(format!(
-                "Additionally failed to restore removed links: {}",
-                rollback_error
-            ))),
-        };
-    }
-
     for (dep_id, branch, worktree, bare_repo) in &worktrees_to_remove {
         if let Err(error) =
             worktree_manager::remove_worktree_at(bare_repo, worktree, force_editable)
@@ -1083,7 +1225,7 @@ fn unlink_internal(repo_filter: Option<&str>, force_editable: bool) -> Result<()
 /// Native editable worktrees stay in place, including dirty and untracked files.
 pub fn relink(_allow_dirty: bool) -> Result<()> {
     println!("Relinking workspace without replacing native editable worktrees...");
-    execute(None, false)?;
+    execute(None, false, false)?;
     println!("✅ Workspace relink completed.");
     Ok(())
 }
@@ -1189,25 +1331,41 @@ mod tests {
     }
 
     #[test]
-    fn test_record_managed_worktree_restores_reused_remote_path() {
-        let mut dep = editable_dependency("https://github.com/example/repo.git", "", "");
-        let worktree = Path::new("/store/objects/repo/worktrees/main");
+    fn normalize_remote_dependency_removes_legacy_runtime_paths() {
+        let mut config = crate::types::config::VDWConfig {
+            workspace: crate::types::config::WorkspaceMeta {
+                name: "test".to_string(),
+                version: "1.0".to_string(),
+            },
+            dependencies: vec![editable_dependency(
+                "https://github.com/example/repo.git",
+                "/store/objects/repo/worktrees/main",
+                "/projects/repo",
+            )],
+        };
 
-        record_managed_worktree(&mut dep, worktree);
-
-        assert_eq!(dep.local, worktree.to_string_lossy());
-        assert!(dep.origin.is_empty());
+        assert!(normalize_declarative_sources(&mut config));
+        assert!(config.dependencies[0].local.is_empty());
+        assert!(config.dependencies[0].origin.is_empty());
     }
 
     #[test]
-    fn test_record_managed_worktree_preserves_local_origin() {
-        let mut dep = editable_dependency("", "/projects/repo", "");
-        let worktree = Path::new("/store/objects/repo/worktrees/main");
+    fn normalize_local_dependency_restores_declarative_source() {
+        let mut config = crate::types::config::VDWConfig {
+            workspace: crate::types::config::WorkspaceMeta {
+                name: "test".to_string(),
+                version: "1.0".to_string(),
+            },
+            dependencies: vec![editable_dependency(
+                "",
+                "/store/objects/repo/worktrees/main",
+                "/projects/repo",
+            )],
+        };
 
-        record_managed_worktree(&mut dep, worktree);
-
-        assert_eq!(dep.origin, "/projects/repo");
-        assert_eq!(dep.local, worktree.to_string_lossy());
+        assert!(normalize_declarative_sources(&mut config));
+        assert_eq!(config.dependencies[0].local, "/projects/repo");
+        assert!(config.dependencies[0].origin.is_empty());
     }
 
     fn create_clean_git_repo() -> tempfile::TempDir {
@@ -1504,25 +1662,6 @@ mod tests {
         (dir, main_id, feature_id)
     }
 
-    fn readonly_dependency(
-        branch: Option<&str>,
-        tag: Option<&str>,
-        commit: Option<&str>,
-    ) -> Dependency {
-        Dependency {
-            remote: "https://github.com/test/repo.git".to_string(),
-            origin: String::new(),
-            local: String::new(),
-            repo: String::new(),
-            path: "libs/repo".to_string(),
-            branch: branch.map(str::to_string),
-            tag: tag.map(str::to_string),
-            commit: commit.map(str::to_string),
-            scope: Scope::default(),
-            editable: false,
-        }
-    }
-
     /// Different declared revisions of one repository must never reuse a checkout.
     #[test]
     fn test_readonly_checkouts_are_isolated_by_resolved_commit() {
@@ -1530,18 +1669,10 @@ mod tests {
         let bare_git_path = dir.path().join("bare.git");
         let checkouts_dir = dir.path().join("checkouts");
 
-        let main_checkout = checkout_from_bare(
-            &bare_git_path,
-            &checkouts_dir,
-            &readonly_dependency(Some("main"), None, None),
-        )
-        .expect("Failed to checkout main");
-        let feature_checkout = checkout_from_bare(
-            &bare_git_path,
-            &checkouts_dir,
-            &readonly_dependency(Some("feature"), None, None),
-        )
-        .expect("Failed to checkout feature");
+        let main_checkout = checkout_from_bare(&bare_git_path, &checkouts_dir, main_id)
+            .expect("Failed to checkout main");
+        let feature_checkout = checkout_from_bare(&bare_git_path, &checkouts_dir, feature_id)
+            .expect("Failed to checkout feature");
 
         assert_eq!(main_checkout, checkouts_dir.join(main_id.to_string()));
         assert_eq!(feature_checkout, checkouts_dir.join(feature_id.to_string()));
@@ -1555,27 +1686,22 @@ mod tests {
             "feature"
         );
 
-        let reused_main = checkout_from_bare(
-            &bare_git_path,
-            &checkouts_dir,
-            &readonly_dependency(None, Some("v1"), None),
-        )
-        .expect("Failed to reuse tagged main commit");
+        let reused_main = checkout_from_bare(&bare_git_path, &checkouts_dir, main_id)
+            .expect("Failed to reuse tagged main commit");
         assert_eq!(reused_main, main_checkout);
     }
 
     #[test]
     fn test_readonly_checkout_rejects_unknown_revision() {
         let (dir, _, _) = create_bare_repo_with_revisions();
+        let missing = git2::Oid::from_str(&"f".repeat(40)).unwrap();
         let error = checkout_from_bare(
             &dir.path().join("bare.git"),
             &dir.path().join("checkouts"),
-            &readonly_dependency(Some("missing"), None, None),
+            missing,
         )
-        .expect_err("Unknown revision should fail");
+        .expect_err("Unknown commit should fail");
 
-        assert!(error
-            .to_string()
-            .contains("Cannot find reference 'missing'"));
+        assert!(error.to_string().contains("Cannot find locked commit"));
     }
 }

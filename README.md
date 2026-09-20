@@ -78,7 +78,7 @@ Download the archive for your platform from [GitHub Releases](https://github.com
 On macOS or Linux:
 
 ```bash
-VERSION=0.7.2            # replace with the release you downloaded
+VERSION=0.8.0            # replace with the release you downloaded
 OS=darwin                # darwin or linux
 ARCH=arm64               # arm64 or x86_64
 ASSET="vdw_${OS}_${ARCH}_${VERSION}"
@@ -127,7 +127,7 @@ See the [CLI installation guide](vdw/README.md#install-the-cli) for upgrades, un
 3. If the `code` command is available, VS Code can also install it from a terminal:
 
 ```bash
-VERSION=0.7.2  # replace with the downloaded VSIX version
+VERSION=0.8.0  # replace with the downloaded VSIX version
 code --install-extension "./vdw_vscode_${VERSION}.vsix" --force
 ```
 
@@ -158,7 +158,7 @@ Use `C:\\Users\\your-name\\.local\\bin\\vdw.exe` on Windows.
 Download `vdw_cli_skill_<version>.tar.gz` from the same [GitHub Release](https://github.com/HWH-2019/vdw/releases), then extract it into your agent's Skill directory:
 
 ```bash
-VERSION=0.7.2
+VERSION=0.8.0
 SKILL_HOME="$HOME/.qoder/skills"  # use $HOME/.codex/skills for Codex
 mkdir -p "$SKILL_HOME"
 tar -xzf "vdw_cli_skill_${VERSION}.tar.gz" -C "$SKILL_HOME"
@@ -200,10 +200,13 @@ vdw repo add /path/to/local/repo --path packages/shared --branch feature/dev --e
 ### 3. Link Files
 
 ```bash
-vdw link
+vdw sync --update-lock  # resolve declarations into .vdw.lock
+vdw link --frozen       # materialize exactly those commits, without fetching
 ```
 
 For an editable dependency, VDW creates a complete native Git worktree directly at its configured workspace path. For a read-only dependency, VDW resolves the declared revision into an immutable `checkouts/<commit-sha>` tree, applies the scope, and creates hardlinks (or symlinks). `scope` filters AI context in both modes but never removes files from an editable worktree.
+
+Use `vdw sync --dry-run --json` to inspect branch/tag drift without changing the lock. A normal `vdw link` bootstraps a missing or config-stale lock entry, while an existing matching entry remains pinned. Commit `.vdw.lock` with `.vdwrc` so people and AI agents reproduce the same dependency graph.
 
 Inspect the whole workspace without changing it:
 
@@ -272,12 +275,24 @@ dependencies:
 | Field | Required | Description |
 |-------|----------|-------------|
 | `remote` | ✅ | Git URL (`https://`, `git@`, or empty for local repos) |
-| `local` | ✅ (if no remote) | Local source before first link; VDW records the native worktree path after link |
+| `local` | ✅ (if no remote) | Declarative local Git source; VDW never overwrites it with a runtime worktree path |
 | `path` | ✅ | Workspace-relative native worktree root (editable) or projection root (read-only); absolute paths and `..` are rejected |
 | `branch` / `tag` / `commit` | ✅ (pick one) | Which version to track |
 | `scope.include` | ✅ | Glob patterns for AI context; also selects read-only projection files |
 | `scope.exclude` | ❌ | Context/read-only projection exclusions |
 | `editable` | ❌ | Create a complete native worktree at `path` (default: `false`) |
+
+### Reproducible dependency lock
+
+`.vdwrc` declares intent; `.vdw.lock` records the exact commit resolved for every dependency. Runtime worktree paths and Git status stay outside both files.
+
+```bash
+vdw sync --dry-run        # fetch declarations and report drift only
+vdw sync --update-lock    # accept resolved commits into .vdw.lock
+vdw link --frozen         # require a matching lock and local Store objects
+```
+
+`--frozen` performs a complete preflight before removing old projections. It never fetches or advances refs. For editable dependencies, the worktree HEAD may contain local commits on top of the locked commit, but it must not be based on unrelated or older history.
 
 ---
 

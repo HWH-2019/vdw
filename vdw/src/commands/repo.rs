@@ -3,6 +3,7 @@ use std::path::PathBuf;
 
 use crate::commands::link;
 use crate::config::parser;
+use crate::lockfile::WorkspaceLock;
 use crate::store::editable_locks::{
     acquire_editable_lock, check_editable_lock, release_editable_lock,
 };
@@ -154,7 +155,6 @@ fn update_config(
             editable = false;
         }
     }
-
     let dependency_path = path.unwrap_or_else(|| format!("./packages/{}", repo_name));
 
     // Create new dependency
@@ -195,7 +195,6 @@ fn update_config(
             tracing::warn!("Failed to acquire editable lock: {}", e);
         }
     }
-
     println!(
         "\x1b[32m✓\x1b[0m Configuration updated: {}",
         config_path.display()
@@ -228,7 +227,7 @@ fn find_workspace_root() -> Result<PathBuf> {
 }
 
 /// Resolve a user-provided name to the dep_id used in state.links.
-/// dep_id priority: remote > origin > local
+/// dep_id priority: remote > local > origin (legacy fallback)
 fn resolve_repo_id(name: &str) -> Option<String> {
     // If it's already a URL, that IS the dep_id
     if is_remote_url(name) {
@@ -258,17 +257,12 @@ pub fn remove(name: String, force: bool) -> Result<()> {
         if let Ok(config) = parser::load_config(&workspace_dir) {
             for dep in &config.dependencies {
                 if dependency_matches(dep, &name) && dep.editable {
-                    // Determine worktree path
+                    // Editable runtime state lives only at the configured
+                    // workspace target. The declarative local source is never
+                    // removed and must not make repo removal look dirty.
                     let workspace_target = workspace_dir.join(&dep.path);
                     let worktree_path = if workspace_target.join(".git").exists() {
                         workspace_target
-                    } else if !dep.local.is_empty() {
-                        let p = std::path::Path::new(&dep.local);
-                        if p.is_absolute() {
-                            p.to_path_buf()
-                        } else {
-                            workspace_dir.join(&dep.local)
-                        }
                     } else {
                         continue;
                     };
@@ -384,10 +378,14 @@ fn remove_from_config(name: &str) -> Result<bool> {
         .retain(|dep| !dependency_matches(dep, name));
 
     let removed = config.dependencies.len() < original_len;
+    let mut workspace_lock = WorkspaceLock::load(&workspace_dir)?;
 
     if removed {
         parser::save_config(&workspace_dir, &config)?;
-
+        if let Some(workspace_lock) = &mut workspace_lock {
+            workspace_lock.retain_paths(config.dependencies.iter().map(|dep| dep.path.as_str()));
+            workspace_lock.save(&workspace_dir)?;
+        }
         // Release editable locks only after the configuration update succeeds.
         for dep in &deps_to_remove {
             let dep_id = dep.dep_id().to_string();
@@ -494,18 +492,9 @@ pub fn status(name: String) -> Result<()> {
         return Ok(());
     }
 
-    // Resolve worktree path from dep.local
-    let worktree_path = if dep.local.is_empty() {
-        None
-    } else {
-        let p = std::path::Path::new(&dep.local);
-        let resolved = if p.is_absolute() {
-            p.to_path_buf()
-        } else {
-            workspace_dir.join(&dep.local)
-        };
-        Some(resolved)
-    };
+    // Editable worktrees are materialized at the configured workspace path.
+    // `local` remains the source identity for local-only dependencies.
+    let worktree_path = Some(workspace_dir.join(&dep.path));
 
     match worktree_path {
         Some(ref wp) if wp.exists() => {

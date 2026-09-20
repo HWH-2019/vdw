@@ -1,6 +1,9 @@
 use std::fs;
 use std::process::Command;
 
+use vdw::lockfile::{
+    LockedDependency, LockedRevision, RevisionKind, WorkspaceLock, LOCK_FILE_VERSION,
+};
 use vdw::store::object_pool;
 
 #[test]
@@ -35,6 +38,21 @@ dependencies:
     let store_entry = object_pool::repo_store_dir(repo_url, &store);
     fs::create_dir_all(&store_entry).expect("store entry");
     fs::write(store_entry.join("sentinel"), "shared").expect("store sentinel");
+    WorkspaceLock {
+        version: LOCK_FILE_VERSION,
+        dependencies: vec![LockedDependency {
+            repo: repo_url.to_string(),
+            path: "packages/shared".to_string(),
+            editable: false,
+            revision: LockedRevision {
+                kind: RevisionKind::Branch,
+                value: "main".to_string(),
+            },
+            resolved_commit: "a".repeat(40),
+        }],
+    }
+    .save(&workspace)
+    .expect("workspace lock");
 
     let output = Command::new(env!("CARGO_BIN_EXE_vdw"))
         .args(["repo", "remove", repo_url])
@@ -52,5 +70,9 @@ dependencies:
 
     let config = fs::read_to_string(workspace.join(".vdwrc")).expect("updated config");
     assert!(!config.contains(repo_url));
+    assert!(WorkspaceLock::load_required(&workspace)
+        .expect("updated lock")
+        .dependencies
+        .is_empty());
     assert!(String::from_utf8_lossy(&output.stdout).contains("Shared Store entry retained"));
 }

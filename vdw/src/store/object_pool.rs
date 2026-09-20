@@ -2,11 +2,12 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::time::Duration;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use chrono::Utc;
 use sha2::{Digest, Sha256};
 
 use crate::store::alternates;
+use crate::types::config::Dependency;
 use crate::types::store::StoreMetadata;
 
 /// Compute a unique hash for a repository URL (first 8 hex chars of SHA256)
@@ -43,7 +44,10 @@ pub fn clone_to_store(
         if let Some(b) = branch {
             let remote_ref = bare_git_path.join("refs/remotes/origin").join(b);
             if !remote_ref.exists() {
-                tracing::info!("Branch '{}' not yet fetched for existing store entry, fetching...", b);
+                tracing::info!(
+                    "Branch '{}' not yet fetched for existing store entry, fetching...",
+                    b
+                );
                 let repo = git2::Repository::open_bare(&bare_git_path)?;
                 if let Err(e) = fetch_with_timeout(&repo, branch, 90) {
                     tracing::warn!("Failed to fetch branch '{}' for existing store: {}", b, e);
@@ -91,14 +95,12 @@ pub fn clone_to_store(
                      - Network connectivity\n\
                      - SSH key authentication (if using git@ URL)\n\
                      - Repository URL is correct and accessible",
-                    repo_url, e
+                    repo_url,
+                    e
                 );
             }
             // If we have content despite fetch failure (e.g. from alternates), just warn
-            tracing::warn!(
-                "Fetch warning (repo has content from alternates): {}",
-                e
-            );
+            tracing::warn!("Fetch warning (repo has content from alternates): {}", e);
         }
     }
 
@@ -124,6 +126,78 @@ pub fn clone_to_store(
 
     tracing::info!("Initialized store entry for: {}", repo_url);
     Ok(repo_dir)
+}
+
+/// Resolve a dependency's declared revision from a Store bare repository.
+/// Branches prefer the freshly fetched remote-tracking ref; tags and commits
+/// are resolved according to their declared type so a same-named branch cannot
+/// shadow a tag.
+pub fn resolve_dependency_commit(
+    repo: &git2::Repository,
+    dependency: &Dependency,
+) -> Result<git2::Oid> {
+    let object = if let Some(branch) = &dependency.branch {
+        resolve_first(
+            repo,
+            &[
+                format!("refs/remotes/origin/{}", branch),
+                format!("refs/heads/{}", branch),
+            ],
+        )?
+    } else if let Some(tag) = &dependency.tag {
+        resolve_first(repo, &[format!("refs/tags/{}", tag)])?
+    } else if let Some(commit) = &dependency.commit {
+        repo.revparse_single(commit).with_context(|| {
+            format!(
+                "Cannot resolve commit '{}' for dependency '{}'",
+                commit,
+                dependency.dep_id()
+            )
+        })?
+    } else {
+        anyhow::bail!(
+            "Dependency '{}' does not declare a branch, tag, or commit",
+            dependency.dep_id()
+        );
+    };
+
+    Ok(object.peel_to_commit()?.id())
+}
+
+/// Fetch the declared revision explicitly and return its resolved full commit.
+/// This is used only by `vdw sync` and lock initialization; ordinary frozen
+/// linking never performs network I/O.
+pub fn refresh_dependency_revision(
+    bare_git_path: &Path,
+    dependency: &Dependency,
+) -> Result<git2::Oid> {
+    let repo = git2::Repository::open_bare(bare_git_path)
+        .with_context(|| format!("Cannot open bare repo at {}", bare_git_path.display()))?;
+
+    if let Some(branch) = &dependency.branch {
+        fetch_with_timeout(&repo, Some(branch), 90)?;
+    } else if let Some(tag) = &dependency.tag {
+        let refspec = format!("+refs/tags/{0}:refs/tags/{0}", tag);
+        fetch_refspec_with_timeout(&repo, &refspec, 90)?;
+    } else if let Some(commit) = &dependency.commit {
+        if resolve_dependency_commit(&repo, dependency).is_err() {
+            fetch_refspec_with_timeout(&repo, commit, 90)?;
+        }
+    }
+
+    resolve_dependency_commit(&repo, dependency)
+}
+
+fn resolve_first<'a>(
+    repo: &'a git2::Repository,
+    candidates: &[String],
+) -> Result<git2::Object<'a>> {
+    for candidate in candidates {
+        if let Ok(object) = repo.revparse_single(candidate) {
+            return Ok(object);
+        }
+    }
+    anyhow::bail!("Cannot resolve any of: {}", candidates.join(", "))
 }
 
 /// Get the remote tracking HEAD commit hash after fetching
@@ -196,7 +270,9 @@ fn fix_bare_repo_head(bare_git_path: &Path, branch: Option<&str>) {
     }
 
     // Also ensure the local branch ref exists (copy from remote tracking ref)
-    let remote_ref = bare_git_path.join("refs/remotes/origin").join(&target_branch);
+    let remote_ref = bare_git_path
+        .join("refs/remotes/origin")
+        .join(&target_branch);
     let local_ref = bare_git_path.join("refs/heads").join(&target_branch);
     if remote_ref.exists() && !local_ref.exists() {
         if let Some(parent) = local_ref.parent() {
@@ -265,19 +341,25 @@ fn fetch_remote(repo: &git2::Repository, branch: Option<&str>) -> Result<()> {
         branch,
         bare_git_path.display()
     );
-    eprintln!("[GIT FETCH] {} origin {}", if branch.is_some() { "+refs/heads/<branch>:refs/remotes/origin/<branch>" } else { "+refs/heads/*:refs/remotes/origin/*" }, bare_git_path.display());
+    eprintln!(
+        "[GIT FETCH] {} origin {}",
+        if branch.is_some() {
+            "+refs/heads/<branch>:refs/remotes/origin/<branch>"
+        } else {
+            "+refs/heads/*:refs/remotes/origin/*"
+        },
+        bare_git_path.display()
+    );
 
-    let output = cmd
-        .output()
-        .map_err(|e| {
-            if e.kind() == std::io::ErrorKind::NotFound {
-                anyhow::anyhow!(
-                    "git command not found. Please install Git and ensure it's in your PATH."
-                )
-            } else {
-                anyhow::anyhow!("Failed to execute git fetch: {}", e)
-            }
-        })?;
+    let output = cmd.output().map_err(|e| {
+        if e.kind() == std::io::ErrorKind::NotFound {
+            anyhow::anyhow!(
+                "git command not found. Please install Git and ensure it's in your PATH."
+            )
+        } else {
+            anyhow::anyhow!("Failed to execute git fetch: {}", e)
+        }
+    })?;
 
     if output.status.success() {
         tracing::info!("git fetch completed successfully");
@@ -305,10 +387,7 @@ fn fetch_remote(repo: &git2::Repository, branch: Option<&str>) -> Result<()> {
             return fetch_remote(repo, None);
         }
 
-        Err(anyhow::anyhow!(
-            "git fetch failed: {}",
-            stderr.trim()
-        ))
+        Err(anyhow::anyhow!("git fetch failed: {}", stderr.trim()))
     }
 }
 
@@ -328,7 +407,10 @@ fn fetch_local_origin_remote_refs(bare_git_path: &Path, branch: Option<&str>) {
 
     if let Some(b) = branch {
         // Try fetching the specific branch from the source's remote tracking refs
-        cmd.arg(format!("+refs/remotes/origin/{}:refs/remotes/origin/{}", b, b));
+        cmd.arg(format!(
+            "+refs/remotes/origin/{}:refs/remotes/origin/{}",
+            b, b
+        ));
     } else {
         // Fetch all remote tracking branches from the source
         cmd.arg("+refs/remotes/origin/*:refs/remotes/origin/*");
@@ -356,7 +438,11 @@ fn fetch_local_origin_remote_refs(bare_git_path: &Path, branch: Option<&str>) {
 }
 
 /// Fetch from remote with a timeout to prevent hanging on network/SSH issues
-fn fetch_with_timeout(repo: &git2::Repository, branch: Option<&str>, timeout_secs: u64) -> Result<()> {
+fn fetch_with_timeout(
+    repo: &git2::Repository,
+    branch: Option<&str>,
+    timeout_secs: u64,
+) -> Result<()> {
     let bare_git_path = repo.path().to_path_buf();
     let branch_owned = branch.map(|s| s.to_string());
 
@@ -394,6 +480,61 @@ fn fetch_with_timeout(repo: &git2::Repository, branch: Option<&str>, timeout_sec
         }
         Err(mpsc::RecvTimeoutError::Disconnected) => {
             anyhow::bail!("Fetch thread disconnected unexpectedly")
+        }
+    }
+}
+
+fn fetch_refspec(repo: &git2::Repository, refspec: &str) -> Result<()> {
+    let mut command = std::process::Command::new("git");
+    command
+        .args(["fetch", "origin", refspec])
+        .env(
+            "GIT_SSH_COMMAND",
+            "ssh -o BatchMode=yes -o ConnectTimeout=15 -o StrictHostKeyChecking=accept-new",
+        )
+        .current_dir(repo.path());
+
+    tracing::info!("Fetching explicit refspec '{}'", refspec);
+    let output = command.output().map_err(|error| {
+        if error.kind() == std::io::ErrorKind::NotFound {
+            anyhow::anyhow!("git command not found. Please install Git and ensure it is in PATH")
+        } else {
+            anyhow::anyhow!("Failed to execute git fetch: {}", error)
+        }
+    })?;
+    if !output.status.success() {
+        anyhow::bail!(
+            "git fetch origin '{}' failed: {}",
+            refspec,
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
+    }
+    Ok(())
+}
+
+fn fetch_refspec_with_timeout(
+    repo: &git2::Repository,
+    refspec: &str,
+    timeout_secs: u64,
+) -> Result<()> {
+    let bare_git_path = repo.path().to_path_buf();
+    let refspec = refspec.to_string();
+    let (sender, receiver) = mpsc::channel();
+
+    std::thread::spawn(move || {
+        let result = git2::Repository::open_bare(&bare_git_path)
+            .map_err(anyhow::Error::from)
+            .and_then(|repo| fetch_refspec(&repo, &refspec));
+        let _ = sender.send(result);
+    });
+
+    match receiver.recv_timeout(Duration::from_secs(timeout_secs)) {
+        Ok(result) => result,
+        Err(mpsc::RecvTimeoutError::Timeout) => {
+            anyhow::bail!("Git fetch timed out after {} seconds", timeout_secs)
+        }
+        Err(mpsc::RecvTimeoutError::Disconnected) => {
+            anyhow::bail!("Git fetch thread disconnected unexpectedly")
         }
     }
 }
@@ -450,7 +591,73 @@ pub fn remove_from_store(store_path: &Path, repo_url: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::types::config::Scope;
     use std::fs;
+
+    fn revision_dependency(
+        branch: Option<&str>,
+        tag: Option<&str>,
+        commit: Option<&str>,
+    ) -> Dependency {
+        Dependency {
+            remote: "https://github.com/example/repo.git".to_string(),
+            origin: String::new(),
+            local: String::new(),
+            repo: String::new(),
+            path: "packages/repo".to_string(),
+            branch: branch.map(str::to_string),
+            tag: tag.map(str::to_string),
+            commit: commit.map(str::to_string),
+            scope: Scope::default(),
+            editable: false,
+        }
+    }
+
+    fn create_bare_revision_repo() -> (tempfile::TempDir, git2::Oid, git2::Oid) {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = git2::Repository::init_bare(dir.path()).unwrap();
+        let signature = git2::Signature::now("VDW Test", "vdw@example.com").unwrap();
+        let first_tree_id = {
+            let mut builder = repo.treebuilder(None).unwrap();
+            let blob = repo.blob(b"first").unwrap();
+            builder.insert("version.txt", blob, 0o100644).unwrap();
+            builder.write().unwrap()
+        };
+        let first_tree = repo.find_tree(first_tree_id).unwrap();
+        let first = repo
+            .commit(
+                Some("refs/tags/release"),
+                &signature,
+                &signature,
+                "first",
+                &first_tree,
+                &[],
+            )
+            .unwrap();
+        let first_commit = repo.find_commit(first).unwrap();
+        let second_tree_id = {
+            let mut builder = repo.treebuilder(None).unwrap();
+            let blob = repo.blob(b"second").unwrap();
+            builder.insert("version.txt", blob, 0o100644).unwrap();
+            builder.write().unwrap()
+        };
+        let second_tree = repo.find_tree(second_tree_id).unwrap();
+        let second = repo
+            .commit(
+                Some("refs/remotes/origin/release"),
+                &signature,
+                &signature,
+                "second",
+                &second_tree,
+                &[&first_commit],
+            )
+            .unwrap();
+        drop(first_commit);
+        drop(first_tree);
+        drop(second_tree);
+        drop(repo);
+        (dir, first, second)
+    }
 
     /// Create a local source repo with an initial commit for testing
     fn create_source_repo() -> (tempfile::TempDir, String) {
@@ -463,7 +670,9 @@ mod tests {
         fs::write(dir.path().join("README.md"), "# Test Repo").expect("Failed to write README");
 
         let mut index = repo.index().expect("Failed to get index");
-        index.add_path(std::path::Path::new("README.md")).expect("Failed to add path");
+        index
+            .add_path(std::path::Path::new("README.md"))
+            .expect("Failed to add path");
         index.write().expect("Failed to write index");
 
         let tree_id = index.write_tree().expect("Failed to write tree");
@@ -482,6 +691,31 @@ mod tests {
         let hash2 = compute_repo_hash("https://github.com/org/repo.git");
         assert_eq!(hash1, hash2);
         assert_eq!(hash1.len(), 8);
+    }
+
+    #[test]
+    fn resolve_dependency_commit_honors_revision_kind() {
+        let (dir, tagged, branched) = create_bare_revision_repo();
+        let repo = git2::Repository::open_bare(dir.path()).unwrap();
+
+        assert_eq!(
+            resolve_dependency_commit(&repo, &revision_dependency(Some("release"), None, None))
+                .unwrap(),
+            branched
+        );
+        assert_eq!(
+            resolve_dependency_commit(&repo, &revision_dependency(None, Some("release"), None))
+                .unwrap(),
+            tagged
+        );
+        assert_eq!(
+            resolve_dependency_commit(
+                &repo,
+                &revision_dependency(None, None, Some(&tagged.to_string()))
+            )
+            .unwrap(),
+            tagged
+        );
     }
 
     #[test]
@@ -536,7 +770,11 @@ mod tests {
         fs::create_dir_all(store_path.join("objects")).unwrap();
 
         let result = clone_to_store(&source_url, &store_path, None, None);
-        assert!(result.is_ok(), "clone_to_store should succeed with local repo: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "clone_to_store should succeed with local repo: {:?}",
+            result.err()
+        );
 
         let repo_dir = result.unwrap();
         assert!(repo_dir.exists());
@@ -546,8 +784,14 @@ mod tests {
         // Verify metadata has actual values
         let metadata = StoreMetadata::load(&repo_dir).unwrap();
         assert_eq!(metadata.repo_url, source_url);
-        assert!(!metadata.commit_hash.is_empty(), "commit_hash should be populated after fetch");
-        assert!(metadata.size_bytes > 0, "size_bytes should be > 0 after fetch");
+        assert!(
+            !metadata.commit_hash.is_empty(),
+            "commit_hash should be populated after fetch"
+        );
+        assert!(
+            metadata.size_bytes > 0,
+            "size_bytes should be > 0 after fetch"
+        );
         assert!(!metadata.alternates_configured);
     }
 
@@ -579,7 +823,11 @@ mod tests {
 
         let result = clone_to_store(&source_url, &store_path, None, Some(&reference_path));
 
-        assert!(result.is_ok(), "clone_to_store with alternates should succeed: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "clone_to_store with alternates should succeed: {:?}",
+            result.err()
+        );
         let repo_dir = result.unwrap();
         let bare_git_path = repo_dir.join("bare.git");
         let alternates_file = bare_git_path.join("objects/info/alternates");
@@ -601,7 +849,10 @@ mod tests {
 
         assert!(result.is_err(), "Should fail on unreachable repository");
         let err = format!("{}", result.err().unwrap());
-        assert!(err.contains("Failed to clone repository"), "Error should mention cloning failure");
+        assert!(
+            err.contains("Failed to clone repository"),
+            "Error should mention cloning failure"
+        );
     }
 
     #[test]
@@ -722,7 +973,11 @@ mod tests {
 
         let result = clone_to_store(repo_url, &store_path, branch, None);
 
-        assert!(result.is_ok(), "Failed to clone real GitLab repo: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "Failed to clone real GitLab repo: {:?}",
+            result.err()
+        );
 
         let repo_dir = result.unwrap();
         let metadata = StoreMetadata::load(&repo_dir).expect("Failed to load metadata");
@@ -730,13 +985,26 @@ mod tests {
         eprintln!("---");
         eprintln!("Clone succeeded!");
         eprintln!("  Commit hash: {}", metadata.commit_hash);
-        eprintln!("  Size:        {} bytes ({:.2} MB)", metadata.size_bytes, metadata.size_bytes as f64 / 1_048_576.0);
+        eprintln!(
+            "  Size:        {} bytes ({:.2} MB)",
+            metadata.size_bytes,
+            metadata.size_bytes as f64 / 1_048_576.0
+        );
         eprintln!("  Branch:      {:?}", metadata.branch);
         eprintln!("  Repo URL:    {}", metadata.repo_url);
 
-        assert!(!metadata.commit_hash.is_empty(), "commit_hash should be populated after cloning");
-        assert!(metadata.size_bytes > 0, "size_bytes should be > 0 after cloning");
-        assert_eq!(metadata.repo_url, repo_url, "repo_url should match the original URL");
+        assert!(
+            !metadata.commit_hash.is_empty(),
+            "commit_hash should be populated after cloning"
+        );
+        assert!(
+            metadata.size_bytes > 0,
+            "size_bytes should be > 0 after cloning"
+        );
+        assert_eq!(
+            metadata.repo_url, repo_url,
+            "repo_url should match the original URL"
+        );
 
         // Verify the bare repo has a local branch created (via fetch refspec)
         let bare_git_path = repo_dir.join("bare.git");

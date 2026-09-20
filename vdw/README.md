@@ -69,7 +69,7 @@ Download the matching archive from [GitHub Releases](https://github.com/HWH-2019
 macOS/Linux example:
 
 ```bash
-VERSION=0.7.2            # replace with the release you downloaded
+VERSION=0.8.0            # replace with the release you downloaded
 OS=darwin                # darwin or linux
 ARCH=arm64               # arm64 or x86_64
 ASSET="vdw_${OS}_${ARCH}_${VERSION}"
@@ -187,14 +187,17 @@ This will:
 ### 🔗 Link files into your workspace
 
 ```bash
-# Link all dependencies
-vdw link
+# Resolve and lock all declarations, then materialize exactly those commits
+vdw sync --update-lock
+vdw link --frozen
 
 # Link a specific repo only
 vdw link --repo git@github.com:org/ui-lib.git
 ```
 
-Editable dependencies become complete native Git worktrees at their configured `path`; their `.git` pointer is real, and `scope` only filters AI context. Read-only dependencies resolve the declared branch/tag/commit, cache an immutable tree under `checkouts/<commit-sha>`, then expose scope-filtered hardlinks or symlinks. Different revisions of one repository therefore cannot reuse the same checkout. Run `vdw link` anytime to refresh without replacing an existing native editable worktree.
+Editable dependencies become complete native Git worktrees at their configured `path`; their `.git` pointer is real, and `scope` only filters AI context. Read-only dependencies resolve the declared branch/tag/commit, cache an immutable tree under `checkouts/<commit-sha>`, then expose scope-filtered hardlinks or symlinks. Different revisions of one repository therefore cannot reuse the same checkout.
+
+`.vdwrc` stays declarative and never receives managed worktree paths. `.vdw.lock` pins every dependency to a full commit. `vdw sync --dry-run --json` fetches and reports drift without editing the lock; `vdw sync --update-lock` accepts it. `vdw link --frozen` requires matching lock entries and locally available Store commits, performs preflight before changing projections, and never performs network or ref updates. A normal `vdw link` creates missing/config-stale lock entries but preserves matching pins.
 
 ### 🩺 Inspect workspace topology
 
@@ -366,8 +369,8 @@ dependencies:
 | Field | Required | Description |
 |-------|----------|-------------|
 | `remote` | ✅ | Git URL (`https://`, `git@`, or empty for local repos) |
-| `local` | ✅ (if no remote) | Local source before first link; VDW records the native worktree path after link |
-| `origin` | ❌ | Original source path (preserved when `local` is overwritten with worktree path) |
+| `local` | ✅ (if no remote) | Declarative local Git source; never overwritten with a managed worktree path |
+| `origin` | ❌ | Legacy migration field; new configurations must not set it |
 | `path` | ✅ | Workspace-relative native worktree root (editable) or projection root (read-only); absolute paths and `..` are rejected |
 | `branch` / `tag` / `commit` | ✅ (pick one) | Which version to track |
 | `scope.include` | ✅ | AI context patterns; also selects read-only projection files |

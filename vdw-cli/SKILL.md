@@ -1,6 +1,6 @@
 ---
 name: vdw-cli
-description: Set up VDW development workspaces with vdw init, repo add, and link. Use when preparing a development workspace after requirements analysis, before coding begins. Triggered by user confirmation after development requirements are understood. Creates workspace directories, initializes .vdwrc, adds repository dependencies, and offers IDE launch.
+description: Set up reproducible VDW development workspaces with vdw init, repo add, sync, lock, and frozen link. Use when preparing or refreshing a development workspace after requirements analysis, before coding begins. Triggered by user confirmation after development requirements are understood. Creates workspace directories, initializes .vdwrc, resolves .vdw.lock, materializes repository dependencies, and offers IDE launch.
 ---
 
 # VDW CLI Workspace Setup
@@ -23,7 +23,7 @@ Each step is a discrete, reusable operation. Scenarios chain them together.
 | **B** | Init workspace | Ask user for workspace name and parent directory (default: `~/.vdw/workspaces/`). Folder name = workspace name. `mkdir -p {parent}/{name}` + `cd {path} && vdw init [--template fullstack]` |
 | **C** | Add remote repo | `vdw repo add "{url}" --path ./packages/{name} --branch {branch} [--editable]` |
 | **D** | Add local repo | `vdw repo add {/absolute/path} --path ./packages/{name} --branch {branch} [--editable]` |
-| **E** | Link workspace | `cd {workspace} && vdw link [--repo "{url}"]` |
+| **E** | Link workspace | `cd {workspace} && vdw link --frozen [--repo "{url}"]` after lock resolution |
 | **F** | Unlink | `vdw unlink [--repo "{url}"]` |
 | **G** | Remove repo | `vdw repo remove {name}` |
 | **H** | List repos | `vdw repo list` |
@@ -36,6 +36,8 @@ Each step is a discrete, reusable operation. Scenarios chain them together.
 | **O** | Worktree create | `vdw worktree create {repo} {branch}` |
 | **P** | Worktree delete | `vdw worktree delete {repo} {branch} [--force]` |
 | **Q** | Launch IDE | `bash {skill_dir}/scripts/open-workspace.sh {path}` |
+| **R** | Inspect revision drift | `vdw sync --dry-run --json` |
+| **S** | Update dependency lock | `vdw sync --update-lock [--json]` |
 
 Full command syntax: [reference.md](reference.md)
 
@@ -47,9 +49,10 @@ Determine the user's situation, then follow the corresponding chain:
 
 | Scenario | When to Use | Chain |
 |----------|-------------|-------|
-| **全流程** | Workspace dir doesn't exist yet, setting up from scratch | **A → B → C/D → E → I → J → L/M → Q** |
-| **工作空间构建** | `.vdwrc` exists but repos not linked | **A → C/D → E → I → J** |
-| **添加单个仓库** | Adding a new dep to existing workspace | **H → A → C/D → E --repo → I → J** |
+| **全流程** | Workspace dir doesn't exist yet, setting up from scratch | **A → B → C/D → S → E → I → J → L/M → Q** |
+| **工作空间构建** | `.vdwrc` exists but repos not linked | **A → R → S → E → I → J** |
+| **添加单个仓库** | Adding a new dep to existing workspace | **H → A → C/D → R → S → E --repo → I → J** |
+| **依赖更新** | Inspect and accept branch/tag movement | **R → confirm → S → E → J** |
 | **移除仓库** | Removing a dep from workspace | **H → G** |
 | **诊断排查** | Something is broken | **I → J → K** |
 | **AI 上下文** | Review/preview AI context | **L → M** |
@@ -104,19 +107,25 @@ cd {workspace_path} && vdw repo add "{url}" --path "./packages/{name}" --branch 
 
 **Editable flag**: `--editable` if modifying; omit for read-only reference. If unsure, ask.
 
-`vdw repo add` updates the Store and `.vdwrc`; it does not materialize the configured workspace path. Always run capability E afterward.
+`vdw repo add` updates the Store and `.vdwrc`; it does not materialize the configured workspace path. Resolve `.vdw.lock` with capability S, then run capability E.
 
 **Editable lock conflict**: `--editable` may auto-downgrade to read-only if the same branch is already editable in another workspace. This is expected.
 
 ### E — Link Workspace
 
 ```bash
-cd {workspace_path} && vdw link
+cd {workspace_path} && vdw link --frozen
 ```
 
 Wait for completion. Verify output: `✅ Workspace linked successfully!` with correct editable/read-only count.
 
 Then run `vdw validate` and `vdw status --json`. For every editable dependency, also read back its actual `git branch --show-current`, `git rev-parse HEAD`, and `git remote get-url origin` from the configured workspace path. Treat these values as authoritative; Store metadata alone is not proof of the linked branch or commit.
+
+### R/S — Resolve Dependency Lock
+
+Run `vdw sync --dry-run --json` first for an existing workspace. Present added, updated, config-changed, and removed dependencies; do not accept branch/tag movement without user confirmation. After confirmation, or immediately after adding dependencies to a new workspace, run `vdw sync --update-lock --json` and verify `.vdw.lock` records a full commit for every `.vdwrc` dependency. Then use frozen linking.
+
+Dry-run may fetch Store refs but does not edit `.vdw.lock` or workspace projections. If an editable worktree does not contain a newly locked commit, stop and ask the user to reconcile that branch; never reset it.
 
 ### Q — Launch IDE
 
@@ -132,6 +141,8 @@ Auto-detects: Qoder → VS Code → Cursor → Trae → Windsurf → Finder.
 
 - **`vdw` in PATH** — if not found, try `~/.local/bin/vdw`
 - **Branch required** — always pass the confirmed branch; stop and ask if it is unknown
+- **Declarative config** — `.vdwrc` contains source intent only; never write managed worktree paths into `local` or `origin`
+- **Reproducible linking** — prefer `vdw link --frozen` whenever `.vdw.lock` exists; use `vdw sync --dry-run --json` before changing pins
 - **Preserve work** — before unlinking, removing, relinking, or moving a workspace, inspect `vdw status --json` and every editable repository's Git status
 - **Cleanup on failure** — do not recursively delete the workspace. Diagnose with `vdw status`, `vdw conflicts list`, and `vdw doctor`; use VDW cleanup commands only after confirming their targets and dirty state
 - **AI scope** — read `vdw context preview --json` before broad code discovery and use its workspace-relative `files` as the default read/search boundary. Expand beyond it only when the task requires related files, and report that expansion. This contract is not a filesystem security boundary for editable worktrees
