@@ -49,15 +49,17 @@ fn create_old_store_object(store: &Path, repo: &str) -> std::path::PathBuf {
 fn init_and_store_status_use_configured_store_path() {
     let temp = tempfile::tempdir().unwrap();
     let home = temp.path().join("home");
-    let workspace = temp.path().join("workspace");
+    let workspace_root = temp.path().join("workspaces");
+    let workspace = workspace_root.join("workspace");
     let custom_store = temp.path().join("shared-store");
     fs::create_dir_all(home.join(".vdw")).unwrap();
-    fs::create_dir_all(&workspace).unwrap();
+    fs::create_dir_all(&workspace_root).unwrap();
     fs::create_dir_all(&custom_store).unwrap();
     let config = serde_json::json!({
         "store_path": custom_store,
         "max_store_size_gb": 1,
-        "gc_threshold_days": 30
+        "gc_threshold_days": 30,
+        "workspace_root": workspace_root
     });
     fs::write(
         home.join(".vdw/config.json"),
@@ -65,7 +67,7 @@ fn init_and_store_status_use_configured_store_path() {
     )
     .unwrap();
 
-    let init = run_vdw(&home, &workspace, &["init"]);
+    let init = run_vdw(&home, temp.path(), &["init", "workspace"]);
     assert_success(&init);
     assert!(custom_store.join("objects").is_dir());
     assert!(custom_store.join("cache").is_dir());
@@ -87,10 +89,16 @@ fn init_and_store_status_use_configured_store_path() {
 fn store_gc_requires_dry_run_and_never_deletes_candidates() {
     let temp = tempfile::tempdir().unwrap();
     let home = temp.path().join("home");
-    let workspace = temp.path().join("workspace");
+    let workspace_root = temp.path().join("workspaces");
+    let workspace = workspace_root.join("workspace");
     fs::create_dir_all(&home).unwrap();
-    fs::create_dir_all(&workspace).unwrap();
-    assert_success(&run_vdw(&home, &workspace, &["init"]));
+    let workspace_root_arg = workspace_root.to_string_lossy();
+    assert_success(&run_vdw(
+        &home,
+        temp.path(),
+        &["config", "set", "workspace-root", &workspace_root_arg],
+    ));
+    assert_success(&run_vdw(&home, temp.path(), &["init", "workspace"]));
     let store = home.join(".vdw/store");
     let object = create_old_store_object(&store, "https://example.com/old.git");
 
@@ -105,4 +113,50 @@ fn store_gc_requires_dry_run_and_never_deletes_candidates() {
     assert_eq!(report["deletion_performed"], false);
     assert_eq!(report["candidates"].as_array().unwrap().len(), 1);
     assert!(object.exists(), "dry-run must not delete Store objects");
+}
+
+#[test]
+fn init_requires_workspace_root_configuration() {
+    let temp = tempfile::tempdir().unwrap();
+    let home = temp.path().join("home");
+    fs::create_dir_all(&home).unwrap();
+
+    let init = run_vdw(&home, temp.path(), &["init", "workspace"]);
+
+    assert!(!init.status.success());
+    assert!(String::from_utf8_lossy(&init.stderr).contains("vdw config set workspace-root <path>"));
+    assert!(!home.join(".vdw/workspaces/workspace").exists());
+}
+
+#[test]
+fn config_set_workspace_root_controls_workspace_creation() {
+    let temp = tempfile::tempdir().unwrap();
+    let home = temp.path().join("home");
+    let workspace_root = temp.path().join("custom-workspaces");
+    fs::create_dir_all(&home).unwrap();
+    let workspace_root_arg = workspace_root.to_string_lossy();
+
+    let configure = run_vdw(
+        &home,
+        temp.path(),
+        &["config", "set", "workspace-root", &workspace_root_arg],
+    );
+    assert_success(&configure);
+    let init = run_vdw(&home, temp.path(), &["init", "project-one"]);
+    assert_success(&init);
+
+    let config_path = workspace_root.join("project-one/.vdwrc");
+    assert!(config_path.is_file());
+    let workspace_config = fs::read_to_string(config_path).unwrap();
+    assert!(workspace_config.contains("name: \"project-one\""));
+
+    let global_config: serde_json::Value =
+        serde_json::from_slice(&fs::read(home.join(".vdw/config.json")).unwrap()).unwrap();
+    assert_eq!(
+        global_config["workspace_root"],
+        fs::canonicalize(&workspace_root)
+            .unwrap()
+            .to_string_lossy()
+            .as_ref()
+    );
 }

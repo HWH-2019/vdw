@@ -12,8 +12,9 @@ pub use editable_locks::{
     release_editable_lock, save_editable_locks,
 };
 pub use manager::{
-    get_store_path, get_vdw_home, init_store, init_store_at, is_store_initialized,
-    resolve_store_path, GlobalConfig,
+    get_store_path, get_vdw_home, get_workspace_root, init_store, init_store_at,
+    is_store_initialized, resolve_store_path, resolve_workspace_root, save_global_config,
+    set_workspace_root, GlobalConfig,
 };
 pub use object_pool::{clone_to_store, compute_repo_hash, list_store_repos, remove_from_store};
 pub use registry::{

@@ -1,4 +1,4 @@
-.PHONY: package package-vdw package-vdw-dmg package-vscode package-skill
+.PHONY: package package-vdw package-vdw-dmg package-vscode package-skill stage-aone-skill
 
 package:
 	bash scripts/package_all.sh
@@ -14,3 +14,6 @@ package-vscode:
 
 package-skill:
 	bash scripts/package_skill.sh
+
+stage-aone-skill:
+	bash scripts/stage_aone_skill.sh

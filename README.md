@@ -78,7 +78,7 @@ Download the archive for your platform from [GitHub Releases](https://github.com
 On macOS or Linux:
 
 ```bash
-VERSION=0.9.0            # replace with the release you downloaded
+VERSION=0.9.1            # replace with the release you downloaded
 OS=darwin                # darwin or linux
 ARCH=arm64               # arm64 or x86_64
 ASSET="vdw_${OS}_${ARCH}_${VERSION}"
@@ -158,7 +158,7 @@ Use `C:\\Users\\your-name\\.local\\bin\\vdw.exe` on Windows.
 Download `vdw_cli_skill_<version>.tar.gz` from the same [GitHub Release](https://github.com/HWH-2019/vdw/releases), then extract it into your agent's Skill directory:
 
 ```bash
-VERSION=0.9.0
+VERSION=0.9.1
 SKILL_HOME="$HOME/.qoder/skills"  # use $HOME/.codex/skills for Codex
 mkdir -p "$SKILL_HOME"
 tar -xzf "vdw_cli_skill_${VERSION}.tar.gz" -C "$SKILL_HOME"
@@ -166,6 +166,8 @@ test -f "$SKILL_HOME/vdw-cli/SKILL.md"
 ```
 
 To install directly from a source checkout instead, copy the top-level `vdw-cli/` directory into the same Skill directory.
+
+The Aone platform package `vdw-cli@0.9.1` (owned by `gx-business-platform`) bundles both the Skill and the macOS Apple Silicon CLI. After installing the Skill, run `bash scripts/install-bundled-cli.sh` from its directory to install the verified CLI into `~/.local/bin`. Other platforms require a separately installed matching CLI. Maintainers can reproduce this Aone bundle with `make stage-aone-skill` and publish the staged directory with `a1 skill publish --platform gx-business-platform`.
 
 ### 4. Verify the installation
 
@@ -183,8 +185,9 @@ Then open a folder containing `.vdwrc`, run **VDW: Validate Configuration** from
 ### 1. Initialize a Workspace
 
 ```bash
-cd your-project
-vdw init
+vdw config set workspace-root ~/workspaces  # required once; no implicit default
+vdw init your-project
+cd ~/workspaces/your-project
 ```
 
 ### 2. Add a Repository
@@ -226,7 +229,7 @@ vdw store gc --dry-run --json
 
 VDW registers a workspace after `init`, repository config changes, a successful `link`, or `sync --update-lock`. Store status then joins every readable registered `.vdwrc`, `.vdw.lock`, and native Git worktree with the repository objects. GC in 0.9 is deliberately plan-only: an object is listed only when the registered reference inventory is complete, no config/lock/worktree references remain, and `gc_threshold_days` has elapsed. It never deletes files.
 
-The effective Store location comes from `~/.vdw/config.json`. `store_path` accepts an absolute path, `~/...`, or a path relative to `~/.vdw`; `max_store_size_gb` and `gc_threshold_days` drive status and retention reporting.
+Global settings live in `~/.vdw/config.json`. `workspace_root` is required before the first `vdw init`; it accepts an absolute path or `~/...`, and every new workspace is created beneath it. `store_path` accepts an absolute path, `~/...`, or a path relative to `~/.vdw`; `max_store_size_gb` and `gc_threshold_days` drive status and retention reporting.
 
 ### Upgrading an existing workspace to 0.7
 

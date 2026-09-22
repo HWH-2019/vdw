@@ -223,7 +223,7 @@ fn find_workspace_root() -> Result<PathBuf> {
             None => {
                 anyhow::bail!(
                     "No .vdwrc configuration file found in current directory or parents. \
-                     Run `vdw init` first."
+                     Run `vdw init <name>` first."
                 )
             }
         }
@@ -421,7 +421,7 @@ pub fn list() -> Result<()> {
     let config_path = workspace_dir.join(".vdwrc");
 
     if !config_path.exists() {
-        println!("No workspace configuration found. Run `vdw init` first.");
+        println!("No workspace configuration found. Run `vdw init <name>` first.");
         return Ok(());
     }
 

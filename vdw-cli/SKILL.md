@@ -1,9 +1,28 @@
 ---
 name: vdw-cli
-description: Set up reproducible VDW development workspaces and inspect the shared Store with vdw init, repo add, sync, lock, frozen link, Store status, and plan-only GC. Use when preparing or refreshing a development workspace after requirements analysis, before coding begins, or when auditing VDW Store usage. Triggered by user confirmation after development requirements are understood. Creates workspace directories, initializes .vdwrc, resolves .vdw.lock, materializes repository dependencies, and offers IDE launch.
+description: Install and use the VDW CLI to set up reproducible development workspaces and inspect the shared Store with vdw init, repo add, sync, lock, frozen link, Store status, and plan-only GC. Use when installing VDW, preparing or refreshing a development workspace after requirements analysis, before coding begins, or when auditing VDW Store usage. Triggered by user confirmation after development requirements are understood. Creates workspace directories, initializes .vdwrc, resolves .vdw.lock, materializes repository dependencies, and offers IDE launch.
+metadata:
+  version: "0.9.1"
+  bundled-cli: macos-arm64
 ---
 
 # VDW CLI Workspace Setup
+
+## Install the CLI
+
+Check the current installation first:
+
+```bash
+vdw --version
+```
+
+If `vdw` is missing on macOS Apple Silicon and this Skill came from Aone, ask for confirmation before installing the bundled CLI into `~/.local/bin`:
+
+```bash
+bash scripts/install-bundled-cli.sh
+```
+
+The installer refuses unsupported systems, verifies the bundled archive checksum, and checks that the installed command reports `vdw 0.9.1`. It does not replace a different installed version unless the user explicitly confirms the replacement and the command is rerun with `VDW_INSTALL_FORCE=1`. On other platforms, or when the bundled archive is absent, install a matching VDW CLI separately before continuing. Never execute an unverified binary.
 
 ## Quick Start
 
@@ -20,7 +39,7 @@ Each step is a discrete, reusable operation. Scenarios chain them together.
 | # | Capability | Command / Action |
 |---|-----------|------------------|
 | **A** | Gather repos from requirements | Scan task description for Git URLs, local paths, branch names, editable flags. Present summary table to user. Ask for missing info. |
-| **B** | Init workspace | Ask user for workspace name and parent directory (default: `~/.vdw/workspaces/`). Folder name = workspace name. `mkdir -p {parent}/{name}` + `cd {path} && vdw init [--template fullstack]` |
+| **B** | Init workspace | Read `vdw config show --json`. If `workspace_root` is missing, ask the user for an absolute or `~/...` parent directory and run `vdw config set workspace-root {parent}`. Then run `vdw init {name} [--template fullstack]`. |
 | **C** | Add remote repo | `vdw repo add "{url}" --path ./packages/{name} --branch {branch} [--editable]` |
 | **D** | Add local repo | `vdw repo add {/absolute/path} --path ./packages/{name} --branch {branch} [--editable]` |
 | **E** | Link workspace | `cd {workspace} && vdw link --frozen [--repo "{url}"]` after lock resolution |
@@ -86,19 +105,27 @@ Determine the user's situation, then follow the corresponding chain:
 
 ### B — Init Workspace
 
-**Step 1: Ask the user** two questions before creating anything:
-1. *"What name for this workspace?"* — this becomes both the folder name and `workspace.name` in `.vdwrc`
-2. *"Where to create it?"* — parent directory, default: `~/.vdw/workspaces/`
-
-Default location: `~/.vdw/workspaces/{workspace-name}/`. Folder name must match the workspace name.
-
-**Step 2: Create and init** after user confirms:
+**Step 1: Inspect the global workspace root:**
 ```bash
-mkdir -p {parent_dir}/{workspace_name}
-cd {parent_dir}/{workspace_name} && vdw init
+vdw config show --json
 ```
 
-`.vdwrc` already exists → `vdw init` warns but doesn't error (acceptable).
+If `workspace_root` is missing, ask the user where VDW should store new workspaces. There is no default. The value must be absolute or start with `~/`:
+
+```bash
+vdw config set workspace-root {parent_dir}
+```
+
+**Step 2: Ask for the workspace name** if it is not already known. It becomes both the folder name and `workspace.name` in `.vdwrc`.
+
+**Step 3: Create the workspace:**
+
+```bash
+vdw init {workspace_name} [--template fullstack]
+cd {workspace_root}/{workspace_name}
+```
+
+`.vdwrc` already exists in that named workspace → `vdw init` warns but doesn't error (acceptable).
 
 ### C/D — Add Repository
 
@@ -134,7 +161,7 @@ Dry-run may fetch Store refs but does not edit `.vdw.lock` or workspace projecti
 
 Run `vdw store status --json` to read the effective Store path, registered workspace health, actual object sizes, and config/lock/worktree references. If `reference_inventory_complete` is false, resolve missing or invalid registered workspaces before treating any object as unreferenced.
 
-`vdw store gc --dry-run --json` is plan-only in 0.9.0. It lists an object only after the configured retention period and only when no registered `.vdwrc`, `.vdw.lock`, or native Git worktree references remain. It never deletes files. Do not bypass the required `--dry-run` flag or delete Store directories manually.
+`vdw store gc --dry-run --json` is plan-only in 0.9.1. It lists an object only after the configured retention period and only when no registered `.vdwrc`, `.vdw.lock`, or native Git worktree references remain. It never deletes files. Do not bypass the required `--dry-run` flag or delete Store directories manually.
 
 ### Q — Launch IDE
 
@@ -152,7 +179,7 @@ Auto-detects: Qoder → VS Code → Cursor → Trae → Windsurf → Finder.
 - **Branch required** — always pass the confirmed branch; stop and ask if it is unknown
 - **Declarative config** — `.vdwrc` contains source intent only; never write managed worktree paths into `local` or `origin`
 - **Reproducible linking** — prefer `vdw link --frozen` whenever `.vdw.lock` exists; use `vdw sync --dry-run --json` before changing pins
-- **Store safety** — inspect `vdw store status --json` first; 0.9.0 GC is plan-only, and an incomplete workspace registry means no object is eligible
+- **Store safety** — inspect `vdw store status --json` first; 0.9.1 GC is plan-only, and an incomplete workspace registry means no object is eligible
 - **Preserve work** — before unlinking, removing, relinking, or moving a workspace, inspect `vdw status --json` and every editable repository's Git status
 - **Cleanup on failure** — do not recursively delete the workspace. Diagnose with `vdw status`, `vdw conflicts list`, and `vdw doctor`; use VDW cleanup commands only after confirming their targets and dirty state
 - **AI scope** — read `vdw context preview --json` before broad code discovery and use its workspace-relative `files` as the default read/search boundary. Expand beyond it only when the task requires related files, and report that expansion. This contract is not a filesystem security boundary for editable worktrees

@@ -1,3 +1,4 @@
+pub mod config;
 pub mod conflicts;
 pub mod context;
 pub mod doctor;

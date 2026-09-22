@@ -15,7 +15,7 @@ source "${SCRIPT_DIR}/common.sh"
 SKILL_DIR="${PROJECT_ROOT}/vdw-cli"
 VERSION="$(get_skill_version)"
 
-for required_file in SKILL.md reference.md scripts/open-workspace.sh; do
+for required_file in SKILL.md reference.md scripts/open-workspace.sh scripts/install-bundled-cli.sh; do
     if [[ ! -f "${SKILL_DIR}/${required_file}" ]]; then
         log_error "Missing required Skill file: vdw-cli/${required_file}"
         exit 1

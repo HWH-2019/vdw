@@ -69,7 +69,7 @@ Download the matching archive from [GitHub Releases](https://github.com/HWH-2019
 macOS/Linux example:
 
 ```bash
-VERSION=0.9.0            # replace with the release you downloaded
+VERSION=0.9.1            # replace with the release you downloaded
 OS=darwin                # darwin or linux
 ARCH=arm64               # arm64 or x86_64
 ASSET="vdw_${OS}_${ARCH}_${VERSION}"
@@ -154,13 +154,16 @@ Removing the binary does not delete `~/.vdw/store` or any VDW workspace.
 ### 🏁 Start a workspace
 
 ```bash
-cd my-project
+# Required once. VDW has no default workspace location.
+vdw config set workspace-root ~/workspaces
 
 # Initialize with a .vdwrc config file
-vdw init
+vdw init my-project
 
 # Or with a fullstack template (pre-filled examples)
-vdw init --template fullstack
+vdw init my-fullstack-project --template fullstack
+
+cd ~/workspaces/my-project
 ```
 
 ### 📥 Add a repository
@@ -220,7 +223,7 @@ vdw store gc --dry-run --json
 
 `vdw init`, repository config changes, successful linking, and `vdw sync --update-lock` maintain `~/.vdw/workspaces.json`. Store inspection joins each readable registered `.vdwrc`, `.vdw.lock`, and native Git worktree with Store objects, reports actual disk usage, and applies the configured retention threshold. The 0.9 GC command is plan-only and never deletes Store content; an incomplete registry, missing workspace, invalid metadata, or uninspectable bare repository prevents eligibility.
 
-Configure the effective Store in `~/.vdw/config.json`. `store_path` supports an absolute path, `~/...`, or a path relative to `~/.vdw`; the default remains `~/.vdw/store`.
+Global settings live in `~/.vdw/config.json`. Before the first workspace is created, set `workspace_root` with `vdw config set workspace-root <path>`; VDW does not choose a default workspace location. Configure the effective Store with `store_path`, which supports an absolute path, `~/...`, or a path relative to `~/.vdw`; its default remains `~/.vdw/store`.
 
 ### Upgrade legacy editable projections to 0.7
 

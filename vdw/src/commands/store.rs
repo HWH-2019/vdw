@@ -114,7 +114,7 @@ pub fn status(json: bool) -> Result<()> {
 pub fn gc_dry_run(dry_run: bool, json: bool) -> Result<()> {
     if !dry_run {
         bail!(
-            "Store GC is plan-only in v0.9.0; pass --dry-run to inspect eligible objects without deleting anything"
+            "Store GC is plan-only in v0.9.1; pass --dry-run to inspect eligible objects without deleting anything"
         );
     }
 

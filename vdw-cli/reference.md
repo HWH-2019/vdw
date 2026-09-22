@@ -4,13 +4,28 @@ Full command syntax and options for every `vdw` subcommand.
 
 ---
 
-## `vdw init`
+## `vdw config`
 
-Initialize a new VDW workspace. Creates `.vdwrc` in the current directory.
+Configure the parent directory used for every new workspace. This setting is required before the first `vdw init`; VDW does not select a default workspace location.
 
 ```bash
-vdw init                    # Default template
-vdw init --template fullstack   # Pre-filled examples
+vdw config set workspace-root /absolute/path/to/workspaces
+vdw config set workspace-root ~/workspaces
+vdw config show
+vdw config show --json
+```
+
+The command creates the selected directory, resolves it to an absolute path, and stores it as `workspace_root` in `~/.vdw/config.json`. Relative paths are rejected so workspace placement never depends on the current directory.
+
+---
+
+## `vdw init`
+
+Initialize a named VDW workspace beneath the configured workspace root. The workspace name becomes both the directory name and `workspace.name` in `.vdwrc`.
+
+```bash
+vdw init my-workspace                         # Default template
+vdw init my-fullstack --template fullstack   # Pre-filled examples
 ```
 
 `.vdwrc` structure:
@@ -199,7 +214,7 @@ vdw store gc --dry-run
 vdw store gc --dry-run --json
 ```
 
-In 0.9.0, `--dry-run` is required and `deletion_performed` is always `false`. A candidate must be older than `gc_threshold_days`, have valid metadata and a readable bare repository, and have no registered `.vdwrc`, `.vdw.lock`, or Git worktree references. Never remove Store object directories manually from an AI workflow.
+In 0.9.1, `--dry-run` is required and `deletion_performed` is always `false`. A candidate must be older than `gc_threshold_days`, have valid metadata and a readable bare repository, and have no registered `.vdwrc`, `.vdw.lock`, or Git worktree references. Never remove Store object directories manually from an AI workflow.
 
 ---
 

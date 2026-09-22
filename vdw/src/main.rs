@@ -31,9 +31,16 @@ struct Cli {
 enum Commands {
     /// Initialize a new VDW workspace
     Init {
+        /// Workspace name; created under the configured workspace root
+        name: String,
         /// Template to use for initialization
         #[arg(short, long)]
         template: Option<String>,
+    },
+    /// Manage global VDW configuration
+    Config {
+        #[command(subcommand)]
+        command: ConfigCommands,
     },
     /// Materialize configured dependencies in the workspace
     Link {
@@ -109,6 +116,30 @@ enum Commands {
     Store {
         #[command(subcommand)]
         command: StoreCommands,
+    },
+}
+
+#[derive(Subcommand)]
+enum ConfigCommands {
+    /// Set a global VDW configuration value
+    Set {
+        #[command(subcommand)]
+        setting: ConfigSetCommands,
+    },
+    /// Show the effective global configuration
+    Show {
+        /// Print machine-readable JSON
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum ConfigSetCommands {
+    /// Set the parent directory used for new workspaces
+    WorkspaceRoot {
+        /// Absolute path or a path beginning with '~/'.
+        path: std::path::PathBuf,
     },
 }
 
@@ -222,7 +253,7 @@ enum StoreCommands {
     },
     /// Plan garbage collection without deleting Store content
     Gc {
-        /// Required safety flag; v0.9.0 never deletes Store content
+        /// Required safety flag; v0.9.1 never deletes Store content
         #[arg(long)]
         dry_run: bool,
         /// Print machine-readable JSON
@@ -233,7 +264,15 @@ enum StoreCommands {
 
 fn run_command(cli: Cli) -> anyhow::Result<()> {
     match cli.command {
-        Commands::Init { template } => commands::init::execute(template),
+        Commands::Init { name, template } => commands::init::execute(name, template),
+        Commands::Config { command } => match command {
+            ConfigCommands::Set { setting } => match setting {
+                ConfigSetCommands::WorkspaceRoot { path } => {
+                    commands::config::set_workspace_root(path)
+                }
+            },
+            ConfigCommands::Show { json } => commands::config::show(json),
+        },
         Commands::Link {
             repo,
             frozen,
@@ -311,7 +350,7 @@ fn main() {
         let err_str = e.to_string();
         if err_str.contains("not found") || err_str.contains("no such file") {
             eprintln!(
-                "\n\x1b[33mSuggestion:\x1b[0m Run `vdw init` to initialize a workspace first."
+                "\n\x1b[33mSuggestion:\x1b[0m Run `vdw init <name>` to initialize a workspace first."
             );
         } else if err_str.contains("already exists") {
             eprintln!(
