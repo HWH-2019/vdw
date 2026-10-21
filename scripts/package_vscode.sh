@@ -34,17 +34,10 @@ log_info "VSIX packaging complete."
 # ─── Locate and rename ────────────────────────────────────────────────────────
 ensure_dist_dir
 
-# Find the generated VSIX (e.g., vdw-vscode-0.5.0.vsix)
-VSIX_FILE=""
-for f in vdw-vscode-*.vsix; do
-    if [[ -f "$f" ]]; then
-        VSIX_FILE="$f"
-        break
-    fi
-done
-
-if [[ -z "${VSIX_FILE}" ]]; then
-    log_error "Could not find generated VSIX file in vdw-vscode/"
+# Select the version just built even when older VSIX files remain locally.
+VSIX_FILE="vdw-vscode-${VERSION}.vsix"
+if [[ ! -f "${VSIX_FILE}" ]]; then
+    log_error "Could not find generated VSIX file: ${VSIX_FILE}"
     exit 1
 fi
 

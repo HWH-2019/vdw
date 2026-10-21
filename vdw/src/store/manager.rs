@@ -6,13 +6,15 @@ use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 
 /// Global VDW configuration stored at ~/.vdw/config.json
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GlobalConfig {
     pub store_path: String,
     pub max_store_size_gb: u64,
     pub gc_threshold_days: u32,
     #[serde(default)]
     pub workspace_root: Option<String>,
+    #[serde(default)]
+    pub lifecycle: crate::lifecycle::LifecycleConfig,
 }
 
 impl Default for GlobalConfig {
@@ -22,6 +24,7 @@ impl Default for GlobalConfig {
             max_store_size_gb: 50,
             gc_threshold_days: 30,
             workspace_root: None,
+            lifecycle: crate::lifecycle::LifecycleConfig::default(),
         }
     }
 }
@@ -230,7 +233,7 @@ pub fn save_global_config(config: &GlobalConfig) -> Result<()> {
     fs::create_dir_all(&vdw_home)?;
     let config_path = vdw_home.join("config.json");
     let content = serde_json::to_string_pretty(config)?;
-    fs::write(&config_path, content)
+    crate::lifecycle::io::atomic_bytes(&config_path, content.as_bytes())
         .with_context(|| format!("Failed to write {}", config_path.display()))?;
     Ok(())
 }

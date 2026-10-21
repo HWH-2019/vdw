@@ -8,6 +8,7 @@ import { StatusBarManager } from './providers/statusBar';
 import { registerCommands } from './commands/index';
 import { AutoOpenService } from './services/autoOpenService';
 import { WorkspaceStatusService } from './services/workspaceStatusService';
+import { LifecycleService } from './services/lifecycleService';
 import { log, logError, dispose as disposeLogger } from './utils/logger';
 
 let fileProvider: VDWFileProvider | undefined;
@@ -33,6 +34,12 @@ export function activate(context: vscode.ExtensionContext) {
     const configService = new ConfigService(workspacePath);
     const hasConfig = configService.loadConfig() !== null;
     workspaceStatusService = new WorkspaceStatusService(configService, cliService, workspacePath);
+    const lifecycleService = new LifecycleService(cliService, workspacePath, () => {
+        treeProvider?.refresh();
+        void workspaceStatusService?.refresh({ forceTopology: true });
+    });
+    lifecycleService.register(context);
+    context.subscriptions.push(lifecycleService);
     void vscode.commands.executeCommand('setContext', 'vdw.hasConfig', hasConfig);
 
     if (!hasConfig) {

@@ -4,6 +4,28 @@ import * as os from 'os';
 import * as path from 'path';
 import * as yaml from 'js-yaml';
 import { minimatch } from 'minimatch';
+import { formatLifecycleReport, LifecycleOperation } from '../utils/lifecycle';
+
+describe('Lifecycle result reporting', () => {
+    it('keeps archived, skipped and failed workspaces in the same complete report', () => {
+        const op: LifecycleOperation = {
+            operation_id: 'op-test', kind: 'archive', state: 'partial_failure',
+            summary: { scope_total: 3, archived_count: 1, restored_count: 0, not_archived_count: 2, skipped_count: 1, failed_count: 1, unfinished_count: 0 },
+            results: [
+                { name: 'done', workspace_id: 'ws-done', outcome: 'archived', reason_codes: [], message: '', archive_path: '/archives/done', repositories: [] },
+                { name: 'dirty', workspace_id: 'ws-dirty', outcome: 'skipped', reason_codes: ['dirty'], message: '', repositories: [{ path: 'packages/api', dirty: { staged: 1, unstaged: 2, conflicts: 0, untracked: 3, unknown_ignored: 0 } }] },
+                { name: 'failed', workspace_id: 'ws-failed', outcome: 'failed', reason_codes: [], message: 'disk full', repositories: [] },
+            ],
+            progress: { phase: '', archives_done: 0, archives_total: 0, bytes_copied: 0, bytes_total: 0, bytes_verified: 0 },
+        };
+        const report = formatLifecycleReport(op);
+        assert.ok(report.includes('已归档 1 个；未归档 2 个，其中跳过 1 个'));
+        assert.ok(report.includes('done [ws-done]'));
+        assert.ok(report.includes('dirty [ws-dirty]：未归档（跳过）'));
+        assert.ok(report.includes('packages/api：暂存 1，未暂存 2'));
+        assert.ok(report.includes('disk full'));
+    });
+});
 
 // Test VDW types
 import {

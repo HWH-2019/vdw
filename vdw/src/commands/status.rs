@@ -48,6 +48,9 @@ pub struct RepositoryTopologyStatus {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct WorkspaceTopologyStatus {
+    pub lifecycle_state: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub archive_id: Option<String>,
     pub workspace_root: PathBuf,
     pub workspace_name: String,
     pub healthy: bool,
@@ -63,6 +66,14 @@ pub fn show(json: bool) -> Result<()> {
 
     if json {
         println!("{}", serde_json::to_string(&report)?);
+        return Ok(());
+    }
+    if report.lifecycle_state == "archived" {
+        println!(
+            "Workspace {} is archived. Restore with: vdw workspace restore {} --preview",
+            report.workspace_name,
+            report.archive_id.as_deref().unwrap_or("<archive_id>")
+        );
         return Ok(());
     }
 
@@ -109,6 +120,22 @@ pub fn inspect_workspace(
     store_path: &Path,
 ) -> Result<WorkspaceTopologyStatus> {
     let config = parser::load_config(workspace_root)?;
+    if let Some(ws) = crate::store::registry::load_workspace_registry()?
+        .workspaces
+        .into_iter()
+        .find(|w| w.path == workspace_root && w.lifecycle_state == "archived")
+    {
+        return Ok(WorkspaceTopologyStatus {
+            lifecycle_state: ws.lifecycle_state,
+            archive_id: ws.latest_archive_id,
+            workspace_root: workspace_root.into(),
+            workspace_name: config.workspace.name,
+            healthy: true,
+            issue_count: 0,
+            conflict_count: 0,
+            repositories: vec![],
+        });
+    }
     let state = WorkspaceState::load(workspace_root)?;
     inspect(&config, &state, workspace_root, store_path)
 }
@@ -134,6 +161,8 @@ fn inspect(
         .sum();
 
     Ok(WorkspaceTopologyStatus {
+        lifecycle_state: "active".into(),
+        archive_id: None,
         workspace_root: workspace_root.to_path_buf(),
         workspace_name: config.workspace.name.clone(),
         healthy: issue_count == 0,

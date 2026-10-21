@@ -8,6 +8,7 @@ pub fn execute(name: String, template: Option<String>) -> Result<()> {
     validate_workspace_name(&name)?;
     let workspace_root = manager::get_workspace_root()?;
     let workspace_path = workspace_root.join(&name);
+    crate::lifecycle::engine::ensure_active(&workspace_path)?;
     prepare_workspace_directory(&workspace_path)?;
 
     manager::init_store()?;

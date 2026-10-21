@@ -39,6 +39,12 @@ export class WorkspaceTreeProvider implements vscode.TreeDataProvider<WorkspaceT
         if (element) return [];
 
         const config = this.configService.getConfig();
+        if (this.statusService.getLifecycleState() === 'archived') {
+            const item = new WorkspaceTreeItem('Workspace archived — restore', 'vdwArchived');
+            item.iconPath = new vscode.ThemeIcon('archive');
+            item.command = { command: 'vdw.lifecycle.restore', title: 'Restore Workspace' };
+            return [item];
+        }
         if (!config) {
             const initItem = new WorkspaceTreeItem(
                 'Initialize VDW Workspace',

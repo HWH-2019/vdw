@@ -1,9 +1,10 @@
+pub mod commands;
 pub mod config;
-pub mod store;
+pub mod context;
+pub mod lifecycle;
 pub mod link;
 pub mod lockfile;
-pub mod worktree;
-pub mod context;
-pub mod commands;
-pub mod utils;
+pub mod store;
 pub mod types;
+pub mod utils;
+pub mod worktree;

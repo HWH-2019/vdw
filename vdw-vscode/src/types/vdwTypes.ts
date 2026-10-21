@@ -83,6 +83,8 @@ export interface RepositoryTopologyStatus {
 }
 
 export interface WorkspaceTopologyStatusResult {
+    lifecycle_state?: string;
+    archive_id?: string;
     workspace_root: string;
     workspace_name: string;
     healthy: boolean;

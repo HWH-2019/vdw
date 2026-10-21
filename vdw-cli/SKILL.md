@@ -1,12 +1,24 @@
 ---
 name: vdw-cli
-description: Install and use the VDW CLI to set up reproducible development workspaces and inspect the shared Store with vdw init, repo add, sync, lock, frozen link, Store status, and plan-only GC. Use when installing VDW, preparing or refreshing a development workspace after requirements analysis, before coding begins, or when auditing VDW Store usage. Triggered by user confirmation after development requirements are understood. Creates workspace directories, initializes .vdwrc, resolves .vdw.lock, materializes repository dependencies, and offers IDE launch.
+description: Install and use VDW for reproducible multi-repository workspaces, shared Store inspection and workspace lifecycle management. Preview and confirm archiving, exact-commit restoration, idle retention, protection and archive-location migration. Any dirty repository skips its entire workspace; always report archived, not archived and skipped workspaces with reasons.
 metadata:
-  version: "0.9.1"
+  version: "0.10.0"
   bundled-cli: macos-arm64
 ---
 
 # VDW CLI Workspace Setup
+
+## Workspace lifecycle (0.10+)
+
+Check `vdw lifecycle capabilities` before using lifecycle commands. Run `vdw workspace list --json` to resolve an exact ID or path; do not infer targets from similar names.
+
+For archiving, use `vdw workspace archive <id>... --preview --json`; for restoring, use `vdw workspace restore <archive_id> --preview --json`. Present the plan, allow changes with `lifecycle plan adjust`, then execute only the user's reviewed plan with `vdw lifecycle plan execute <plan_id> --confirm --json`. A previous approval of an unrelated plan is not authorization for new targets.
+
+Any staged, unstaged, conflicted or untracked repository changes skip the entire workspace. Never use force, reset, stash, automatic commits, or manual directory deletion to bypass a skip. Unknown ignored files also require review. Preserve branch refs and other workspaces.
+
+After every operation, report all scoped workspaces, the archived list, the not-archived list and its skipped subset, with per-workspace reasons and dirty repository counts. Keep failed and interrupted items distinct from safe skips. Read back `vdw lifecycle operation status <operation_id> --json`; do not infer local archive success from AI or cloud status. Zero candidates and all-skipped operations still require explicit feedback.
+
+Retention defaults to 30 idle days plus 72 hours grace; automation is initially disabled. Enable only after `vdw lifecycle auto enable --preview` is confirmed. `workspace protect add/remove/list` manages the no-cleanup list; removal requires a previewed plan. Changing archive-root also previews and automatically synchronizes existing archives, with progress through operation watch. Original project files outside managed dependencies/packages are preserved; AI summaries are optional derived records.
 
 ## Install the CLI
 
@@ -22,7 +34,7 @@ If `vdw` is missing on macOS Apple Silicon and this Skill came from Aone, ask fo
 bash scripts/install-bundled-cli.sh
 ```
 
-The installer refuses unsupported systems, verifies the bundled archive checksum, and checks that the installed command reports `vdw 0.9.1`. It does not replace a different installed version unless the user explicitly confirms the replacement and the command is rerun with `VDW_INSTALL_FORCE=1`. On other platforms, or when the bundled archive is absent, install a matching VDW CLI separately before continuing. Never execute an unverified binary.
+The installer refuses unsupported systems, verifies the bundled archive checksum, and checks that the installed command reports `vdw 0.10.0`. It does not replace a different installed version unless the user explicitly confirms the replacement and the command is rerun with `VDW_INSTALL_FORCE=1`. On other platforms, or when the bundled archive is absent, install a matching VDW CLI separately before continuing. Never execute an unverified binary.
 
 ## Quick Start
 

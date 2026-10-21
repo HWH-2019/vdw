@@ -2,7 +2,7 @@
   "name": "vdw-vscode",
   "displayName": "VDW - Virtual Dev Workspace",
   "description": "Cross-repo dependency management and AI context filtering for multi-repository development",
-  "version": "0.9.0",
+  "version": "0.10.0",
   "publisher": "vdw-team",
   "license": "Apache-2.0",
   "repository": {
@@ -113,6 +113,34 @@
         "command": "vdw.openWorkspaceSwitcher",
         "title": "VDW: Open Repository",
         "icon": "$(repo)"
+      },
+      {
+        "command": "vdw.lifecycle.archive",
+        "title": "VDW: Archive Workspaces"
+      },
+      {
+        "command": "vdw.lifecycle.restore",
+        "title": "VDW: Restore Workspace"
+      },
+      {
+        "command": "vdw.lifecycle.protect",
+        "title": "VDW: Protect Workspace"
+      },
+      {
+        "command": "vdw.lifecycle.unprotect",
+        "title": "VDW: Remove Workspace Protection"
+      },
+      {
+        "command": "vdw.lifecycle.retention",
+        "title": "VDW: Configure Idle Retention"
+      },
+      {
+        "command": "vdw.lifecycle.archiveRoot",
+        "title": "VDW: Change Archive Location"
+      },
+      {
+        "command": "vdw.lifecycle.status",
+        "title": "VDW: Workspace Lifecycle Status"
       }
     ],
     "views": {

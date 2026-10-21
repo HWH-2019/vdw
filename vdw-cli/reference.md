@@ -267,3 +267,21 @@ vdw worktree create {repo_name} {branch}
 vdw worktree delete {repo_name} {branch}
 vdw worktree delete {repo_name} {branch} --force
 ```
+
+
+## Workspace lifecycle (0.10+)
+
+- Inspect: `vdw lifecycle capabilities`, `vdw workspace list --json`.
+- Preview archive: `vdw workspace archive <id>... --preview --json`.
+- Preview restore: `vdw workspace restore <archive_id> [--target /path] [--branch new-name] --preview --json`.
+- Adjust: `vdw lifecycle plan adjust <plan_id> --exclude-workspace <id> --json`.
+- Confirm/execute: `vdw lifecycle plan execute <plan_id> --confirm --json`.
+- Read complete results: `vdw lifecycle operation status <operation_id> --json`.
+- Recover: `vdw lifecycle operation resume <operation_id> --preview --json`.
+- Retention: `vdw config set idle-days 30 [--workspace <id>] --preview --json`.
+- No-cleanup list: `vdw workspace protect add <id> --reason <text>`; removal uses `protect remove <id> --preview --json`, followed by plan confirmation.
+- Location: `vdw config set archive-root /absolute/path --preview --json`; confirming automatically synchronizes history. Use plan execute --background for a worker, operation watch for progress, and operation pause/continue/cancel for migration control.
+- Automation: `vdw lifecycle auto enable --preview --json`; confirm the policy plan. Use --no-scheduler with an external scheduler. Disable with `vdw lifecycle auto disable`.
+- Effective settings: `vdw config show --effective --workspace <id> --json`.
+
+Any dirty repository skips its whole workspace. Always return every scoped workspace and all archived/not-archived/skipped reasons. Never force deletion to bypass a skip. Base snapshots preserve materials outside packages/actual managed dependencies; optional AI is configured through a reviewed lifecycle-file plan. Cloud and message adapters remain reserved.

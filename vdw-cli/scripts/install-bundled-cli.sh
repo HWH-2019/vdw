@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-VERSION="0.9.1"
-EXPECTED_SHA256="1b40afbc79d5b350a926ef8516377afb0668b480572e7229bafd53d290f9264b"
+VERSION="0.10.0"
+EXPECTED_SHA256="5f4e6bbf707b85584475974a87fa2a4004fc64ed7810f0f4703e11303321eeef"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SKILL_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 ARCHIVE="${SKILL_DIR}/assets/vdw_darwin_arm64_${VERSION}.tar.gz"

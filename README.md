@@ -45,6 +45,8 @@ agent-vdm/
 
 ### Design Documents
 
+Workspace archiving, restoration, policies, complete result reporting and storage migration are described in [Lifecycle management](vdw/LIFECYCLE.md). The 0.10.0 source aligns CLI, extension and Skill versions; building does not enable automatic cleanup.
+
 | Document | Description |
 |----------|-------------|
 | [VDW 需求文档 v1.0](ai_workspace/VDW虚拟工作空间_需求文档_v1.0.md) | Original requirements specification |

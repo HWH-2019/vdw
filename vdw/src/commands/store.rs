@@ -57,6 +57,7 @@ pub struct StoreObjectStatus {
     pub age_days: Option<i64>,
     pub config_references: Vec<PathBuf>,
     pub lock_references: Vec<PathBuf>,
+    pub archive_references: Vec<PathBuf>,
     pub worktree_paths: Vec<PathBuf>,
     pub state: StoreObjectState,
     pub gc_candidate: bool,
@@ -181,8 +182,57 @@ pub fn build_store_status(
     let mut config_references: HashMap<String, BTreeSet<PathBuf>> = HashMap::new();
     let mut lock_references: HashMap<String, BTreeSet<PathBuf>> = HashMap::new();
     let mut registered_workspaces = Vec::with_capacity(registry.workspaces.len());
+    let mut archive_references: HashMap<String, BTreeSet<PathBuf>> = HashMap::new();
+    let archive_records: Result<Vec<crate::lifecycle::ArchiveRecord>> =
+        crate::lifecycle::io::read_or(&vdw_home.join("lifecycle/archives.json"));
+    let mut archive_inventory_complete = archive_records.is_ok();
+    let mut archived_manifests = HashMap::new();
+    for archive in archive_records.unwrap_or_default() {
+        match crate::lifecycle::archive::verify_archive(&archive) {
+            Ok(manifest) => {
+                for repo in &manifest.repositories {
+                    archive_references
+                        .entry(repo.repo.clone())
+                        .or_default()
+                        .insert(archive.location.clone());
+                    config_references
+                        .entry(repo.repo.clone())
+                        .or_default()
+                        .insert(archive.location.clone());
+                }
+                archived_manifests.insert(archive.archive_id, manifest);
+            }
+            Err(_) => archive_inventory_complete = false,
+        }
+    }
 
     for registration in registry.workspaces {
+        if registration.lifecycle_state == "archived" {
+            let manifest = registration
+                .latest_archive_id
+                .as_ref()
+                .and_then(|id| archived_manifests.get(id));
+            registered_workspaces.push(RegisteredWorkspaceStatus {
+                path: registration.path,
+                last_seen: registration.last_seen,
+                state: if manifest.is_some() {
+                    RegisteredWorkspaceState::Ready
+                } else {
+                    RegisteredWorkspaceState::Invalid
+                },
+                config_reference_count: 0,
+                lock_reference_count: 0,
+                message: Some(
+                    if manifest.is_some() {
+                        "archived; references retained by verified archive"
+                    } else {
+                        "archive is missing or unverified"
+                    }
+                    .into(),
+                ),
+            });
+            continue;
+        }
         registered_workspaces.push(inspect_workspace(
             &registration,
             &mut config_references,
@@ -190,6 +240,7 @@ pub fn build_store_status(
         ));
     }
     let reference_inventory_complete = workspace_registry_present
+        && archive_inventory_complete
         && registered_workspaces
             .iter()
             .all(|workspace| workspace.state == RegisteredWorkspaceState::Ready);
@@ -202,6 +253,20 @@ pub fn build_store_status(
         &config_references,
         &lock_references,
     )?;
+    for object in &mut objects {
+        if let Some(repo) = &object.repo {
+            object.archive_references = archive_references
+                .get(repo)
+                .map(|p| p.iter().cloned().collect())
+                .unwrap_or_default();
+            object
+                .config_references
+                .retain(|p| !object.archive_references.contains(p));
+            if !object.archive_references.is_empty() {
+                object.reason = "protected by verified workspace archive".into();
+            }
+        }
+    }
     objects.sort_by(|left, right| left.name.cmp(&right.name));
 
     let total_size_bytes = objects.iter().map(|object| object.size_bytes).sum();
@@ -404,6 +469,7 @@ fn inspect_store_object(
                 age_days: Some(age_days(now, metadata.last_accessed)),
                 config_references,
                 lock_references,
+                archive_references: Vec::new(),
                 worktree_paths: Vec::new(),
                 state: StoreObjectState::Invalid,
                 gc_candidate: false,
@@ -452,6 +518,7 @@ fn inspect_store_object(
         age_days: Some(age_days),
         config_references,
         lock_references,
+        archive_references: Vec::new(),
         worktree_paths,
         state,
         gc_candidate,
@@ -474,6 +541,7 @@ fn invalid_object(
         age_days: None,
         config_references: Vec::new(),
         lock_references: Vec::new(),
+        archive_references: Vec::new(),
         worktree_paths: Vec::new(),
         state: StoreObjectState::Invalid,
         gc_candidate: false,

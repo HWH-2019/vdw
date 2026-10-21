@@ -29,6 +29,16 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
+    /// Preview and manage complete workspace lifecycles
+    Workspace {
+        #[command(subcommand)]
+        command: vdw::lifecycle::cli::WorkspaceCommands,
+    },
+    /// Lifecycle plans, automation, operation reports and recovery
+    Lifecycle {
+        #[command(subcommand)]
+        command: vdw::lifecycle::cli::LifecycleCommands,
+    },
     /// Initialize a new VDW workspace
     Init {
         /// Workspace name; created under the configured workspace root
@@ -131,11 +141,63 @@ enum ConfigCommands {
         /// Print machine-readable JSON
         #[arg(long)]
         json: bool,
+        #[arg(long)]
+        effective: bool,
+        #[arg(long)]
+        workspace: Option<String>,
     },
 }
 
 #[derive(Subcommand)]
 enum ConfigSetCommands {
+    /// Preview workspace participation in the global automatic policy
+    WorkspaceAuto {
+        workspace: String,
+        #[arg(value_parser=["true","false"])]
+        enabled: String,
+        #[arg(long, required = true)]
+        preview: bool,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Retain until an RFC3339 time, or clear it with 'none'
+    RetainUntil {
+        timestamp: String,
+        #[arg(long)]
+        workspace: String,
+        #[arg(long, required = true)]
+        preview: bool,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Preview a default retention change (or a workspace override)
+    IdleDays {
+        days: u32,
+        #[arg(long)]
+        workspace: Option<String>,
+        #[arg(long, required = true)]
+        preview: bool,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Preview a location change, including automatic migration of existing archives
+    ArchiveRoot {
+        path: std::path::PathBuf,
+        #[arg(long)]
+        workspace: Option<String>,
+        #[arg(long, required = true)]
+        preview: bool,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Preview a complete lifecycle JSON configuration
+    LifecycleFile {
+        path: std::path::PathBuf,
+        #[arg(long, required = true)]
+        preview: bool,
+        #[arg(long)]
+        json: bool,
+    },
     /// Set the parent directory used for new workspaces
     WorkspaceRoot {
         /// Absolute path or a path beginning with '~/'.
@@ -263,15 +325,113 @@ enum StoreCommands {
 }
 
 fn run_command(cli: Cli) -> anyhow::Result<()> {
-    match cli.command {
+    let mutating = match &cli.command {
+        Commands::Init { .. }
+        | Commands::Link { .. }
+        | Commands::Unlink { .. }
+        | Commands::Relink { .. } => true,
+        Commands::Repo { command } => matches!(
+            command,
+            RepoCommands::Add { .. } | RepoCommands::Remove { .. }
+        ),
+        Commands::Worktree { command } => !matches!(command, WorktreeCommands::List),
+        Commands::Conflicts { command } => matches!(command, ConflictCommands::Resolve { .. }),
+        Commands::Sync { .. } => true,
+        Commands::Config {
+            command:
+                ConfigCommands::Set {
+                    setting: ConfigSetCommands::WorkspaceRoot { .. },
+                },
+        } => true,
+        _ => false,
+    };
+    let cwd = std::env::current_dir()?;
+    let _operation_guard = if mutating {
+        let guard = vdw::lifecycle::io::Guard::acquire(&vdw::store::get_vdw_home()?)?;
+        vdw::lifecycle::engine::ensure_active(&cwd)?;
+        Some(guard)
+    } else {
+        None
+    };
+    let result = match cli.command {
+        Commands::Workspace { command } => vdw::lifecycle::cli::workspace(command),
+        Commands::Lifecycle { command } => vdw::lifecycle::cli::lifecycle(command),
         Commands::Init { name, template } => commands::init::execute(name, template),
         Commands::Config { command } => match command {
             ConfigCommands::Set { setting } => match setting {
+                ConfigSetCommands::WorkspaceAuto {
+                    workspace,
+                    enabled,
+                    preview: _,
+                    json,
+                } => vdw::lifecycle::cli::config_preview(
+                    "auto_enabled",
+                    serde_json::json!(enabled == "true"),
+                    Some(&workspace),
+                    json,
+                ),
+                ConfigSetCommands::RetainUntil {
+                    timestamp,
+                    workspace,
+                    preview: _,
+                    json,
+                } => vdw::lifecycle::cli::config_preview(
+                    "retain_until",
+                    if timestamp == "none" {
+                        serde_json::Value::Null
+                    } else {
+                        serde_json::json!(timestamp)
+                    },
+                    Some(&workspace),
+                    json,
+                ),
+                ConfigSetCommands::IdleDays {
+                    days,
+                    workspace,
+                    preview: _,
+                    json,
+                } => vdw::lifecycle::cli::config_preview(
+                    "idle_days",
+                    serde_json::json!(days),
+                    workspace.as_deref(),
+                    json,
+                ),
+                ConfigSetCommands::ArchiveRoot {
+                    path,
+                    workspace,
+                    preview: _,
+                    json,
+                } => vdw::lifecycle::cli::config_preview(
+                    "archive_root",
+                    serde_json::json!(path.to_string_lossy()),
+                    workspace.as_deref(),
+                    json,
+                ),
+                ConfigSetCommands::LifecycleFile {
+                    path,
+                    preview: _,
+                    json,
+                } => vdw::lifecycle::cli::config_preview(
+                    "lifecycle",
+                    serde_json::from_slice(&std::fs::read(path)?)?,
+                    None,
+                    json,
+                ),
                 ConfigSetCommands::WorkspaceRoot { path } => {
                     commands::config::set_workspace_root(path)
                 }
             },
-            ConfigCommands::Show { json } => commands::config::show(json),
+            ConfigCommands::Show {
+                json,
+                effective,
+                workspace,
+            } => {
+                if effective || workspace.is_some() {
+                    vdw::lifecycle::cli::effective(workspace.as_deref(), json)
+                } else {
+                    commands::config::show(json)
+                }
+            }
         },
         Commands::Link {
             repo,
@@ -327,7 +487,8 @@ fn run_command(cli: Cli) -> anyhow::Result<()> {
             StoreCommands::Status { json } => commands::store::status(json),
             StoreCommands::Gc { dry_run, json } => commands::store::gc_dry_run(dry_run, json),
         },
-    }
+    };
+    result
 }
 
 fn main() {
@@ -338,12 +499,23 @@ fn main() {
     eprintln!("\x1b[33m[vdw {} — debug build]\x1b[0m", VERSION);
 
     let cli = Cli::parse();
+    let is_worker = matches!(
+        &cli.command,
+        Commands::Lifecycle {
+            command: vdw::lifecycle::cli::LifecycleCommands::MigrationWorker { .. }
+                | vdw::lifecycle::cli::LifecycleCommands::MemoryWorker { .. }
+        }
+    );
 
     if let Err(e) = logging::init(cli.verbose) {
         eprintln!("Warning: Failed to initialize logging: {}", e);
     }
 
-    if let Err(e) = run_command(cli) {
+    let result = run_command(cli);
+    if !is_worker {
+        vdw::lifecycle::cli::recover_pending_jobs();
+    }
+    if let Err(e) = result {
         eprintln!("\x1b[31mError:\x1b[0m {}", e);
 
         // Provide suggestions for common errors
@@ -358,6 +530,10 @@ fn main() {
             );
         }
 
-        std::process::exit(1);
+        let code = e
+            .downcast_ref::<vdw::lifecycle::cli::LifecycleExit>()
+            .map(|e| e.code)
+            .unwrap_or(1);
+        std::process::exit(code);
     }
 }

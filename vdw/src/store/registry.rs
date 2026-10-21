@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 
 use super::manager::get_vdw_home;
 
-pub const WORKSPACE_REGISTRY_VERSION: u32 = 1;
+pub const WORKSPACE_REGISTRY_VERSION: u32 = 2;
 const WORKSPACE_REGISTRY_FILE: &str = "workspaces.json";
 const WORKSPACE_REGISTRY_LOCK_FILE: &str = "workspaces.lock";
 
@@ -22,6 +22,61 @@ pub struct WorkspaceRegistry {
 pub struct WorkspaceRegistration {
     pub path: PathBuf,
     pub last_seen: DateTime<Utc>,
+    #[serde(default)]
+    pub workspace_id: String,
+    #[serde(default)]
+    pub name: String,
+    #[serde(default = "active")]
+    pub lifecycle_state: String,
+    #[serde(default)]
+    pub created_at: Option<DateTime<Utc>>,
+    #[serde(default)]
+    pub observation_started_at: Option<DateTime<Utc>>,
+    #[serde(default)]
+    pub last_active_at: Option<DateTime<Utc>>,
+    #[serde(default)]
+    pub activity_source: String,
+    #[serde(default)]
+    pub activity_revision: u64,
+    #[serde(default)]
+    pub latest_archive_id: Option<String>,
+    #[serde(default)]
+    pub current_operation_id: Option<String>,
+    #[serde(default)]
+    pub candidate_since: Option<DateTime<Utc>>,
+    #[serde(default)]
+    pub observed_fingerprint: Option<String>,
+}
+fn active() -> String {
+    "active".into()
+}
+impl WorkspaceRegistration {
+    pub fn new(path: PathBuf, now: DateTime<Utc>) -> Self {
+        let name = crate::config::parser::load_config(&path)
+            .map(|c| c.workspace.name)
+            .unwrap_or_else(|_| {
+                path.file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .into_owned()
+            });
+        Self {
+            path,
+            last_seen: now,
+            workspace_id: crate::lifecycle::io::id("ws"),
+            name,
+            lifecycle_state: active(),
+            created_at: Some(now),
+            observation_started_at: Some(now),
+            last_active_at: Some(now),
+            activity_source: "registration".into(),
+            activity_revision: 1,
+            latest_archive_id: None,
+            current_operation_id: None,
+            candidate_since: None,
+            observed_fingerprint: None,
+        }
+    }
 }
 
 impl WorkspaceRegistry {
@@ -45,14 +100,28 @@ pub fn load_workspace_registry_at(vdw_home: &Path) -> Result<WorkspaceRegistry> 
 
     let content = fs::read_to_string(&path)
         .with_context(|| format!("Failed to read workspace registry at {}", path.display()))?;
-    let registry: WorkspaceRegistry = serde_json::from_str(&content)
+    let mut registry: WorkspaceRegistry = serde_json::from_str(&content)
         .with_context(|| format!("Failed to parse workspace registry at {}", path.display()))?;
-    if registry.version != WORKSPACE_REGISTRY_VERSION {
+    if registry.version != 1 && registry.version != WORKSPACE_REGISTRY_VERSION {
         bail!(
             "Unsupported workspace registry version {}; expected {}",
             registry.version,
             WORKSPACE_REGISTRY_VERSION
         );
+    }
+    if registry.version == 1 {
+        let now = Utc::now();
+        for ws in &mut registry.workspaces {
+            let mut migrated = WorkspaceRegistration::new(ws.path.clone(), now);
+            migrated.workspace_id = format!(
+                "ws-{}",
+                &crate::lifecycle::io::hash(ws.path.to_string_lossy().as_bytes())[..24]
+            );
+            migrated.last_seen = ws.last_seen;
+            migrated.activity_source = "legacy_observation".into();
+            *ws = migrated;
+        }
+        registry.version = WORKSPACE_REGISTRY_VERSION;
     }
     Ok(registry)
 }
@@ -91,11 +160,16 @@ pub fn register_workspace_at(
         .find(|workspace| workspace.path == workspace_root)
     {
         existing.last_seen = last_seen;
+        if existing.lifecycle_state == "active" {
+            existing.last_active_at = Some(last_seen);
+            existing.activity_revision += 1;
+            existing.activity_source = "vdw_mutation".into();
+            existing.candidate_since = None;
+        }
     } else {
-        registry.workspaces.push(WorkspaceRegistration {
-            path: workspace_root,
-            last_seen,
-        });
+        registry
+            .workspaces
+            .push(WorkspaceRegistration::new(workspace_root, last_seen));
     }
     registry
         .workspaces
@@ -103,7 +177,7 @@ pub fn register_workspace_at(
     save_workspace_registry_at(vdw_home, &registry)
 }
 
-fn save_workspace_registry_at(vdw_home: &Path, registry: &WorkspaceRegistry) -> Result<()> {
+pub fn save_workspace_registry_at(vdw_home: &Path, registry: &WorkspaceRegistry) -> Result<()> {
     if registry.version != WORKSPACE_REGISTRY_VERSION {
         bail!(
             "Refusing to write workspace registry version {}; expected {}",
@@ -112,31 +186,7 @@ fn save_workspace_registry_at(vdw_home: &Path, registry: &WorkspaceRegistry) -> 
         );
     }
 
-    let path = vdw_home.join(WORKSPACE_REGISTRY_FILE);
-    let staging = vdw_home.join(format!(
-        "{}.tmp-{}",
-        WORKSPACE_REGISTRY_FILE,
-        std::process::id()
-    ));
-    let content =
-        serde_json::to_string_pretty(registry).context("Failed to serialize workspace registry")?;
-    fs::write(&staging, content).with_context(|| {
-        format!(
-            "Failed to write workspace registry at {}",
-            staging.display()
-        )
-    })?;
-
-    #[cfg(windows)]
-    if path.exists() {
-        fs::remove_file(&path).with_context(|| {
-            format!("Failed to replace workspace registry at {}", path.display())
-        })?;
-    }
-
-    fs::rename(&staging, &path)
-        .with_context(|| format!("Failed to publish workspace registry at {}", path.display()))?;
-    Ok(())
+    crate::lifecycle::io::save(&vdw_home.join(WORKSPACE_REGISTRY_FILE), registry)
 }
 
 fn canonical_workspace_path(path: &Path) -> Result<PathBuf> {
@@ -207,7 +257,7 @@ mod tests {
         let home = tempfile::tempdir().unwrap();
         fs::write(
             home.path().join(WORKSPACE_REGISTRY_FILE),
-            r#"{"version":2,"workspaces":[]}"#,
+            r#"{"version":999,"workspaces":[]}"#,
         )
         .unwrap();
 

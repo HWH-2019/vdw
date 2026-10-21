@@ -1,0 +1,50 @@
+{
+  "sample_repo": "vdw",
+  "measured_date": "2026-10-21",
+  "git_version": "git version 2.50.1 (Apple Git-155)",
+  "head": "68fec9c8904d71e98f4c508a19b17232e856a78a",
+  "head_commits": 44,
+  "all_ref_commits": 44,
+  "git_dir_allocated_bytes": 11923456,
+  "count_objects": {
+    "count": "485",
+    "size": "2812",
+    "in-pack": "589",
+    "packs": "1",
+    "size-pack": "8611",
+    "prune-packable": "0",
+    "garbage": "0",
+    "size-garbage": "0"
+  },
+  "reachable_disk_usage_bytes": 9962756,
+  "runs": [
+    {
+      "kind": "head_full",
+      "bytes": 8956499,
+      "creation_seconds": 0.232,
+      "verify_empty_repo": true,
+      "verify_source_repo": true,
+      "base_commit": null
+    },
+    {
+      "kind": "all_refs_full",
+      "bytes": 8967537,
+      "creation_seconds": 0.209,
+      "verify_empty_repo": true,
+      "verify_source_repo": true,
+      "base_commit": null
+    },
+    {
+      "kind": "last_10_incremental",
+      "bytes": 66119,
+      "creation_seconds": 0.125,
+      "verify_empty_repo": false,
+      "verify_source_repo": true,
+      "base_commit": "2fba9075e1f4025d5abe5773a94c996042e5061e"
+    }
+  ],
+  "full_bundle_restored_head_matches": true,
+  "source_refs_unchanged": true,
+  "source_status_unchanged": true,
+  "scope_limit": "One small repository sample; not a prediction for business repositories, LFS, or shallow/partial clones. Bundle files were temporary and have been removed."
+}

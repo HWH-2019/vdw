@@ -1,0 +1,41 @@
+{
+  "date": "2026-10-21",
+  "version": "0.10.0",
+  "scope": "local source implementation",
+  "rust": {
+    "command": "cargo test --offline --manifest-path vdw/Cargo.toml -q",
+    "passed": 336,
+    "failed": 0,
+    "ignored": 1,
+    "lifecycle_integration_scenarios": 23
+  },
+  "extension": {
+    "compile": "passed",
+    "unit_tests_passed": 26
+  },
+  "coverage": [
+    "whole-workspace dirty/staged/untracked/conflict skips",
+    "complete scoped outcomes and durable report",
+    "lease/protection and reviewed plans",
+    "actual HEAD and preserved branches",
+    "new branch restoration without reset",
+    "materials and deterministic memory",
+    "portable editable and readonly Store reconstruction",
+    "foreground/background migration, progress and resume",
+    "published-archive checkpoint recovery",
+    "configurable command AI adapter",
+    "registry migration and retained archive references"
+  ],
+  "limits": {
+    "launchd_installation": "not installed or exercised on the host",
+    "http_ai_service": "generic contract compiled; no live endpoint exercised",
+    "cloud_and_external_messages": "reserved contracts only",
+    "global_installation_and_publication": "not performed"
+  },
+  "formatting": {
+    "changed_rust_files": "passed",
+    "git_diff_check": "passed",
+    "whole_repository_fmt": "existing differences in unchanged files; not reformatted",
+    "baseline_example": "vdw/src/config/env_resolver.rs"
+  }
+}

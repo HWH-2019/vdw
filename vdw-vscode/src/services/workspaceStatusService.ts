@@ -55,6 +55,8 @@ export class WorkspaceStatusService implements vscode.Disposable {
         return this.snapshot;
     }
 
+    getLifecycleState(): string | undefined { return this.topologySnapshot?.lifecycle_state; }
+
     getRepositoryStatus(dependency: Dependency): RepositoryRuntimeStatus | undefined {
         return this.snapshot.repositories.find(status => status.dependencyPath === dependency.path);
     }
@@ -98,6 +100,7 @@ export class WorkspaceStatusService implements vscode.Disposable {
             this.getGitApi(),
             this.getTopologyStatus(forceTopology),
         ]);
+        if (topology?.lifecycle_state === 'archived') return EMPTY_STATUS;
         const topologyByPath = new Map(
             topology?.repositories.map(repository => [repository.path, repository]) ?? [],
         );
