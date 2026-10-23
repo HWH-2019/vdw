@@ -93,15 +93,18 @@ pub fn read_or<T: DeserializeOwned + Default>(path: &Path) -> Result<T> {
     }
 }
 pub fn safe_relative(value: &str) -> Result<PathBuf> {
-    let path = Path::new(value);
-    if path.as_os_str().is_empty()
-        || path
-            .components()
-            .any(|p| !matches!(p, Component::Normal(_)))
-    {
+    let mut relative = PathBuf::new();
+    for component in Path::new(value).components() {
+        match component {
+            Component::Normal(part) => relative.push(part),
+            Component::CurDir => {}
+            _ => bail!("Unsafe relative path: {}", value),
+        }
+    }
+    if relative.as_os_str().is_empty() {
         bail!("Unsafe relative path: {}", value);
     }
-    Ok(path.into())
+    Ok(relative)
 }
 pub fn confined(root: &Path, relative: &str) -> Result<PathBuf> {
     let rel = safe_relative(relative)?;
@@ -210,4 +213,70 @@ pub fn git(repo: &Path, args: &[&str]) -> Result<String> {
     Ok(String::from_utf8(git_output(repo, args)?.stdout)?
         .trim()
         .to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn leading_dot_relative_paths_are_normalized() {
+        for value in [
+            "packages/repo",
+            "./packages/repo",
+            "././packages/repo",
+            "packages/./repo",
+            "./packages//repo/",
+        ] {
+            assert_eq!(safe_relative(value).unwrap(), Path::new("packages/repo"));
+            assert_eq!(
+                safe_relative(value).unwrap().to_str().unwrap(),
+                Path::new("packages").join("repo").to_str().unwrap()
+            );
+        }
+    }
+
+    #[test]
+    fn relative_paths_reject_roots_empty_targets_and_parent_traversal() {
+        for value in [
+            "",
+            ".",
+            "./",
+            "././",
+            "/packages/repo",
+            "../repo",
+            "./../repo",
+            "packages/../repo",
+            "./packages/../../repo",
+        ] {
+            assert!(safe_relative(value).is_err(), "accepted {value:?}");
+        }
+        #[cfg(windows)]
+        for value in [r"C:\packages\repo", r"C:packages\repo", r"\packages\repo"] {
+            assert!(safe_relative(value).is_err(), "accepted {value:?}");
+        }
+    }
+
+    #[test]
+    fn leading_dot_confined_paths_resolve_inside_the_root() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = fs::canonicalize(temp.path()).unwrap();
+        fs::create_dir_all(root.join("packages/repo")).unwrap();
+        assert_eq!(
+            confined(&root, "./packages/repo").unwrap(),
+            root.join("packages/repo")
+        );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn leading_dot_confined_paths_still_reject_symlink_boundaries() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = fs::canonicalize(temp.path()).unwrap();
+        fs::create_dir(root.join("packages")).unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        std::os::unix::fs::symlink(outside.path(), root.join("packages/repo")).unwrap();
+        let err = confined(&root, "./packages/repo/file").unwrap_err();
+        assert!(err.to_string().contains("Symlink boundary"));
+    }
 }

@@ -204,6 +204,22 @@ Editable dependencies become complete native Git worktrees at their configured `
 
 ### 🩺 Inspect workspace topology
 
+Inspect reconstruction without changing the workspace, Store, registry or automation:
+
+```bash
+vdw workspace rebuild --preview --search-history --json
+vdw workspace rebuild /absolute/workspace/path --preview --json
+```
+
+The report lists `rebuildable`, `skipped` and `blocked` workspaces, repository evidence,
+dirty counts, Gitlinks and owned project materials. Healthy worktrees are preserved;
+any uncommitted repository changes skip the entire workspace. Actual editable HEAD
+takes precedence over the lock baseline. If Git metadata is lost, cached refs,
+reflogs and local history matches remain candidates and never prove the original HEAD.
+History search is local and bounded to 40 message matches per broken repository;
+truncated results are marked. There is no reconstruction execution or switching
+command, and this report cannot be passed to `lifecycle plan execute`.
+
 ```bash
 vdw status
 vdw status --json

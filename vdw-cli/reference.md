@@ -272,6 +272,7 @@ vdw worktree delete {repo_name} {branch} --force
 ## Workspace lifecycle (0.10+)
 
 - Inspect: `vdw lifecycle capabilities`, `vdw workspace list --json`.
+- Preview reconstruction: `vdw workspace rebuild [exact-id-or-path]... --preview --search-history --json` (0.10.1+). Defaults to all registered workspaces, reports rebuildable/skipped/blocked with evidence, and never fetches, registers, resumes jobs, switches, rebuilds or archives. This non-executable report has no plan ID; candidates do not prove a damaged editable worktree's original HEAD.
 - Preview archive: `vdw workspace archive <id>... --preview --json`.
 - Preview restore: `vdw workspace restore <archive_id> [--target /path] [--branch new-name] --preview --json`.
 - Adjust: `vdw lifecycle plan adjust <plan_id> --exclude-workspace <id> --json`.

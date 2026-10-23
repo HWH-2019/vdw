@@ -11,6 +11,18 @@ use std::{
 
 #[derive(Subcommand)]
 pub enum WorkspaceCommands {
+    /// Inspect exact-commit reconstruction without changing any workspace or Store state.
+    Rebuild {
+        /// Exact registered ID/name/path, or an existing unregistered workspace path. Defaults to all registrations.
+        workspaces: Vec<String>,
+        #[arg(long, required = true)]
+        preview: bool,
+        /// Search local branch reflogs and commit messages for candidates; never fetch.
+        #[arg(long)]
+        search_history: bool,
+        #[arg(long)]
+        json: bool,
+    },
     List {
         #[arg(long)]
         state: Option<String>,
@@ -224,6 +236,16 @@ impl std::error::Error for LifecycleExit {}
 pub fn workspace(command: WorkspaceCommands) -> Result<()> {
     // Atomic control files are readable while another process holds the mutation guard.
     let home = crate::store::manager::get_vdw_home()?;
+    if let WorkspaceCommands::Rebuild {
+        workspaces,
+        search_history,
+        json,
+        ..
+    } = &command
+    {
+        let report = super::rebuild::preview(workspaces, *search_history)?;
+        return super::rebuild::print(&report, *json);
+    }
     if let WorkspaceCommands::List { state, json } = &command {
         let registry = crate::store::registry::load_workspace_registry_at(&home)?;
         return emit(
@@ -289,6 +311,9 @@ pub fn workspace(command: WorkspaceCommands) -> Result<()> {
     }
     let mut e = Engine::open()?;
     match command {
+        WorkspaceCommands::Rebuild { .. } => {
+            unreachable!("handled without opening the mutation engine")
+        }
         WorkspaceCommands::List { state, json } => {
             let rows = e
                 .registry
@@ -429,7 +454,7 @@ pub fn lifecycle(command: LifecycleCommands) -> Result<()> {
     }
     if let LifecycleCommands::Capabilities = command {
         return emit(
-            &serde_json::json!({"schema_version":1,"lifecycle":true,"dirty_policy":"skip_workspace","cloud":[ProviderCapabilities{provider:"kbase".into(),implemented:false,manifest:false,memory:false,blobs:false,download:false}],"external_triggers":{"implemented":false,"contract":"ArchiveTrigger/v1"},"ai_adapters":["command","http"],"native_scheduler":if cfg!(target_os="macos"){Some("launchd")}else{None}}),
+            &serde_json::json!({"schema_version":1,"lifecycle":true,"dirty_policy":"skip_workspace","rebuild":{"preview":true,"execute":false,"local_history_search":true},"cloud":[ProviderCapabilities{provider:"kbase".into(),implemented:false,manifest:false,memory:false,blobs:false,download:false}],"external_triggers":{"implemented":false,"contract":"ArchiveTrigger/v1"},"ai_adapters":["command","http"],"native_scheduler":if cfg!(target_os="macos"){Some("launchd")}else{None}}),
             true,
         );
     }

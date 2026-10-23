@@ -1,0 +1,53 @@
+{
+  "version": "0.10.1",
+  "base_commit": "a07082fb195039552aa2bbc38aebd97c16420355",
+  "isolated_release_snapshot": true,
+  "concurrent_dashboard_changes_excluded": true,
+  "rust_full_suite": {
+    "passed": 349,
+    "failed": 0,
+    "ignored": 1
+  },
+  "extension_suite": {
+    "passed": 26,
+    "failed": 0
+  },
+  "rustfmt_changed_files": "passed",
+  "shell_syntax": "passed",
+  "skill_official_validator": "passed",
+  "bundled_installer": "passed in temporary install directory",
+  "rebuild_preview_distribution_smoke": "passed; non-executable and no home writes",
+  "automatic_archive_enabled": false,
+  "local_artifacts": {
+    "vdw_darwin_arm64_0.10.1.tar.gz": {
+      "bytes": 4111604,
+      "sha256": "5c553553fa26b18d5e50a2cfa0a5118ae0d8470f2fe74c6e1fd296f076235afb"
+    },
+    "vdw_vscode_0.10.1.vsix": {
+      "bytes": 292907,
+      "sha256": "7a1c39e4cf45f9e3380437efc4fba864c19d193ebae72cbcc3fac481cd6a51f8"
+    },
+    "vdw_cli_skill_0.10.1.tar.gz": {
+      "bytes": 10243,
+      "sha256": "536b743cfc878827b6e50c05f0cf84f230565790af98a98f5d06f3d05d71386a"
+    }
+  },
+  "source_sha256": {
+    "README.md": "afb4d30ad62b304c6b20d19fc3204f8c3c4883fef9d75093b765f3c9f0183486",
+    "vdw-cli/SKILL.md": "cfe22b8df8173b0601c8b6644a7662b72ea18dff0e9b5dc3368c0166d5877ee7",
+    "vdw-cli/reference.md": "b45e80c292d6f2948f717dbb40456273200efe9596944ae164d77419d55ece81",
+    "vdw-cli/scripts/install-bundled-cli.sh": "6ba5721036f56cc9e5b162abfe9b623beaaf7dc3eff97e19eb9214f1a5f700a5",
+    "vdw-vscode/package-lock.json": "e5c4a00a763a59b50de805846e46bd31c39b18108778664e0a47b1140125a537",
+    "vdw-vscode/package.json": "99e68146cf0909bc11347672d8ca1a1dc0952319778544da1108aef0ec09bbfd",
+    "vdw/Cargo.lock": "0d15854a87a612b7bbd91c156220a960df0407449f724dde1ce6e37f705e5df5",
+    "vdw/Cargo.toml": "0bc3144cef2f024740f2821887e07d0d119ad9bea1d085a8cfb011e3d6932157",
+    "vdw/README.md": "18641ca9bf85449560a520f98d4112b70e7763fe3672780ceb6cd4a2977fd92a",
+    "vdw/src/lifecycle/cli.rs": "bdbee2f796ecce062764616beb634a1bce9ea6c1fe42907e6aca8666f7f4fb79",
+    "vdw/src/lifecycle/io.rs": "b32e6cc89d9610911d0fed3d75d7663ecd32c84bc3a6bb229ebd3f583851f91a",
+    "vdw/src/lifecycle/materials.rs": "53a8250d3341ac6d02327561c1ba840371216b2725d02b367ee04d1258828d97",
+    "vdw/src/lifecycle/mod.rs": "138736a3d0b5ca9cdfad9136da1ecd645138a16c2ea3dacff64c7995fc34564a",
+    "vdw/src/main.rs": "b4240b3987b5ad97bc79cd00bf545ef3c20a2daf0022ed0c8dfff71edb07e33d",
+    "vdw/tests/lifecycle_integration_test.rs": "781f0dcee5d4621638210716a9d2f1e38b03c324a877d842a9a715d65bfc8ac7",
+    "vdw/src/lifecycle/rebuild.rs": "eb2d541c17ca6619a2958a35854d2cec9bcb31550a21be43cfe0d5dd67021c84"
+  }
+}

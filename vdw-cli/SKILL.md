@@ -2,13 +2,15 @@
 name: vdw-cli
 description: Install and use VDW for reproducible multi-repository workspaces, shared Store inspection and workspace lifecycle management. Preview and confirm archiving, exact-commit restoration, idle retention, protection and archive-location migration. Any dirty repository skips its entire workspace; always report archived, not archived and skipped workspaces with reasons.
 metadata:
-  version: "0.10.0"
+  version: "0.10.1"
   bundled-cli: macos-arm64
 ---
 
 # VDW CLI Workspace Setup
 
 ## Workspace lifecycle (0.10+)
+
+For reconstruction inspection, run `vdw workspace rebuild [exact-id-or-path]... --preview --search-history --json`. With no selectors it inspects all registered workspaces. This is a read-only report, not an executable lifecycle plan. It does not fetch, register, resume jobs, switch branches, rebuild, archive or enable automation. Report `rebuildable`, `skipped` and `blocked` with every reason; dirty repositories skip their entire workspace while retaining other blockers. Preserve healthy native worktrees. Actual editable HEAD is authoritative; lock baselines, branch tips, reflogs and historical message matches are candidates when metadata is broken. Never substitute them for an unproven original HEAD. Gitlinks require explicit review and remain present at the original commit.
 
 Check `vdw lifecycle capabilities` before using lifecycle commands. Run `vdw workspace list --json` to resolve an exact ID or path; do not infer targets from similar names.
 
@@ -34,7 +36,7 @@ If `vdw` is missing on macOS Apple Silicon and this Skill came from Aone, ask fo
 bash scripts/install-bundled-cli.sh
 ```
 
-The installer refuses unsupported systems, verifies the bundled archive checksum, and checks that the installed command reports `vdw 0.10.0`. It does not replace a different installed version unless the user explicitly confirms the replacement and the command is rerun with `VDW_INSTALL_FORCE=1`. On other platforms, or when the bundled archive is absent, install a matching VDW CLI separately before continuing. Never execute an unverified binary.
+The installer refuses unsupported systems, verifies the bundled archive checksum, and checks that the installed command reports `vdw 0.10.1`. It does not replace a different installed version unless the user explicitly confirms the replacement and the command is rerun with `VDW_INSTALL_FORCE=1`. On other platforms, or when the bundled archive is absent, install a matching VDW CLI separately before continuing. Never execute an unverified binary.
 
 ## Quick Start
 

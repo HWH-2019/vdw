@@ -30,6 +30,11 @@ pub fn collect(
     dependencies: &[String],
     cfg: &MaterialConfig,
 ) -> Result<Vec<Material>> {
+    // Normalize declarations before comparing them with collected project paths.
+    let dependencies = dependencies
+        .iter()
+        .map(|path| Ok(safe_relative(path)?.to_string_lossy().replace('\\', "/")))
+        .collect::<Result<Vec<_>>>()?;
     let mut result = vec![];
     fn visit(
         root: &Path,
@@ -121,7 +126,7 @@ pub fn collect(
         .collect::<std::io::Result<Vec<_>>>()?;
     children.sort();
     for child in children {
-        visit(root, &child, dependencies, cfg, &mut result)?;
+        visit(root, &child, &dependencies, cfg, &mut result)?;
     }
     Ok(result)
 }

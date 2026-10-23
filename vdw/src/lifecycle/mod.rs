@@ -6,6 +6,7 @@ pub mod io;
 pub mod jobs;
 pub mod materials;
 pub mod providers;
+pub mod rebuild;
 pub mod types;
 
 pub use engine::Engine;

@@ -499,6 +499,19 @@ fn main() {
     eprintln!("\x1b[33m[vdw {} — debug build]\x1b[0m", VERSION);
 
     let cli = Cli::parse();
+    // Reconstruction inspection must not create logs or resume pending mutation jobs.
+    if matches!(
+        &cli.command,
+        Commands::Workspace {
+            command: vdw::lifecycle::cli::WorkspaceCommands::Rebuild { .. }
+        }
+    ) {
+        if let Err(error) = run_command(cli) {
+            eprintln!("Error: {error:#}");
+            std::process::exit(1);
+        }
+        return;
+    }
     let is_worker = matches!(
         &cli.command,
         Commands::Lifecycle {

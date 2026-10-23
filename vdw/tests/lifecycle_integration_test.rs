@@ -12,6 +12,21 @@ struct Fixture {
     home: PathBuf,
 }
 impl Fixture {
+    fn rebuild(&self, workspaces: &[&Path]) -> Value {
+        let mut args = vec![
+            "workspace",
+            "rebuild",
+            "--preview",
+            "--search-history",
+            "--json",
+        ];
+        let paths = workspaces
+            .iter()
+            .map(|p| p.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        args.extend(paths.iter().map(String::as_str));
+        self.json(&args)
+    }
     fn new() -> Self {
         let temp = tempfile::tempdir().unwrap();
         let root = fs::canonicalize(temp.path()).unwrap();
@@ -56,6 +71,15 @@ impl Fixture {
         ])
     }
     fn workspace(&self, name: &str, count: usize, editable: bool) -> PathBuf {
+        self.workspace_with_dependency_prefix(name, count, editable, "packages")
+    }
+    fn workspace_with_dependency_prefix(
+        &self,
+        name: &str,
+        count: usize,
+        editable: bool,
+        prefix: &str,
+    ) -> PathBuf {
         let workspace = self.root.join(name);
         fs::create_dir(&workspace).unwrap();
         let mut deps = vec![];
@@ -84,7 +108,7 @@ impl Fixture {
                 local: source.to_string_lossy().into_owned(),
                 origin: String::new(),
                 repo: String::new(),
-                path: format!("packages/repo{n}"),
+                path: format!("{prefix}/repo{n}"),
                 branch: Some("main".into()),
                 tag: None,
                 commit: None,
@@ -154,6 +178,210 @@ impl Fixture {
         self.execute(&p);
     }
 }
+
+#[test]
+fn rebuild_preview_is_read_only_and_uses_actual_head_over_lock_baseline() {
+    let f = Fixture::new();
+    let ws = f.workspace_with_dependency_prefix("rebuild-head", 1, true, "./packages");
+    let repo = ws.join("packages/repo0");
+    fs::write(repo.join("version.txt"), "new committed version\n").unwrap();
+    git(&repo, &["add", "version.txt"]);
+    git(
+        &repo,
+        &[
+            "-c",
+            "user.name=VDW Test",
+            "-c",
+            "user.email=vdw@example.com",
+            "commit",
+            "--quiet",
+            "-m",
+            "advance",
+        ],
+    );
+    let actual = String::from_utf8(
+        Command::new("git")
+            .args(["rev-parse", "HEAD"])
+            .current_dir(&repo)
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .unwrap()
+    .trim()
+    .to_owned();
+    fn files(root: &Path) -> std::collections::BTreeMap<PathBuf, Vec<u8>> {
+        let mut result = std::collections::BTreeMap::new();
+        for entry in walkdir::WalkDir::new(root) {
+            let entry = entry.unwrap();
+            if entry.file_type().is_file() {
+                result.insert(entry.path().to_path_buf(), fs::read(entry.path()).unwrap());
+            }
+        }
+        result
+    }
+    let before = files(&f.root);
+    let p = f.rebuild(&[&ws]);
+    assert_eq!(p["kind"], "rebuild_preview");
+    assert_eq!(p["executable"], false);
+    assert!(p.get("plan_id").is_none());
+    let row = &p["workspaces"][0];
+    assert_eq!(row["classification"], "skipped");
+    assert_eq!(row["repositories"][0]["original_commit"], actual);
+    let evidence = row["repositories"][0]["evidence"].as_array().unwrap();
+    assert!(evidence
+        .iter()
+        .any(|e| e["authority"] == "baseline" && e["commit"] != actual));
+    assert_eq!(
+        before,
+        files(&f.root),
+        "preview changed a workspace, Store, registry, logs or lifecycle state"
+    );
+    assert!(!f
+        .run(&["workspace", "rebuild", ws.to_str().unwrap()])
+        .status
+        .success());
+    assert!(!f
+        .run(&["workspace", "rebuild", "--preview", "--execute"])
+        .status
+        .success());
+}
+
+#[test]
+fn rebuild_missing_readonly_projection_is_rebuildable_at_exact_lock() {
+    let f = Fixture::new();
+    let ws = f.workspace_with_dependency_prefix("rebuild-projection", 1, false, "./references");
+    fs::remove_dir_all(ws.join("references/repo0")).unwrap();
+    fs::create_dir_all(ws.join("packages/owned-empty")).unwrap();
+    fs::write(ws.join("packages/owned.md"), "preserve this material").unwrap();
+    let p = f.rebuild(&[&ws]);
+    let row = &p["workspaces"][0];
+    assert_eq!(row["classification"], "rebuildable", "{p}");
+    assert_eq!(
+        row["repositories"][0]["evidence"][0]["authority"],
+        "exact_projection"
+    );
+    assert!(row["materials"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|m| m["path"] == "packages/owned.md"));
+    assert!(!ws.join("references/repo0").exists());
+}
+
+#[test]
+fn rebuild_broken_editable_never_promotes_lock_or_branch_candidate_to_original_head() {
+    let f = Fixture::new();
+    let ws = f.workspace("rebuild-broken", 1, true);
+    let repo = ws.join("packages/repo0");
+    fs::write(repo.join(".git"), "gitdir: /missing-worktree-metadata\n").unwrap();
+    let p = f.rebuild(&[&ws]);
+    let row = &p["workspaces"][0];
+    assert_eq!(row["classification"], "blocked");
+    let r = &row["repositories"][0];
+    assert!(r["original_commit"].is_null());
+    assert!(r["dirty"].is_null());
+    assert!(r["evidence"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|e| e["authority"] == "candidate"));
+    assert!(r["blockers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|e| e["code"] == "dirty_state_unknown"));
+    assert!(repo.join("version.txt").exists());
+}
+
+#[test]
+fn rebuild_dirty_workspace_skips_all_repositories_and_retains_other_blockers() {
+    let f = Fixture::new();
+    let ws = f.workspace("rebuild-dirty", 2, true);
+    fs::write(
+        ws.join("packages/repo0/.git"),
+        "gitdir: /missing-worktree-metadata\n",
+    )
+    .unwrap();
+    fs::write(ws.join("packages/repo1/unfinished.txt"), "keep uncommitted").unwrap();
+    let p = f.rebuild(&[&ws]);
+    let row = &p["workspaces"][0];
+    assert_eq!(row["classification"], "skipped");
+    assert_eq!(row["repositories"].as_array().unwrap().len(), 2);
+    assert_eq!(row["repositories"][1]["dirty"]["untracked"], 1);
+    assert!(!row["repositories"][0]["blockers"]
+        .as_array()
+        .unwrap()
+        .is_empty());
+    assert_eq!(p["summary"]["skipped"], 1);
+    assert_eq!(p["summary"]["rebuildable"], 0);
+}
+
+#[test]
+fn rebuild_batch_reports_invalid_workspace_without_losing_other_results() {
+    let f = Fixture::new();
+    let ws = f.workspace("rebuild-good", 1, false);
+    let invalid = f.root.join("invalid-workspace");
+    let p = f.rebuild(&[&invalid, &ws]);
+    assert_eq!(p["summary"]["blocked"], 1);
+    assert_eq!(p["summary"]["skipped"], 1);
+    assert_eq!(p["workspaces"].as_array().unwrap().len(), 2);
+    assert!(!invalid.exists());
+}
+
+#[test]
+fn rebuild_gitlink_is_reported_and_never_silently_removed_or_ignored() {
+    let f = Fixture::new();
+    let ws = f.workspace("rebuild-gitlink", 1, true);
+    let repo = ws.join("packages/repo0");
+    let head = String::from_utf8(
+        Command::new("git")
+            .args(["rev-parse", "HEAD"])
+            .current_dir(&repo)
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .unwrap()
+    .trim()
+    .to_owned();
+    git(
+        &repo,
+        &[
+            "update-index",
+            "--add",
+            "--cacheinfo",
+            &format!("160000,{head},orphan"),
+        ],
+    );
+    git(
+        &repo,
+        &[
+            "-c",
+            "user.name=VDW Test",
+            "-c",
+            "user.email=vdw@example.com",
+            "commit",
+            "--quiet",
+            "-m",
+            "add gitlink",
+        ],
+    );
+    fs::create_dir(repo.join("orphan")).unwrap();
+    let p = f.rebuild(&[&ws]);
+    let row = &p["workspaces"][0];
+    assert_eq!(row["classification"], "skipped", "{p}");
+    assert_eq!(
+        row["repositories"][0]["gitlinks"].as_array().unwrap().len(),
+        1
+    );
+    assert!(row["repositories"][0]["blockers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|r| r["code"] == "gitlink_requires_review"));
+    assert!(repo.join("orphan").exists());
+}
 fn git(path: &Path, args: &[&str]) -> String {
     let o = Command::new("git")
         .arg("-C")
@@ -185,6 +413,104 @@ fn summary_is_complete(op: &Value) {
         s["scope_total"].as_u64().unwrap() as usize,
         op["results"].as_array().unwrap().len()
     );
+}
+
+#[test]
+fn leading_dot_dependencies_round_trip_without_archiving_managed_files_as_materials() {
+    for prefix in ["./packages", "./references"] {
+        for editable in [true, false] {
+            let f = Fixture::new();
+            let w = f.workspace_with_dependency_prefix("dotted", 1, editable, prefix);
+            let original_config = fs::read(w.join(".vdwrc")).unwrap();
+            let dependency = format!("{}/repo0", prefix.trim_start_matches("./"));
+            let head = if editable {
+                Some(git(&w.join(&dependency), &["rev-parse", "HEAD"]))
+            } else {
+                None
+            };
+            let plan = f.archive_plan(&w);
+            assert_eq!(plan["entries"][0]["reason_codes"], json!([]), "{plan}");
+            assert!(w.join(&dependency).join("version.txt").is_file());
+            let materials = plan["entries"][0]["materials"].as_array().unwrap();
+            assert!(materials.iter().any(|m| m["path"] == "notes/decisions.md"));
+            assert!(materials.iter().all(|m| {
+                let path = m["path"].as_str().unwrap();
+                path != dependency && !path.starts_with(&format!("{dependency}/"))
+            }));
+
+            let operation = f.execute(&plan);
+            assert_eq!(operation["summary"]["archived_count"], 1, "{operation}");
+            assert!(!w.join(&dependency).join("version.txt").exists());
+            if editable {
+                assert!(!w.join(&dependency).exists());
+            }
+            let archive = &operation["results"][0];
+            let snapshot = Path::new(archive["archive_path"].as_str().unwrap());
+            assert!(!snapshot.join("workspace-files").join(&dependency).exists());
+            assert_eq!(fs::read(w.join(".vdwrc")).unwrap(), original_config);
+
+            let restore = f.json(&[
+                "workspace",
+                "restore",
+                archive["archive_id"].as_str().unwrap(),
+                "--preview",
+                "--json",
+            ]);
+            let restored = f.execute(&restore);
+            assert_eq!(restored["summary"]["restored_count"], 1, "{restored}");
+            assert_eq!(fs::read(w.join(".vdwrc")).unwrap(), original_config);
+            assert_eq!(
+                fs::read_to_string(w.join(&dependency).join("version.txt")).unwrap(),
+                "dotted-0\n"
+            );
+            if let Some(head) = head {
+                assert_eq!(git(&w.join(&dependency), &["rev-parse", "HEAD"]), head);
+            }
+        }
+    }
+}
+
+#[test]
+fn leading_dot_dependencies_still_skip_the_whole_dirty_workspace() {
+    let f = Fixture::new();
+    let w = f.workspace_with_dependency_prefix("dotted-dirty", 2, true, "./packages");
+    fs::write(w.join("packages/repo1/version.txt"), "unfinished\n").unwrap();
+    let plan = f.archive_plan(&w);
+    assert_eq!(
+        plan["entries"][0]["reason_codes"],
+        json!(["dirty"]),
+        "{plan}"
+    );
+    let operation = f.execute(&plan);
+    assert_eq!(operation["summary"]["archived_count"], 0);
+    assert_eq!(operation["summary"]["skipped_count"], 1);
+    assert!(w.join("packages/repo0/.git").is_file());
+    assert!(w.join("packages/repo1/.git").is_file());
+    assert_eq!(
+        fs::read_to_string(w.join("packages/repo1/version.txt")).unwrap(),
+        "unfinished\n"
+    );
+    summary_is_complete(&operation);
+}
+
+#[test]
+#[cfg(unix)]
+fn leading_dot_dependencies_do_not_allow_symlink_escapes() {
+    let f = Fixture::new();
+    let w = f.workspace_with_dependency_prefix("dotted-symlink", 1, true, "./packages");
+    let outside = f.root.join("outside-workspace");
+    fs::rename(w.join("packages"), &outside).unwrap();
+    std::os::unix::fs::symlink(&outside, w.join("packages")).unwrap();
+    let plan = f.archive_plan(&w);
+    assert_eq!(
+        plan["entries"][0]["reason_codes"],
+        json!(["inspection_failed"])
+    );
+    assert!(plan["entries"][0]["message"]
+        .as_str()
+        .unwrap()
+        .contains("Symlink boundary"));
+    assert!(outside.join("repo0/version.txt").is_file());
 }
 
 #[test]
