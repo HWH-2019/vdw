@@ -28,7 +28,7 @@ ARTIFACT_NAME="vdw_cli_skill_${VERSION}.tar.gz"
 ARTIFACT_PATH="${PROJECT_ROOT}/dist/${ARTIFACT_NAME}"
 
 log_info "Packaging vdw-cli Skill ${VERSION}..."
-tar -czf "${ARTIFACT_PATH}" -C "${PROJECT_ROOT}" vdw-cli
+COPYFILE_DISABLE=1 tar -czf "${ARTIFACT_PATH}" -C "${PROJECT_ROOT}" vdw-cli
 
 log_info "Skill package created: ${ARTIFACT_PATH}"
 echo "${ARTIFACT_PATH}"

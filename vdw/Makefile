@@ -1,11 +1,17 @@
-.PHONY: all build install install-quick uninstall clean test help
+.PHONY: all build install install-quick uninstall clean test help dashboard-build dashboard-verify
+
+dashboard-build:
+	bash ../scripts/build_dashboard.sh
+
+dashboard-verify:
+	python3 ../scripts/verify_dashboard_assets.py
 
 BINARY_NAME := vdw
 INSTALL_DIR ?= ~/.local/bin
 
 all: build
 
-build:
+build: dashboard-verify
 	cargo build --release
 
 # Full install: runs install.sh (auto-detects platform, checks deps, handles all edge cases)

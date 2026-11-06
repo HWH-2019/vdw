@@ -1,12 +1,20 @@
 ---
 name: vdw-cli
-description: Install and use VDW for reproducible multi-repository workspaces, shared Store inspection and workspace lifecycle management. Preview and confirm archiving, exact-commit restoration, idle retention, protection and archive-location migration. Any dirty repository skips its entire workspace; always report archived, not archived and skipped workspaces with reasons.
+description: Install and use VDW for reproducible multi-repository workspaces, the built-in local dashboard, shared Store inspection and workspace lifecycle management. Preview and confirm archiving, exact-commit restoration, idle retention, protection and archive-location migration. Any dirty repository skips its entire workspace; always report archived, not archived and skipped workspaces with reasons.
 metadata:
-  version: "0.10.1"
+  version: "0.11.0"
   bundled-cli: macos-arm64
 ---
 
 # VDW CLI Workspace Setup
+
+## Built-in dashboard (0.11+)
+
+Run `vdw dashboard` to open the local workspace dashboard, or `vdw dashboard --no-open --port 18080` to print its address. Release binaries embed React assets and the local HTTP service; users need no Node/npm. The dashboard shows repository and branch status, source modification dates, card-local remote checks, editor launch, lifecycle previews, operation history and configuration.
+
+Archive, restore, trash and supported undo actions require a reviewed preview and confirmation. Trash moves the complete workspace to the system recycle bin; preserve Store references and never substitute permanent deletion. Terminal operations reload dashboard data. Remote checks apply only to the selected workspace and do not block other cards.
+
+An empty orphan submodule gitlink may archive with an `empty_orphan_submodule` warning only when its path is absent/empty, its `.gitmodules` mapping is absent, and no initialized/retained child Git data or configuration exists. Preserve its exact pointer and uninitialized state through restoration. Populated, mapped, initialized, unreadable or ambiguous submodules remain blocked; do not remove a gitlink or hide changes to bypass inspection. Dirty workspace, protection and lease rules still apply.
 
 ## Workspace lifecycle (0.10+)
 
@@ -36,7 +44,7 @@ If `vdw` is missing on macOS Apple Silicon and this Skill came from Aone, ask fo
 bash scripts/install-bundled-cli.sh
 ```
 
-The installer refuses unsupported systems, verifies the bundled archive checksum, and checks that the installed command reports `vdw 0.10.1`. It does not replace a different installed version unless the user explicitly confirms the replacement and the command is rerun with `VDW_INSTALL_FORCE=1`. On other platforms, or when the bundled archive is absent, install a matching VDW CLI separately before continuing. Never execute an unverified binary.
+The installer refuses unsupported systems, verifies the bundled archive checksum, and checks that the installed command reports `vdw 0.11.0`. It does not replace a different installed version unless the user explicitly confirms the replacement and the command is rerun with `VDW_INSTALL_FORCE=1`. On other platforms, or when the bundled archive is absent, install a matching VDW CLI separately before continuing. Never execute an unverified binary.
 
 ## Quick Start
 

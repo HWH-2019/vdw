@@ -279,6 +279,7 @@ impl Engine {
                             || actual.path != planned.path
                             || actual.bare != planned.bare
                             || actual.locked_commit != planned.locked_commit
+                            || actual.archive_warnings != planned.archive_warnings
                         {
                             bail!("Published repository snapshot differs from reviewed plan");
                         }
@@ -380,6 +381,7 @@ impl Engine {
                 name: ws.name.clone(),
                 original_path: ws.path.clone(),
                 created_at: Utc::now(),
+                last_modified_at: super::activity::last_modified_at(&ws.path).ok().flatten(),
                 reason: if entry.reason_codes.is_empty() {
                     "reviewed_archive"
                 } else {
@@ -673,6 +675,13 @@ impl Engine {
             {
                 bail!("Worktree owner changed");
             }
+            let inspection = super::inspection::inspect_submodules(&target)?;
+            if let Some(blocker) = inspection.blockers.first() {
+                bail!("{}；停止后续归档删除", blocker.message);
+            }
+            if inspection.warnings != r.archive_warnings {
+                bail!("PLAN_STALE: 子模块状态与归档快照不一致：{}", r.path);
+            }
             let dirty = self.dirty(&target, false)?;
             if dirty.dirty() || dirty.unknown_ignored > 0 {
                 bail!(
@@ -929,6 +938,16 @@ impl Engine {
                 }
                 if git(&path, &["rev-parse", "HEAD"])? != r.head {
                     bail!("Restored HEAD mismatch");
+                }
+                if !r.archive_warnings.is_empty() {
+                    let inspection = super::inspection::inspect_submodules(&path)?;
+                    if !inspection.blockers.is_empty() || inspection.warnings != r.archive_warnings
+                    {
+                        bail!(
+                            "Restored submodule state differs from archived metadata: {}",
+                            r.path
+                        );
+                    }
                 }
             }
             op.results[0]

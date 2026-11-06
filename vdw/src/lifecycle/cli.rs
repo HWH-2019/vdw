@@ -743,6 +743,9 @@ pub fn print_plan(plan: &Plan, json: bool) -> Result<()> {
         }
         for r in &e.repositories {
             println!("  {}: staged {}, unstaged {}, conflicts {}, untracked {}, unknown ignored {}; HEAD {}",r.path,r.dirty.staged,r.dirty.unstaged,r.dirty.conflicts,r.dirty.untracked,r.dirty.unknown_ignored,r.head);
+            for warning in &r.archive_warnings {
+                println!("  归档提示（{}）：{}", r.path, warning.message);
+            }
         }
         println!(
             "  {} project entries; {} bytes; archive {}",
@@ -781,6 +784,9 @@ pub fn print_operation(op: &Operation, json: bool) -> Result<()> {
             println!("  archive: {}", p.display());
         }
         for repo in &r.repositories {
+            for warning in &repo.archive_warnings {
+                println!("  归档提示（{}）：{}", repo.path, warning.message);
+            }
             if repo.dirty.dirty() || repo.dirty.unknown_ignored > 0 {
                 println!(
                     "  {}: staged {}, unstaged {}, conflicts {}, untracked {}, unknown ignored {}",
@@ -840,18 +846,7 @@ fn exit_for(op: &Operation) -> Result<()> {
     Ok(())
 }
 fn start_summaries(op: &Operation) {
-    for r in &op.results {
-        if r.outcome == "archived" && r.memory_state == "pending" {
-            if let (Some(aid), Ok(exe)) = (&r.archive_id, std::env::current_exe()) {
-                let _ = Command::new(exe)
-                    .args(["lifecycle", "memory-worker", aid])
-                    .stdin(Stdio::null())
-                    .stdout(Stdio::null())
-                    .stderr(Stdio::null())
-                    .spawn();
-            }
-        }
-    }
+    crate::services::operations::start_summaries(op);
 }
 fn spawn_worker(kind: &str, id: &str) {
     if let Ok(exe) = std::env::current_exe() {

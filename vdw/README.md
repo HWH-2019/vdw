@@ -8,6 +8,20 @@
 
 ---
 
+## Built-in dashboard
+
+```sh
+vdw dashboard
+vdw dashboard --no-open
+vdw dashboard --port 18080
+```
+
+The CLI embeds the React + TypeScript UI and serves it on `127.0.0.1`. Installed users need no Node/npm, frontend files, or network download to view local workspaces. The default command opens the system browser; use the complete session URL printed by `--no-open` for manual access. Repeat invocations reuse the same-version instance; Ctrl+C stops the foreground server.
+
+Cards show actual Git and topology state, remote links, editor launch, and previewed archive/restore actions. Configuration changes reuse durable VDW plans. Status refresh does not change workspace activity or resume pending jobs. Remote probes require Git/network and do not equate permission errors with deletion.
+
+See [dashboard development and delivery](../vdw-dashboard/README.md). Checked-in frontend assets allow Cargo-only builds; Cargo rejects missing/stale resources. UI developers and release CI run `make dashboard-build` from the repository root before compiling changed frontend sources.
+
 ## 🤔 What is VDW?
 
 Modern development doesn't live in a single repo. You have:
@@ -69,7 +83,7 @@ Download the matching archive from [GitHub Releases](https://github.com/HWH-2019
 macOS/Linux example:
 
 ```bash
-VERSION=0.9.1            # replace with the release you downloaded
+VERSION=0.11.0            # replace with the release you downloaded
 OS=darwin                # darwin or linux
 ARCH=arm64               # arm64 or x86_64
 ASSET="vdw_${OS}_${ARCH}_${VERSION}"

@@ -38,6 +38,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Build embedded dashboard
+        shell: bash
+        run: bash scripts/build_dashboard.sh
+
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -60,6 +68,16 @@ jobs:
         run: |
           VERSION=$(grep '^version' vdw/Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
           echo "version=$VERSION" >> $GITHUB_ENV
+
+      - name: Smoke test installed dashboard without Node/npm
+        shell: bash
+        run: |
+          HOST_TARGET=$(rustc -vV | sed -n 's/^host: //p')
+          if [ "$HOST_TARGET" = "${{ matrix.target }}" ]; then
+            python scripts/smoke_dashboard.py --binary vdw/target/${{ matrix.target }}/release/vdw${{ matrix.suffix }}
+          else
+            echo "Cross-compiled target: runtime smoke test runs on native matrix entries."
+          fi
 
       - name: Package binary
         shell: bash

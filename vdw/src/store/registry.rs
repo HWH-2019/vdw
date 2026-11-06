@@ -154,11 +154,20 @@ pub fn register_workspace_at(
     })?;
 
     let mut registry = load_workspace_registry_at(vdw_home)?;
-    if let Some(existing) = registry
+    for entry in registry
         .workspaces
         .iter_mut()
-        .find(|workspace| workspace.path == workspace_root)
+        .filter(|w| w.path == workspace_root && w.lifecycle_state == "trashed")
     {
+        if let Ok(Some(restored)) = crate::lifecycle::trash::restored_registration(vdw_home, entry)
+        {
+            *entry = restored;
+            break;
+        }
+    }
+    if let Some(existing) = registry.workspaces.iter_mut().find(|workspace| {
+        workspace.path == workspace_root && workspace.lifecycle_state != "trashed"
+    }) {
         existing.last_seen = last_seen;
         if existing.lifecycle_state == "active" {
             existing.last_active_at = Some(last_seen);
@@ -250,6 +259,28 @@ mod tests {
         let home = tempfile::tempdir().unwrap();
         let result = register_workspace_at(home.path(), &home.path().join("missing"), Utc::now());
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn a_new_workspace_can_reuse_a_trashed_path_without_losing_retention() {
+        let home = tempfile::tempdir().unwrap();
+        let workspace = tempfile::tempdir().unwrap();
+        register_workspace_at(home.path(), workspace.path(), Utc::now()).unwrap();
+        let mut registry = load_workspace_registry_at(home.path()).unwrap();
+        let previous_id = registry.workspaces[0].workspace_id.clone();
+        registry.workspaces[0].lifecycle_state = "trashed".into();
+        save_workspace_registry_at(home.path(), &registry).unwrap();
+        register_workspace_at(home.path(), workspace.path(), Utc::now()).unwrap();
+        let registry = load_workspace_registry_at(home.path()).unwrap();
+        assert_eq!(registry.workspaces.len(), 2);
+        assert!(registry
+            .workspaces
+            .iter()
+            .any(|w| w.workspace_id == previous_id && w.lifecycle_state == "trashed"));
+        assert!(registry
+            .workspaces
+            .iter()
+            .any(|w| w.workspace_id != previous_id && w.lifecycle_state == "active"));
     }
 
     #[test]

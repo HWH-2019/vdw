@@ -18,6 +18,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Build embedded dashboard
+        shell: bash
+        run: bash scripts/build_dashboard.sh
+
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:

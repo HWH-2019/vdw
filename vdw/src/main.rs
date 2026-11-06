@@ -29,6 +29,15 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
+    /// Open the built-in workspace dashboard (no Node/npm required)
+    Dashboard {
+        /// Do not open the default browser; print the local URL instead
+        #[arg(long)]
+        no_open: bool,
+        /// Local port, or 0 to automatically choose an available port
+        #[arg(long, default_value_t = 0)]
+        port: u16,
+    },
     /// Preview and manage complete workspace lifecycles
     Workspace {
         #[command(subcommand)]
@@ -354,6 +363,9 @@ fn run_command(cli: Cli) -> anyhow::Result<()> {
         None
     };
     let result = match cli.command {
+        Commands::Dashboard { .. } => {
+            unreachable!("dashboard is dispatched before CLI logging and recovery")
+        }
         Commands::Workspace { command } => vdw::lifecycle::cli::workspace(command),
         Commands::Lifecycle { command } => vdw::lifecycle::cli::lifecycle(command),
         Commands::Init { name, template } => commands::init::execute(name, template),
@@ -499,6 +511,15 @@ fn main() {
     eprintln!("\x1b[33m[vdw {} — debug build]\x1b[0m", VERSION);
 
     let cli = Cli::parse();
+    // The long-lived dashboard serves pure reads and explicitly reviewed writes.
+    // It must never run the CLI's automatic recovery hook on startup/shutdown.
+    if let Commands::Dashboard { no_open, port } = &cli.command {
+        if let Err(error) = vdw::dashboard::run(*port, *no_open) {
+            eprintln!("Dashboard: {error:#}");
+            std::process::exit(1);
+        }
+        return;
+    }
     // Reconstruction inspection must not create logs or resume pending mutation jobs.
     if matches!(
         &cli.command,

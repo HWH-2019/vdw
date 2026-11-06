@@ -14,6 +14,9 @@ impl Engine {
     pub(crate) fn execute_other(&mut self, plan: &Plan, op: &mut Operation) -> Result<()> {
         let value = plan.value.as_ref().unwrap_or(&serde_json::Value::Null);
         match plan.kind.as_str() {
+            "undo" => self.execute_undo(plan, op),
+            "trash_restore" => self.restore_trash(plan, op),
+            "trash" => self.trash_workspace(plan, op),
             "restore" => self.restore(plan, op),
             "protect_remove" => {
                 let ws = self.find(
@@ -33,6 +36,8 @@ impl Engine {
                 self.persist_registry()
             }
             "config" => self.apply_config(plan, op),
+            "settings" => self.apply_settings(plan, op),
+            "auto_disable" => self.disable_auto(),
             "auto_enable" => {
                 let before = self.config.clone();
                 self.config.lifecycle.auto.enabled = true;

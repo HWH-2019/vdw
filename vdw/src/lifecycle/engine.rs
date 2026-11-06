@@ -29,6 +29,23 @@ pub struct Engine {
     _guard: Guard,
 }
 impl Engine {
+    #[cfg(test)]
+    pub(crate) fn test_at(root: &Path) -> Result<Self> {
+        let home = root.join("control");
+        let guard = Guard::acquire(&home)?;
+        Ok(Self {
+            background: false,
+            home,
+            store: root.join("store"),
+            config: manager::GlobalConfig::default(),
+            registry: WorkspaceRegistry::empty(),
+            policies: BTreeMap::new(),
+            protections: BTreeMap::new(),
+            archives: vec![],
+            leases: vec![],
+            _guard: guard,
+        })
+    }
     pub fn open() -> Result<Self> {
         let home = absolute(&manager::get_vdw_home()?)?;
         let guard = Guard::acquire(&home)?;
@@ -190,14 +207,19 @@ impl Engine {
         Ok(p)
     }
     pub fn find(&self, selector: &str) -> Result<WorkspaceRegistration> {
-        let mut matches = self
+        let mut candidates: Vec<_> = self
             .registry
             .workspaces
             .iter()
             .filter(|w| {
                 w.workspace_id == selector || w.name == selector || w.path == Path::new(selector)
             })
-            .cloned();
+            .cloned()
+            .collect();
+        if candidates.iter().any(|w| w.lifecycle_state != "trashed") {
+            candidates.retain(|w| w.lifecycle_state != "trashed");
+        }
+        let mut matches = candidates.into_iter();
         let result = matches
             .next()
             .context("Workspace not registered; supply its exact path to import it")?;
@@ -248,6 +270,19 @@ impl Engine {
     }
     pub fn touch(&mut self, selector: &str, source: &str) -> Result<WorkspaceRegistration> {
         let ws = self.find(selector)?;
+        if ws.lifecycle_state == "trashed" {
+            let previous = super::trash::restored_registration(&self.home, &ws)?
+                .context("请先从系统回收站将目录放回原位置")?;
+            if previous.lifecycle_state != "active" {
+                bail!("请使用归档恢复命令继续此工作空间");
+            }
+            *self
+                .registry
+                .workspaces
+                .iter_mut()
+                .find(|w| w.workspace_id == ws.workspace_id)
+                .unwrap() = previous;
+        }
         let w = self
             .registry
             .workspaces
@@ -347,6 +382,7 @@ impl Engine {
                 .clone();
             let bare_repo = git2::Repository::open_bare(&bare)?;
             bare_repo.find_commit(git2::Oid::from_str(&commit)?)?;
+            let mut archive_warnings = Vec::new();
             let (branch, head, dirty) = if dep.editable {
                 if !path.join(".git").is_file() {
                     bail!(
@@ -363,12 +399,11 @@ impl Engine {
                 }
                 let branch = git(&path, &["symbolic-ref", "--quiet", "--short", "HEAD"]).ok();
                 let head = git(&path, &["rev-parse", "HEAD"])?;
-                if !git(&path, &["ls-files", "--stage"])?
-                    .lines()
-                    .all(|l| !l.starts_with("160000 "))
-                {
-                    bail!("Submodules need explicit lifecycle support: {}", dep.path);
+                let inspection = super::inspection::inspect_submodules(&path)?;
+                if let Some(blocker) = inspection.blockers.first() {
+                    bail!("{}（仓库：{}）", blocker.message, dep.path);
                 }
+                archive_warnings = inspection.warnings;
                 for e in walkdir::WalkDir::new(&path)
                     .follow_links(false)
                     .into_iter()
@@ -436,6 +471,7 @@ impl Engine {
                 head,
                 locked_commit: commit,
                 dirty,
+                archive_warnings,
                 bundle: None,
                 bundle_bytes: None,
             });
@@ -454,6 +490,7 @@ impl Engine {
                     head: String::new(),
                     locked_commit: String::new(),
                     dirty: d,
+                    archive_warnings: vec![],
                     bundle: None,
                     bundle_bytes: None,
                 });
@@ -811,7 +848,30 @@ pub fn ensure_active(path: &Path) -> Result<()> {
         return Ok(());
     }
     let registry = registry::load_workspace_registry()?;
-    if let Some(ws) = registry.workspaces.iter().find(|w| w.path == path) {
+    if !registry
+        .workspaces
+        .iter()
+        .any(|w| w.path == path && w.lifecycle_state != "trashed")
+    {
+        for ws in registry
+            .workspaces
+            .iter()
+            .filter(|w| w.path == path && w.lifecycle_state == "trashed")
+        {
+            if let Ok(Some(previous)) =
+                super::trash::restored_registration(&manager::get_vdw_home()?, ws)
+            {
+                if previous.lifecycle_state != "active" {
+                    bail!("Workspace is archived; use workspace restore");
+                }
+            }
+        }
+    }
+    if let Some(ws) = registry
+        .workspaces
+        .iter()
+        .find(|w| w.path == path && w.lifecycle_state != "trashed")
+    {
         if ws.lifecycle_state != "active" {
             bail!(
                 "Workspace is {}; use `vdw workspace restore {} --preview` or operation resume",

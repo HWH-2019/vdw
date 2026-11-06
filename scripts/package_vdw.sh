@@ -59,6 +59,7 @@ log_info "VDW CLI version: ${VERSION}"
 
 # ─── Build ────────────────────────────────────────────────────────────────────
 log_info "Building vdw CLI (release)..."
+python3 "${PROJECT_ROOT}/scripts/verify_dashboard_assets.py"
 cd "${PROJECT_ROOT}/vdw"
 cargo build --release
 log_info "Build complete."
@@ -71,7 +72,7 @@ case "${OS}" in
         ARTIFACT="$(get_artifact_name vdw "${OS}" "${ARCH}" "${VERSION}" tar.gz)"
         ARTIFACT_PATH="${PROJECT_ROOT}/dist/${ARTIFACT}"
         cd "${PROJECT_ROOT}/vdw/target/release"
-        tar -czf "${ARTIFACT_PATH}" vdw
+        COPYFILE_DISABLE=1 tar -czf "${ARTIFACT_PATH}" vdw
         log_info "Packaged: ${ARTIFACT_PATH}"
         ;;
     win32)

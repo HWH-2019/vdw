@@ -415,6 +415,248 @@ fn summary_is_complete(op: &Value) {
     );
 }
 
+fn commit_empty_orphan(repo: &Path) -> String {
+    fs::write(repo.join(".gitmodules"), "").unwrap();
+    git(repo, &["add", ".gitmodules"]);
+    // Deliberately absent from the parent object database: retain the pointer,
+    // without downloading or claiming to back up the child repository.
+    git(
+        repo,
+        &[
+            "update-index",
+            "--add",
+            "--cacheinfo",
+            "160000,1111111111111111111111111111111111111111,orphan",
+        ],
+    );
+    git(
+        repo,
+        &[
+            "-c",
+            "user.name=VDW Test",
+            "-c",
+            "user.email=vdw@example.com",
+            "commit",
+            "--quiet",
+            "-m",
+            "legacy orphan gitlink",
+        ],
+    );
+    fs::create_dir(repo.join("orphan")).unwrap();
+    assert!(git(repo, &["status", "--porcelain"]).is_empty());
+    git(repo, &["rev-parse", "HEAD"])
+}
+
+#[test]
+fn empty_orphan_submodule_round_trips_exactly_with_warning_and_no_child_fetch() {
+    for backup in ["store_refs", "portable_bundle"] {
+        let f = Fixture::new();
+        let ws = f.workspace("orphan-round-trip", 1, true);
+        let repo = ws.join("packages/repo0");
+        let head = commit_empty_orphan(&repo);
+        let tree = git(&repo, &["ls-tree", "HEAD", "--", ".gitmodules", "orphan"]);
+        let p = f.json(&[
+            "workspace",
+            "archive",
+            ws.to_str().unwrap(),
+            "--preview",
+            "--git-backup",
+            backup,
+            "--json",
+        ]);
+        assert_eq!(p["entries"][0]["reason_codes"], json!([]), "{p}");
+        let warnings = &p["entries"][0]["repositories"][0]["archive_warnings"];
+        assert_eq!(warnings[0]["code"], "empty_orphan_submodule");
+        let operation = f.execute(&p);
+        assert_eq!(operation["summary"]["archived_count"], 1, "{operation}");
+        assert!(!repo.exists());
+        let archive = &operation["results"][0];
+        let location = Path::new(archive["archive_path"].as_str().unwrap());
+        let manifest: Value =
+            serde_json::from_slice(&fs::read(location.join("manifest.json")).unwrap()).unwrap();
+        assert_eq!(manifest["repositories"][0]["archive_warnings"], *warnings);
+        assert_eq!(archive["repositories"][0]["archive_warnings"], *warnings);
+        if backup == "portable_bundle" {
+            fs::remove_dir_all(manifest["repositories"][0]["bare"].as_str().unwrap()).unwrap();
+        }
+        let restore = f.json(&[
+            "workspace",
+            "restore",
+            archive["archive_id"].as_str().unwrap(),
+            "--preview",
+            "--json",
+        ]);
+        assert_eq!(
+            restore["entries"][0]["repositories"][0]["archive_warnings"],
+            *warnings
+        );
+        let restored = f.execute(&restore);
+        assert_eq!(restored["summary"]["restored_count"], 1, "{restored}");
+        assert_eq!(git(&repo, &["rev-parse", "HEAD"]), head);
+        assert_eq!(
+            git(&repo, &["ls-tree", "HEAD", "--", ".gitmodules", "orphan"]),
+            tree
+        );
+        assert_eq!(fs::read(repo.join(".gitmodules")).unwrap(), b"");
+        assert!(fs::read_dir(repo.join("orphan")).unwrap().next().is_none());
+        assert!(git(&repo, &["status", "--porcelain"]).is_empty());
+        // Archives made before archive_warnings existed remain deserializable.
+        let mut legacy = manifest["repositories"][0].clone();
+        legacy.as_object_mut().unwrap().remove("archive_warnings");
+        let legacy: vdw::lifecycle::RepoSnapshot = serde_json::from_value(legacy).unwrap();
+        assert!(legacy.archive_warnings.is_empty());
+    }
+}
+
+#[test]
+fn populated_or_initialized_submodule_blocks_the_entire_workspace() {
+    for state in [
+        "content",
+        "initialized",
+        "shared_git_data",
+        "mapped",
+        "ignored_content",
+    ] {
+        let f = Fixture::new();
+        let ws = f.workspace("blocked-submodule", 2, true);
+        let repo = ws.join("packages/repo0");
+        commit_empty_orphan(&repo);
+        match state {
+            "content" => fs::write(repo.join("orphan/work.txt"), "keep my changes").unwrap(),
+            "initialized" => {
+                git(&repo.join("orphan"), &["init", "--quiet"]);
+            }
+            "shared_git_data" => {
+                let common = git(
+                    &repo,
+                    &["rev-parse", "--path-format=absolute", "--git-common-dir"],
+                );
+                fs::create_dir_all(Path::new(&common).join("modules/alias/objects")).unwrap();
+            }
+            "mapped" => fs::write(
+                repo.join(".gitmodules"),
+                "[submodule \"alias\"]\npath = orphan\nurl = https://example.invalid/child.git\n",
+            )
+            .unwrap(),
+            "ignored_content" => {
+                fs::create_dir_all(repo.join("orphan/node_modules")).unwrap();
+                fs::write(
+                    repo.join("orphan/node_modules/keep.txt"),
+                    "keep ignored data",
+                )
+                .unwrap();
+            }
+            _ => unreachable!(),
+        }
+        let p = f.archive_plan(&ws);
+        assert_eq!(
+            p["entries"][0]["reason_codes"],
+            json!(["inspection_failed"]),
+            "{state}: {p}"
+        );
+        let output = f.run(&[
+            "lifecycle",
+            "plan",
+            "execute",
+            p["plan_id"].as_str().unwrap(),
+            "--confirm",
+            "--json",
+        ]);
+        assert!(!output.status.success());
+        let op: Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(op["summary"]["archived_count"], 0, "{op}");
+        assert!(op["results"][0]["completed_steps"]
+            .as_array()
+            .unwrap()
+            .is_empty());
+        assert!(repo.join(".git").is_file());
+        assert!(ws.join("packages/repo1/.git").is_file());
+    }
+}
+
+#[test]
+fn empty_orphan_warning_does_not_prevent_due_automatic_archive() {
+    let f = Fixture::new();
+    let ws = f.workspace("automatic-orphan", 1, true);
+    commit_empty_orphan(&ws.join("packages/repo0"));
+    let enable = f.json(&[
+        "lifecycle",
+        "auto",
+        "enable",
+        "--preview",
+        "--no-scheduler",
+        "--json",
+    ]);
+    f.execute(&enable);
+    let mut registry = f.registry();
+    let row = &mut registry["workspaces"][0];
+    let then = (chrono::Utc::now() - chrono::Duration::days(40)).to_rfc3339();
+    row["last_active_at"] = json!(then);
+    row["observation_started_at"] = json!(then);
+    row["candidate_since"] = json!((chrono::Utc::now() - chrono::Duration::hours(73)).to_rfc3339());
+    fs::write(
+        f.home.join(".vdw/workspaces.json"),
+        serde_json::to_vec(&registry).unwrap(),
+    )
+    .unwrap();
+    let operation = f.json(&["lifecycle", "run", "--json"]);
+    assert_eq!(operation["summary"]["archived_count"], 1, "{operation}");
+    assert_eq!(
+        operation["results"][0]["repositories"][0]["archive_warnings"][0]["code"],
+        "empty_orphan_submodule"
+    );
+}
+
+#[test]
+fn submodule_content_or_git_data_appearing_after_preview_stops_archive() {
+    for state in ["content", "shared_git_data", "initialized_config"] {
+        let f = Fixture::new();
+        let ws = f.workspace("changed-submodule", 2, true);
+        let repo = ws.join("packages/repo0");
+        commit_empty_orphan(&repo);
+        let p = f.archive_plan(&ws);
+        assert_eq!(p["entries"][0]["reason_codes"], json!([]));
+        match state {
+            "content" => fs::write(repo.join("orphan/new.txt"), "preserve after preview").unwrap(),
+            "shared_git_data" => {
+                let common = git(
+                    &repo,
+                    &["rev-parse", "--path-format=absolute", "--git-common-dir"],
+                );
+                fs::create_dir_all(Path::new(&common).join("modules/alias/objects")).unwrap();
+            }
+            "initialized_config" => {
+                git(
+                    &repo,
+                    &[
+                        "config",
+                        "submodule.alias.url",
+                        "https://example.invalid/child.git",
+                    ],
+                );
+            }
+            _ => unreachable!(),
+        }
+        let output = f.run(&[
+            "lifecycle",
+            "plan",
+            "execute",
+            p["plan_id"].as_str().unwrap(),
+            "--confirm",
+            "--json",
+        ]);
+        assert!(!output.status.success());
+        let op: Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(op["summary"]["archived_count"], 0, "{state}: {op}");
+        assert!(op["results"][0]["completed_steps"]
+            .as_array()
+            .unwrap()
+            .is_empty());
+        assert!(repo.join(".git").is_file());
+        assert!(ws.join("packages/repo1/.git").is_file());
+    }
+}
+
 #[test]
 fn leading_dot_dependencies_round_trip_without_archiving_managed_files_as_materials() {
     for prefix in ["./packages", "./references"] {
@@ -1299,6 +1541,66 @@ fn archive_publish_checkpoint_can_be_recovered_without_an_index_record() {
     assert_eq!(recovered["summary"]["archived_count"], 1);
     assert_eq!(recovered["results"][0]["archive_id"], aid);
     assert!(!w.join("packages/repo0").exists());
+}
+
+#[test]
+fn retained_submodule_data_appearing_after_archive_publication_blocks_resume() {
+    let f = Fixture::new();
+    let ws = f.workspace("orphan-resume", 1, true);
+    let repo = ws.join("packages/repo0");
+    commit_empty_orphan(&repo);
+    let operation = f.archive(&ws);
+    let oid = operation["operation_id"].as_str().unwrap();
+    let bare = Path::new(
+        operation["results"][0]["repositories"][0]["bare"]
+            .as_str()
+            .unwrap(),
+    );
+    // Simulate publication followed by an interruption before native removal.
+    git(bare, &["worktree", "add", repo.to_str().unwrap(), "main"]);
+    let mut registry = f.registry();
+    registry["workspaces"][0]["lifecycle_state"] = json!("active");
+    registry["workspaces"][0]["latest_archive_id"] = Value::Null;
+    fs::write(
+        f.home.join(".vdw/workspaces.json"),
+        serde_json::to_vec(&registry).unwrap(),
+    )
+    .unwrap();
+    let mut partial = operation.clone();
+    partial["state"] = json!("failed");
+    partial["results"][0]["outcome"] = json!("failed");
+    partial["results"][0]["completed_steps"] = json!(["archive_verified"]);
+    fs::write(
+        f.home.join(format!(".vdw/lifecycle/operations/{oid}.json")),
+        serde_json::to_vec(&partial).unwrap(),
+    )
+    .unwrap();
+    let plan = f.json(&[
+        "lifecycle",
+        "operation",
+        "resume",
+        oid,
+        "--preview",
+        "--json",
+    ]);
+    fs::create_dir_all(bare.join("modules/alias/objects")).unwrap();
+    let output = f.run(&[
+        "lifecycle",
+        "plan",
+        "execute",
+        plan["plan_id"].as_str().unwrap(),
+        "--confirm",
+        "--json",
+    ]);
+    assert!(!output.status.success());
+    let stopped: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(stopped["summary"]["archived_count"], 0, "{stopped}");
+    assert!(stopped["results"][0]["message"]
+        .as_str()
+        .unwrap()
+        .contains("子模块"));
+    assert!(repo.join(".git").is_file());
+    assert!(bare.join("modules/alias/objects").is_dir());
 }
 
 #[test]

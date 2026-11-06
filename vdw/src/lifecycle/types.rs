@@ -206,6 +206,8 @@ pub struct RepoSnapshot {
     pub head: String,
     pub locked_commit: String,
     pub dirty: DirtyCounts,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub archive_warnings: Vec<super::inspection::ArchiveNotice>,
     pub bundle: Option<String>,
     pub bundle_bytes: Option<u64>,
 }
@@ -271,6 +273,8 @@ pub struct Summary {
     pub scope_total: usize,
     pub archived_count: usize,
     pub restored_count: usize,
+    #[serde(default)]
+    pub trashed_count: usize,
     pub not_archived_count: usize,
     pub skipped_count: usize,
     pub failed_count: usize,
@@ -321,6 +325,7 @@ impl Operation {
             match r.outcome.as_str() {
                 "archived" => s.archived_count += 1,
                 "restored" => s.restored_count += 1,
+                "trashed" => s.trashed_count += 1,
                 "skipped" => s.skipped_count += 1,
                 "failed" => s.failed_count += 1,
                 _ => s.unfinished_count += 1,
@@ -354,6 +359,8 @@ pub struct Manifest {
     pub name: String,
     pub original_path: PathBuf,
     pub created_at: DateTime<Utc>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_modified_at: Option<DateTime<Utc>>,
     pub reason: String,
     pub repositories: Vec<RepoSnapshot>,
     pub materials: Vec<Material>,

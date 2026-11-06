@@ -4,6 +4,22 @@ Full command syntax and options for every `vdw` subcommand.
 
 ---
 
+## `vdw dashboard` (0.11+)
+
+```bash
+vdw dashboard                         # Start localhost service and open browser
+vdw dashboard --no-open               # Print the authenticated local URL
+vdw dashboard --no-open --port 18080   # Choose a local port
+```
+
+The CLI embeds all UI assets; installed users do not need Node/npm. Keep the printed session URL private. The server listens only on loopback and checks the session, Host and Origin. Opening/refreshing the dashboard does not change workspace activity, fetch Git refs or resume mutation jobs.
+
+Cards expose local editors, remote repository/development-branch links, per-workspace remote checks and reviewed archive/restore/trash actions. Configuration and supported history undo use durable preview/confirmation plans. Completed operations reload data even with automatic refresh disabled. Trash moves the entire workspace to the system recycle bin and retains shared Store references.
+
+Empty orphan gitlinks appear as non-blocking archive warnings only when no mapping, local contents or retained child Git state exists; their pointers and uninitialized state survive restoration. Other submodule cases remain blocked. Source modification date and the active/pending-archive/archived status are separate; pending archive begins seven days before its due date.
+
+---
+
 ## `vdw config`
 
 Configure the parent directory used for every new workspace. This setting is required before the first `vdw init`; VDW does not select a default workspace location.

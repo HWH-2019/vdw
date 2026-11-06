@@ -1,9 +1,11 @@
 pub mod commands;
 pub mod config;
 pub mod context;
+pub mod dashboard;
 pub mod lifecycle;
 pub mod link;
 pub mod lockfile;
+pub mod services;
 pub mod store;
 pub mod types;
 pub mod utils;

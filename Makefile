@@ -1,4 +1,10 @@
-.PHONY: package package-vdw package-vdw-dmg package-vscode package-skill stage-aone-skill
+.PHONY: package package-vdw package-vdw-dmg package-vscode package-skill stage-aone-skill dashboard-build dashboard-verify
+
+dashboard-build:
+	bash scripts/build_dashboard.sh
+
+dashboard-verify:
+	python3 scripts/verify_dashboard_assets.py
 
 package:
 	bash scripts/package_all.sh

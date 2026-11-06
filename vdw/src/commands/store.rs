@@ -207,6 +207,33 @@ pub fn build_store_status(
     }
 
     for registration in registry.workspaces {
+        if registration.lifecycle_state == "trashed" {
+            let retained = crate::lifecycle::trash::retained_references(vdw_home, &registration);
+            if let Ok(references) = &retained {
+                for repo in references {
+                    config_references
+                        .entry(repo.clone())
+                        .or_default()
+                        .insert(registration.path.clone());
+                }
+            }
+            registered_workspaces.push(RegisteredWorkspaceStatus {
+                path: registration.path,
+                last_seen: registration.last_seen,
+                state: if retained.is_ok() {
+                    RegisteredWorkspaceState::Ready
+                } else {
+                    RegisteredWorkspaceState::Invalid
+                },
+                config_reference_count: retained.as_ref().map(|r| r.len()).unwrap_or(0),
+                lock_reference_count: 0,
+                message: Some(match retained {
+                    Ok(_) => "system trash; Store references retained".into(),
+                    Err(e) => format!("trash references unavailable: {e:#}"),
+                }),
+            });
+            continue;
+        }
         if registration.lifecycle_state == "archived" {
             let manifest = registration
                 .latest_archive_id
