@@ -2,7 +2,7 @@
 name: vdw-cli
 description: Install and use VDW for reproducible multi-repository workspaces, the built-in local dashboard, shared Store inspection and workspace lifecycle management. Preview and confirm archiving, exact-commit restoration, idle retention, protection and archive-location migration. Any dirty repository skips its entire workspace; always report archived, not archived and skipped workspaces with reasons.
 metadata:
-  version: "0.11.0"
+  version: "0.11.1"
   bundled-cli: macos-arm64
 ---
 
@@ -44,7 +44,7 @@ If `vdw` is missing on macOS Apple Silicon and this Skill came from Aone, ask fo
 bash scripts/install-bundled-cli.sh
 ```
 
-The installer refuses unsupported systems, verifies the bundled archive checksum, and checks that the installed command reports `vdw 0.11.0`. It does not replace a different installed version unless the user explicitly confirms the replacement and the command is rerun with `VDW_INSTALL_FORCE=1`. On other platforms, or when the bundled archive is absent, install a matching VDW CLI separately before continuing. Never execute an unverified binary.
+The installer refuses unsupported systems, verifies the bundled archive checksum, and checks that the installed command reports `vdw 0.11.1`. It does not replace a different installed version unless the user explicitly confirms the replacement and the command is rerun with `VDW_INSTALL_FORCE=1`. On other platforms, or when the bundled archive is absent, install a matching VDW CLI separately before continuing. Never execute an unverified binary.
 
 ## Quick Start
 

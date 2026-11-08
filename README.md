@@ -47,7 +47,7 @@ agent-vdm/
 
 ### Design Documents
 
-Workspace archiving, restoration, policies, complete result reporting and storage migration are described in [Lifecycle management](vdw/LIFECYCLE.md). Version 0.11.0 adds a CLI-embedded React dashboard, configuration and lifecycle previews, recycle-bin deletion, reviewed operation undo, independent remote checks, and safe empty-orphan submodule archiving. CLI, dashboard, extension and Skill versions are aligned; building does not enable automatic cleanup.
+Workspace archiving, restoration, policies, complete result reporting and storage migration are described in [Lifecycle management](vdw/LIFECYCLE.md). Version 0.11.0 adds a CLI-embedded React dashboard, configuration and lifecycle previews, recycle-bin deletion, reviewed operation undo, independent remote checks, and safe empty-orphan submodule archiving. Version 0.11.1 fixes Windows local repository paths and worktree ownership comparisons. CLI, dashboard, extension and Skill versions are aligned; building does not enable automatic cleanup.
 
 | Document | Description |
 |----------|-------------|
@@ -82,7 +82,7 @@ Download the archive for your platform from [GitHub Releases](https://github.com
 On macOS or Linux:
 
 ```bash
-VERSION=0.11.0            # replace with the release you downloaded
+VERSION=0.11.1            # replace with the release you downloaded
 OS=darwin                # darwin or linux
 ARCH=arm64               # arm64 or x86_64
 ASSET="vdw_${OS}_${ARCH}_${VERSION}"
@@ -162,7 +162,7 @@ Use `C:\\Users\\your-name\\.local\\bin\\vdw.exe` on Windows.
 Download `vdw_cli_skill_<version>.tar.gz` from the same [GitHub Release](https://github.com/HWH-2019/vdw/releases), then extract it into your agent's Skill directory:
 
 ```bash
-VERSION=0.11.0
+VERSION=0.11.1
 SKILL_HOME="$HOME/.qoder/skills"  # use $HOME/.codex/skills for Codex
 mkdir -p "$SKILL_HOME"
 tar -xzf "vdw_cli_skill_${VERSION}.tar.gz" -C "$SKILL_HOME"
@@ -171,7 +171,7 @@ test -f "$SKILL_HOME/vdw-cli/SKILL.md"
 
 To install directly from a source checkout instead, copy the top-level `vdw-cli/` directory into the same Skill directory.
 
-The Aone platform package `vdw-cli@0.11.0` (owned by `gx-business-platform`) bundles both the Skill and the macOS Apple Silicon CLI. After installing the Skill, run `bash scripts/install-bundled-cli.sh` from its directory to install the verified CLI into `~/.local/bin`. Other platforms require a separately installed matching CLI. Maintainers can reproduce this Aone bundle with `make stage-aone-skill` and publish the staged directory with `a1 skill publish --platform gx-business-platform`.
+The Aone platform package `vdw-cli@0.11.1` (owned by `gx-business-platform`) bundles both the Skill and the macOS Apple Silicon CLI. After installing the Skill, run `bash scripts/install-bundled-cli.sh` from its directory to install the verified CLI into `~/.local/bin`. Other platforms require a separately installed matching CLI. Maintainers can reproduce this Aone bundle with `make stage-aone-skill` and publish the staged directory with `a1 skill publish --platform gx-business-platform`.
 
 ### 4. Verify the installation
 

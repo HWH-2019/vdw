@@ -86,7 +86,7 @@ def run(binary, hold=False, use_source_binary=False, test_system_trash=False):
                      ["sync", "--update-lock", "--json"], ["link", "--frozen"]]:
             result = subprocess.run([str(copied), *args], cwd=workspace, env=env, text=True, encoding="utf-8", errors="replace",
                                     stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=60)
-            assert result.returncode == 0, result.stdout + result.stderr
+            assert result.returncode == 0, f"{args!r}\n{result.stdout}\n{result.stderr}"
         return workspace
 
     clean = create("clean-fixture")

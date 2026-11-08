@@ -668,11 +668,13 @@ impl Engine {
                 }
                 continue;
             }
-            if git(
+            let common = git(
                 &target,
                 &["rev-parse", "--path-format=absolute", "--git-common-dir"],
-            )? != r.bare.to_string_lossy()
-            {
+            )?;
+            // Windows Git prints slash paths while canonical Rust paths can use
+            // a verbatim prefix. Compare filesystem identities after normalization.
+            if fs::canonicalize(common)? != fs::canonicalize(&r.bare)? {
                 bail!("Worktree owner changed");
             }
             let inspection = super::inspection::inspect_submodules(&target)?;

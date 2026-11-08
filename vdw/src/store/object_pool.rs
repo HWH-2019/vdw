@@ -542,7 +542,8 @@ fn fetch_refspec_with_timeout(
 /// Extract repo name from URL (e.g., "frontend" from "git@github.com:org/frontend.git")
 fn extract_repo_name(repo_url: &str) -> String {
     repo_url
-        .rsplit('/')
+        .trim_end_matches(|c| c == '/' || c == '\\')
+        .rsplit(|c| c == '/' || c == '\\')
         .next()
         .unwrap_or("repo")
         .trim_end_matches(".git")
@@ -759,6 +760,22 @@ mod tests {
     #[test]
     fn test_extract_repo_name_simple() {
         assert_eq!(extract_repo_name("repo"), "repo");
+    }
+
+    #[test]
+    fn windows_local_sources_use_only_the_basename_in_store_paths() {
+        for source in [
+            r"C:\work\backend.git",
+            r"\\?\C:\work\backend.git",
+            r"\\server\share\backend.git\",
+        ] {
+            let directory = repo_store_dir(source, Path::new("store"));
+            assert_eq!(directory.parent(), Some(Path::new("store/objects")));
+            assert_eq!(
+                directory.file_name().unwrap().to_str().unwrap(),
+                format!("backend-{}", compute_repo_hash(source))
+            );
+        }
     }
 
     #[test]

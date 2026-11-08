@@ -133,11 +133,7 @@ fn update_config(
 
     // Determine the source for path auto-generation
     let source = if !remote.is_empty() { remote } else { local };
-    let repo_name = source
-        .rsplit('/')
-        .next()
-        .unwrap_or("repo")
-        .replace(".git", "");
+    let repo_name = repo_basename(source);
 
     // Check editable lock conflict before creating dependency
     let mut editable = editable;
