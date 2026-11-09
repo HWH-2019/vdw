@@ -409,7 +409,8 @@ def run(binary, hold=False, use_source_binary=False, test_system_trash=False):
             if editor_output.exists():
                 break
             time.sleep(0.1)
-        assert json.loads(editor_output.read_text(encoding="utf-8")) == [str(clean.resolve())]
+        editor_argv = json.loads(editor_output.read_text(encoding="utf-8"))
+        assert len(editor_argv) == 1 and Path(editor_argv[0]).samefile(clean), editor_argv
         assert request(f"/api/workspaces/{clean_id}/remote", {})[1]["packages/sample"]["state"] == "local"
         refreshed = request("/api/refresh", {})[1]
         opened_row = next(r for r in refreshed["workspaces"] if r["workspace"]["workspace_id"] == clean_id)
