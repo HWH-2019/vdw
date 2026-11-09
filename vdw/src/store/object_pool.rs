@@ -67,7 +67,12 @@ pub fn clone_to_store(
     let repo = git2::Repository::init_bare(&bare_git_path)?;
 
     // Add remote "origin"
-    repo.remote("origin", repo_url)?;
+    let origin = if Path::new(repo_url).is_absolute() {
+        crate::utils::fs::git_path(Path::new(repo_url))
+    } else {
+        repo_url.to_owned()
+    };
+    repo.remote("origin", &origin)?;
 
     // If reference path provided, setup alternates
     if let Some(ref_path) = reference_path {
@@ -316,7 +321,7 @@ fn fetch_remote(repo: &git2::Repository, branch: Option<&str>) -> Result<()> {
     let origin_url = get_origin_url(repo);
     let is_local_origin = origin_url
         .as_deref()
-        .map(|u| u.starts_with('/') || u.starts_with('.') || u.starts_with('~'))
+        .map(|u| Path::new(u).is_absolute() || u.starts_with('.') || u.starts_with('~'))
         .unwrap_or(false);
 
     let mut cmd = std::process::Command::new("git");
@@ -387,7 +392,11 @@ fn fetch_remote(repo: &git2::Repository, branch: Option<&str>) -> Result<()> {
             return fetch_remote(repo, None);
         }
 
-        Err(anyhow::anyhow!("git fetch failed: {}", stderr.trim()))
+        Err(anyhow::anyhow!(
+            "git fetch failed ({}): {}",
+            output.status,
+            stderr.trim()
+        ))
     }
 }
 

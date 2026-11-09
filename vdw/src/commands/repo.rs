@@ -75,7 +75,7 @@ pub fn add(
     } else {
         // Local repo: skip clone, just add to config
         let local_path = std::fs::canonicalize(&url)
-            .map(|p| p.to_string_lossy().to_string())
+            .map(|p| crate::utils::fs::git_path(&p))
             .unwrap_or_else(|_| url.clone());
 
         println!("\x1b[32m✓\x1b[0m Adding local repository: {}", local_path);
