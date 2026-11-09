@@ -13,6 +13,7 @@ from pathlib import Path
 import re
 import shutil
 import signal
+import stat
 import subprocess
 import sys
 import tempfile
@@ -74,13 +75,13 @@ def run(binary, hold=False, use_source_binary=False, test_system_trash=False):
     config = json.loads(cmd(str(copied), "config", "show", "--json"))
     config.update(workspace_root=str(workspaces), store_path=str(root / "store"))
     config["lifecycle"]["archive"]["root"] = str(root / "archives")
-    (config_dir / "config.json").write_text(json.dumps(config))
+    (config_dir / "config.json").write_text(json.dumps(config), encoding="utf-8")
 
     def create(name):
         source = root / f"source-{name}"
         source.mkdir()
         cmd(git, "init", "-b", "main", str(source))
-        (source / "README.md").write_text(f"# fixture {name}\n")
+        (source / "README.md").write_text(f"# fixture {name}\n", encoding="utf-8")
         cmd(git, "-C", str(source), "add", "README.md")
         cmd(git, "-C", str(source), "-c", "user.name=VDW Test", "-c", "user.email=vdw-test@example.invalid", "commit", "-m", "fixture")
         cmd(str(copied), "init", name)
@@ -105,7 +106,7 @@ def run(binary, hold=False, use_source_binary=False, test_system_trash=False):
 
     clean = create("clean-fixture")
     dirty = create("dirty-fixture")
-    (dirty / "packages/sample/new-file.txt").write_text("Preserve this untracked work.\n")
+    (dirty / "packages/sample/new-file.txt").write_text("Preserve this untracked work.\n", encoding="utf-8")
     # A pending AI/migration descriptor must not be resumed by dashboard reads.
     stdout = root / "server.log"
     output = stdout.open("w")
@@ -118,9 +119,9 @@ def run(binary, hold=False, use_source_binary=False, test_system_trash=False):
             if instance_file.exists():
                 break
             if server.poll() is not None:
-                raise AssertionError(stdout.read_text())
+                raise AssertionError(stdout.read_text(encoding="utf-8"))
             time.sleep(0.1)
-        instance = json.loads(instance_file.read_text())
+        instance = json.loads(instance_file.read_text(encoding="utf-8"))
         origin, token = instance["origin"], instance["token"]
         handler = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
@@ -205,7 +206,7 @@ def run(binary, hold=False, use_source_binary=False, test_system_trash=False):
             declaration.write_text(json.dumps({"workspace": {"name": "clean-fixture", "version": "1.0"},
                 "dependencies": [{"remote": f"http://127.0.0.1:{git_http.server_port}/{repository}",
                     "path": "packages/sample", "branch": "feature/check", "editable": True,
-                    "scope": {"include": ["**/*"], "exclude": []}}]}))
+                    "scope": {"include": ["**/*"], "exclude": []}}]}), encoding="utf-8")
 
         try:
             remote_declaration("remote.git")
@@ -258,11 +259,11 @@ def run(binary, hold=False, use_source_binary=False, test_system_trash=False):
         assert status == 200 and plan["entries"][0]["reason_codes"], plan
         job = execute(plan)
         assert job["operation"]["summary"]["skipped_count"] == 1, job
-        assert (dirty / "packages/sample/new-file.txt").read_text() == "Preserve this untracked work.\n"
+        assert (dirty / "packages/sample/new-file.txt").read_text(encoding="utf-8") == "Preserve this untracked work.\n"
         # A pointer-only orphan is a non-blocking warning; populated children remain protected.
         repository = clean / "packages/sample"
         original_head = cmd(git, "-C", str(repository), "rev-parse", "HEAD").strip()
-        (repository / ".gitmodules").write_text("")
+        (repository / ".gitmodules").write_text("", encoding="utf-8")
         cmd(git, "-C", str(repository), "add", ".gitmodules")
         cmd(git, "-C", str(repository), "update-index", "--add", "--cacheinfo", f"160000,{original_head},nested-child")
         cmd(git, "-C", str(repository), "-c", "user.name=VDW Test", "-c", "user.email=vdw-test@example.invalid", "commit", "-m", "legacy orphan gitlink")
@@ -284,13 +285,13 @@ def run(binary, hold=False, use_source_binary=False, test_system_trash=False):
         assert status == 200 and not eligible["entries"][0]["reason_codes"], eligible
         assert eligible["entries"][0]["repositories"][0]["archive_warnings"] == warnings
         # Only disposable fixture content is changed. Parent Git may hide orphan contents.
-        (repository / "nested-child/local-work.txt").write_text("Keep submodule work.\n")
+        (repository / "nested-child/local-work.txt").write_text("Keep submodule work.\n", encoding="utf-8")
         row = next(r for r in request("/api/refresh", {})[1]["workspaces"] if r["workspace"]["workspace_id"] == clean_id)
         assert row["repositories"][0]["archive_blockers"][0]["path"] == "nested-child" and row["issue_count"] > 0
         rejected = execute(eligible)
         assert not rejected["operation"]["summary"]["archived_count"]
         assert not rejected["operation"]["results"][0]["completed_steps"] and repository.is_dir()
-        assert (repository / "nested-child/local-work.txt").read_text() == "Keep submodule work.\n"
+        assert (repository / "nested-child/local-work.txt").read_text(encoding="utf-8") == "Keep submodule work.\n"
         (repository / "nested-child/local-work.txt").unlink()
         row = next(r for r in request("/api/refresh", {})[1]["workspaces"] if r["workspace"]["workspace_id"] == clean_id)
         assert not row["repositories"][0]["archive_blockers"]
@@ -341,9 +342,9 @@ def run(binary, hold=False, use_source_binary=False, test_system_trash=False):
         job = execute(plan)
         assert job["state"] == "completed", job
         restore_operation = job["operation"]["operation_id"]
-        (clean / "new-local-notes.txt").write_text("Preserve new work after restore.")
+        (clean / "new-local-notes.txt").write_text("Preserve new work after restore.", encoding="utf-8")
         assert request(f"/api/operations/{restore_operation}/undo/preview", {})[0] == 400
-        assert (clean / "new-local-notes.txt").read_text() == "Preserve new work after restore."
+        assert (clean / "new-local-notes.txt").read_text(encoding="utf-8") == "Preserve new work after restore."
         (clean / "new-local-notes.txt").unlink()
         restored = request("/api/workspaces")[1]
         row = next(r for r in restored["workspaces"] if r["workspace"]["workspace_id"] == clean_id)
@@ -390,13 +391,13 @@ def run(binary, hold=False, use_source_binary=False, test_system_trash=False):
         assert any(op["kind"] == "undo" for op in history)
         assert next(op for op in history if op["operation_id"] == settings_operation)["undo"]["operation_id"]
         for operation in history:
-            saved_plan = json.loads((config_dir / "lifecycle/plans" / (operation["plan_id"] + ".json")).read_text())
+            saved_plan = json.loads((config_dir / "lifecycle/plans" / (operation["plan_id"] + ".json")).read_text(encoding="utf-8"))
             assert not (saved_plan.get("value") or {}).get("undo_parent"), "Internal undo steps must not appear as user operations"
         # Verify editor argv handling without launching a user's real editor.
         cfg = request("/api/config")[1]
         editor_script = root / "fake editor.py"
         editor_output = root / "editor-argv.json"
-        editor_script.write_text("import json,sys\nfrom pathlib import Path\nPath(" + repr(str(editor_output)) + ").write_text(json.dumps(sys.argv[1:]))\n")
+        editor_script.write_text("import json,sys\nfrom pathlib import Path\nPath(" + repr(str(editor_output)) + ").write_text(json.dumps(sys.argv[1:]))\n", encoding="utf-8")
         prefs = cfg["preferences"]
         prefs.update(default_editor="custom", editor_program=sys.executable,
                      editor_args=[str(editor_script), "{workspace}"])
@@ -408,7 +409,7 @@ def run(binary, hold=False, use_source_binary=False, test_system_trash=False):
             if editor_output.exists():
                 break
             time.sleep(0.1)
-        assert json.loads(editor_output.read_text()) == [str(clean.resolve())]
+        assert json.loads(editor_output.read_text(encoding="utf-8")) == [str(clean.resolve())]
         assert request(f"/api/workspaces/{clean_id}/remote", {})[1]["packages/sample"]["state"] == "local"
         refreshed = request("/api/refresh", {})[1]
         opened_row = next(r for r in refreshed["workspaces"] if r["workspace"]["workspace_id"] == clean_id)
@@ -433,9 +434,9 @@ def run(binary, hold=False, use_source_binary=False, test_system_trash=False):
         if test_system_trash:
             # Explicit opt-in: only this uniquely named disposable fixture enters the real OS trash.
             disposable = create("trash-fixture-" + root.name.removeprefix("vdw-dashboard-smoke-"))
-            (disposable / "local-notes.txt").write_text("Keep local notes in the recycled directory.\n")
-            (disposable / "packages/sample/.env").write_text("Ignored fixture material, not a real secret.\n")
-            (disposable / "packages/sample/new-file.txt").write_text("Keep untracked work.\n")
+            (disposable / "local-notes.txt").write_text("Keep local notes in the recycled directory.\n", encoding="utf-8")
+            (disposable / "packages/sample/.env").write_text("Ignored fixture material, not a real secret.\n", encoding="utf-8")
+            (disposable / "packages/sample/new-file.txt").write_text("Keep untracked work.\n", encoding="utf-8")
             disposable_path = str(disposable.resolve())
             row = next(r for r in request("/api/refresh", {})[1]["workspaces"] if r["workspace"]["path"] == disposable_path)
             wid = row["workspace"]["workspace_id"]
@@ -458,7 +459,7 @@ def run(binary, hold=False, use_source_binary=False, test_system_trash=False):
             assert request(endpoint, {"confirm": True})[1]["state"] == "completed", "Repeated confirmation is idempotent"
             assert request(f"/api/workspaces/{wid}/trash/preview", {})[0] == 400
             assert not any(r["workspace"]["workspace_id"] == wid for r in request("/api/workspaces")[1]["workspaces"])
-            registration = next(w for w in json.loads(registry_path.read_text())["workspaces"] if w["workspace_id"] == wid)
+            registration = next(w for w in json.loads(registry_path.read_text(encoding="utf-8"))["workspaces"] if w["workspace_id"] == wid)
             assert registration["lifecycle_state"] == "trashed"
             inventory = json.loads(cmd(str(copied), "store", "status", "--json"))
             retained = next(w for w in inventory["registered_workspaces"] if w["path"] == disposable_path)
@@ -471,7 +472,7 @@ def run(binary, hold=False, use_source_binary=False, test_system_trash=False):
             assert plans_before == len(list((config_dir / "lifecycle/plans").glob("*.json"))), "History availability must not generate plans"
             assert registry_before == registry_path.read_bytes(), "History availability must not alter registration"
             disposable.mkdir()
-            (disposable / "occupied.txt").write_text("Never overwrite this directory")
+            (disposable / "occupied.txt").write_text("Never overwrite this directory", encoding="utf-8")
             blocked_status = next(op for op in request("/api/operations")[1] if op["operation_id"] == trash_operation)["undo"]
             assert not blocked_status["available"] and "原路径" in blocked_status["reason"], blocked_status
             status, blocked = request(f"/api/operations/{trash_operation}/undo/preview", {})
@@ -482,13 +483,13 @@ def run(binary, hold=False, use_source_binary=False, test_system_trash=False):
             assert status == 200, undo
             job = execute(undo)
             assert job["state"] == "completed", job
-            assert (disposable / "local-notes.txt").read_text() == "Keep local notes in the recycled directory.\n"
-            assert (disposable / "packages/sample/.env").read_text() == "Ignored fixture material, not a real secret.\n"
-            assert (disposable / "packages/sample/new-file.txt").read_text() == "Keep untracked work.\n"
+            assert (disposable / "local-notes.txt").read_text(encoding="utf-8") == "Keep local notes in the recycled directory.\n"
+            assert (disposable / "packages/sample/.env").read_text(encoding="utf-8") == "Ignored fixture material, not a real secret.\n"
+            assert (disposable / "packages/sample/new-file.txt").read_text(encoding="utf-8") == "Keep untracked work.\n"
             row = next(r for r in request("/api/workspaces")[1]["workspaces"] if r["workspace"]["workspace_id"] == wid)
             assert row["workspace"]["lifecycle_state"] == "active"
             assert request(f"/api/operations/{trash_operation}/undo/preview", {})[0] == 400
-            assert not any(path.read_text() == f"VDW trash retention: {wid}" for path in (root / "store/objects").glob("*/bare.git/worktrees/*/locked"))
+            assert not any(path.read_text(encoding="utf-8") == f"VDW trash retention: {wid}" for path in (root / "store/objects").glob("*/bare.git/worktrees/*/locked"))
             print("PASS: undo trash restores exact original notes, ignored/untracked files and registration; path collision blocked.", flush=True)
         if use_source_binary:
             print("NOTE: executable runs from its build location; HOME, cwd and no-Node PATH remain isolated.")
@@ -498,7 +499,7 @@ def run(binary, hold=False, use_source_binary=False, test_system_trash=False):
             request("/api/refresh", {})
             state = root / "browser-state.json"
             state.write_text(json.dumps({"origin": origin, "url": origin + "/#session=" + token, "home": str(home),
-                                         "server_pid": server.pid, "runner_pid": os.getpid()}))
+                                         "server_pid": server.pid, "runner_pid": os.getpid()}), encoding="utf-8")
             print(f"Browser fixture: {state}", flush=True)
             while server.poll() is None:
                 time.sleep(1)
@@ -518,7 +519,14 @@ def run(binary, hold=False, use_source_binary=False, test_system_trash=False):
                 server.wait()
         output.close()
         if not hold:
-            shutil.rmtree(root)
+            def remove_readonly(function, path, error):
+                # Git's disposable loose objects have the Windows read-only bit.
+                if not windows or not isinstance(error[1], PermissionError) or not Path(path).is_file():
+                    raise error[1]
+                os.chmod(path, stat.S_IREAD | stat.S_IWRITE)
+                function(path)
+
+            shutil.rmtree(root, onerror=remove_readonly)
 
 
 if __name__ == "__main__":
