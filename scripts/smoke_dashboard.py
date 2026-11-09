@@ -86,6 +86,17 @@ def run(binary, hold=False, use_source_binary=False, test_system_trash=False):
                      ["sync", "--update-lock", "--json"], ["link", "--frozen"]]:
             result = subprocess.run([str(copied), *args], cwd=workspace, env=env, text=True, encoding="utf-8", errors="replace",
                                     stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=60)
+            if result.returncode and windows:
+                # Compare native Git with VDW's child process in the same disposable
+                # Store. A failed no-Node runtime must remain a failed smoke test.
+                print(f"Windows Git executable: {git}; isolated lookup: {shutil.which('git', path=path)}", flush=True)
+                for bare_git in (root / "store/objects").glob("*/bare.git"):
+                    for label, diagnostic_env in [("isolated", env), ("original PATH", {**env, "PATH": os.environ["PATH"]})]:
+                        probe = subprocess.run([git, "-C", str(bare_git), "fetch", "origin",
+                                                "+refs/heads/main:refs/remotes/origin/main"],
+                                               cwd=root, env=diagnostic_env, text=True, encoding="utf-8", errors="replace",
+                                               stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30)
+                        print(f"Native Git fetch ({label}): {probe.returncode}\n{probe.stdout}\n{probe.stderr}", flush=True)
             assert result.returncode == 0, f"{args!r}\n{result.stdout}\n{result.stderr}"
         return workspace
 
