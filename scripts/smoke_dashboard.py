@@ -42,9 +42,12 @@ def run(binary, hold=False, use_source_binary=False, test_system_trash=False):
         copied.chmod(binary.stat().st_mode)
         assert hashlib.sha256(binary.read_bytes()).digest() == hashlib.sha256(copied.read_bytes()).digest()
     if windows:
-        # Git for Windows needs its own runtime; keep only Git and Windows system dirs.
-        git_paths = [str(Path(git).parent), str(Path(git).parent.parent / "mingw64" / "bin"),
-                     str(Path(git).parent.parent / "usr" / "bin")]
+        # Git may resolve through cmd/bin, mingw64/bin, or newer ucrt64/bin.
+        # Find its installation root before retaining its runtime directories.
+        git_root = next((parent for parent in Path(git).parents if (parent / "usr/bin").is_dir()),
+                        Path(git).parent.parent)
+        git_paths = [str(directory) for directory in [Path(git).parent, git_root / "cmd", git_root / "bin",
+                     git_root / "ucrt64/bin", git_root / "mingw64/bin", git_root / "usr/bin"] if directory.is_dir()]
         system = os.environ.get("SystemRoot", r"C:\Windows")
         path = os.pathsep.join([str(tools), *git_paths, system, str(Path(system) / "System32")])
     else:
